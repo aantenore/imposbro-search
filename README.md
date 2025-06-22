@@ -29,7 +29,50 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 
 IMPOSBRO Search is built on a microservices architecture designed for resilience, scalability, and maintainability.
 
-<pre><code>```mermaid graph TD subgraph User Interaction A[User/Client] end subgraph Core Services B[Admin UI&lt;br&gt;(Next.js)] C[Query API&lt;br&gt;(FastAPI)] end subgraph Data & Messaging D[Kafka&lt;br&gt;(Message Queue)] E[Typesense HA Cluster&lt;br&gt;(Internal State)] end subgraph Asynchronous Workers F[Indexing Service&lt;br&gt;(Python Worker)] end subgraph External Data Stores G[External Cluster 1&lt;br&gt;(Typesense)] H[External Cluster 2&lt;br&gt;(Typesense)] I[External Cluster 3&lt;br&gt;(Typesense)] end A -- Manages System --> B A -- Ingests & Searches --> C B -- Proxies API Calls --> C C -- Publishes Documents --> D C -- Manages State --> E C -- Searches Across --> G C -- Searches Across --> H C -- Searches Across --> I D -- Streams Documents --> F F -- Indexes Documents --> G F -- Indexes Documents --> H F -- Indexes Documents --> I ```</code></pre>
+```mermaid
+graph TD;
+    subgraph User_Interaction
+        A[User Client];
+    end
+
+    subgraph Core_Services
+        B[Admin UI - Nextjs];
+        C[Query API - FastAPI];
+    end
+
+    subgraph Data_and_Messaging
+        D[Kafka Message Queue];
+        E[Typesense HA Cluster];
+    end
+
+    subgraph Async_Workers
+        F[Indexing Service Python Worker];
+    end
+
+    subgraph External_Data_Stores
+        G[External Cluster 1 Typesense];
+        H[External Cluster 2 Typesense];
+        I[External Cluster 3 Typesense];
+    end
+
+    A -->|Manages System| B;
+    A -->|Ingests & Searches| C;
+
+    B -->|Proxies API Calls| C;
+
+    C -->|Publishes Documents| D;
+    C -->|Manages State| E;
+    C -->|Searches Across| G;
+    C -->|Searches Across| H;
+    C -->|Searches Across| I;
+
+    D -->|Streams Documents| F;
+    F -->|Indexes Documents| G;
+    F -->|Indexes Documents| H;
+    F -->|Indexes Documents| I;
+
+
+```
 
 ### Component Roles
 
