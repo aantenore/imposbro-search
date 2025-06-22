@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+typesense
+pydantic-settings
+prometheus-fastapi-instrumentator
+kafka-python-ng
+aioredis
+asyncio

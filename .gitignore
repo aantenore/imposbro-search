@@ -1,0 +1,27 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build artifacts
+.next/
+out/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.env*.local
+.venv
+env/
+venv/
+
+# Docker
+docker-compose.override.yml
+
+# IDE specific
+.idea/
+.vscode/
