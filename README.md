@@ -21,13 +21,17 @@ This is a complete, enterprise-grade open-source search framework designed for t
 ### 1. Start the Services
 
 
+
 Navigate into the project directory
+
 cd ./imposbro-search
 
 Copy the example environment file
+
 Copy-Item .env.example .env
 
 Build and start all services
+
 docker-compose up --build
 
 
@@ -66,14 +70,18 @@ docker-compose up --build
 5. **Ingest Sharded Data:** Use `curl` to push documents. The `query_api` will now route them based on the `country` field.
 
 
+
 This document will go to the 'cluster-it' (typesense)
+
 curl -X POST "http://localhost:8000/ingest/users" -H "Content-Type: application/json" -d '{"id": "user-1", "name": "Giovanni", "country": "IT"}'
 
 This document will go to the 'cluster-us' (typesense-replica)
+
 curl -X POST "http://localhost:8000/ingest/users" -H "Content-Type: application/json" -d '{"id": "user-2", "name": "John", "country": "US"}'
 
 
 6. **Run a Federated Search:** This single query will hit **both** clusters and merge the results.
+
 
 
 curl "http://localhost:8000/search/users?q=*&query_by=name"
@@ -100,15 +108,20 @@ This section describes how to deploy the `admin-ui` and `query-api` services to 
 The Helm chart deploys pre-built images. You must first build the images from the source code and push them to your registry.
 
 
+
 1. Build the images using docker-compose
+
 docker-compose build admin-ui query-api
 
 2. Tag the images for your registry
+
 Replace 'your-registry-user' with your container registry's username/organization
+
 docker tag imposbro-search-admin-ui your-registry-user/imposbro-admin-ui:latest
 docker tag imposbro-search-query-api your-registry-user/imposbro-query-api:latest
 
 3. Push the images to the registry
+
 docker push your-registry-user/imposbro-admin-ui:latest
 docker push your-registry-user/imposbro-query-api:latest
 
@@ -118,6 +131,7 @@ docker push your-registry-user/imposbro-query-api:latest
 1. **Update `values.yaml`:** Open the `helm/imposbro-search/values.yaml` file. Find the `image` keys for `queryApi` and `adminUi` and update them to match the image names you just pushed to your registry.
 
 2. **Install the Chart:** From the project's root directory, run the following command to install the chart into your Kubernetes cluster. This will create a new release named `imposbro-release`.
+
 
 
 helm install imposbro-release ./helm/imposbro-search
@@ -135,5 +149,7 @@ To check the status of your deployment, you can run:
 * \[ \] Implement support for collection aliases and copying.
 
 * \[x\] Finalize Helm chart for Kubernetes deployment.
+
+* \[ \] Test Helm chart for Kubernetes deployment.
 
 * \[ \] Enhance UI/UX with more feedback and loading states.
