@@ -10,7 +10,6 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from kafka import KafkaProducer
 from prometheus_client import Counter
 
-# Import settings from the new settings file
 from settings import settings
 
 # --- Typesense-based Persistence Setup ---
@@ -31,7 +30,6 @@ def save_state_to_typesense():
     if not ha_client:
         print("🔥 Cannot save state: HA Typesense client not available.")
         return
-
     try:
         state = {
             "federation_clusters_config": federation_clusters_config,
@@ -44,11 +42,15 @@ def save_state_to_typesense():
         print(f"🔥 Failed to save state to Typesense: {e}")
 
 
-def load_state_from_typesense():
-    """Loads configuration state from the Typesense HA cluster if it exists."""
+def load_and_reconcile_state_from_typesense():
+    """
+    Loads configuration state from Typesense and reconciles it with the actual
+    collections present in the cluster.
+    """
     global federation_clusters_config, collection_routing_rules, federation_clients
     if not ha_client: return
 
+    # 1. Load the saved configuration state (clusters, rules)
     try:
         try:
             ha_client.collections[STATE_COLLECTION_NAME].retrieve()
@@ -67,17 +69,37 @@ def load_state_from_typesense():
 
         for name, config in federation_clusters_config.items():
             if name != "default":
-                client = typesense.Client(
+                federation_clients[name] = typesense.Client(
                     nodes=[{'host': config['host'], 'port': config['port'], 'protocol': 'http'}],
                     api_key=config['api_key'],
                     connection_timeout_seconds=5
                 )
-                federation_clients[name] = client
-        print(f"✅ State successfully loaded from Typesense.")
+        print(f"✅ Loaded saved state from Typesense.")
     except typesense.exceptions.ObjectNotFound:
-        print(f"💡 No saved state found in Typesense. Starting with a fresh configuration.")
+        print(f"💡 No saved state document found. Starting fresh.")
     except Exception as e:
-        print(f"🔥 Failed to load state from Typesense, starting fresh: {e}")
+        print(f"🔥 Error loading saved state: {e}")
+
+    # 2. Discover live collections from the Typesense cluster
+    try:
+        live_collections = ha_client.collections.retrieve()
+        live_collection_names = {col['name'] for col in live_collections if not col['name'].startswith('_')}
+
+        # 3. Reconcile: Ensure every live collection has a routing rule entry
+        state_changed = False
+        for name in live_collection_names:
+            if name not in collection_routing_rules:
+                print(f"💡 Discovered new collection '{name}'. Creating default routing rule.")
+                collection_routing_rules[name] = {"rules": [], "default_cluster": "default"}
+                state_changed = True
+
+        # 4. If we discovered new collections, save the updated state
+        if state_changed:
+            print("💾 Saving reconciled state back to Typesense...")
+            save_state_to_typesense()
+
+    except Exception as e:
+        print(f"🔥 Error discovering live collections from Typesense: {e}")
 
 
 # --- Kafka Producer & Pydantic Models ---
@@ -109,13 +131,21 @@ class CollectionField(BaseModel): name: str; type: str; facet: bool = False
 class CollectionSchema(BaseModel): name: str; fields: List[CollectionField]; default_sorting_field: Optional[str] = None
 
 
-class FieldRule(BaseModel): field: str; value: str; cluster: str
+# NEW: Model for a single rule based on a field's value
+class FieldRule(BaseModel):
+    field: str
+    value: str
+    cluster: str
 
 
-class RoutingRules(BaseModel): collection: str; rules: List[FieldRule]; default_cluster: str = "default"
+# UPDATED: The main routing configuration now holds a list of these rules
+class RoutingRules(BaseModel):
+    collection: str
+    rules: List[FieldRule]
+    default_cluster: str = "default"
 
 
-app = FastAPI(title="IMPOSBRO Federated Search & Admin API", version="3.0.0-HA")
+app = FastAPI(title="IMPOSBRO Federated Search & Admin API", version="3.2.0-Stateful-Discovery")
 Instrumentator().instrument(app).expose(app)
 
 
@@ -133,25 +163,29 @@ async def startup_event():
                                                  "api_key": settings.TYPESENSE_API_KEY}
     print("✅ HA Typesense client initialized.")
 
-    load_state_from_typesense()
+    load_and_reconcile_state_from_typesense()
     get_producer()
 
 
 # --- Helper Functions ---
 def get_client_for_document(collection_name: str, document: Dict) -> (typesense.Client, str):
-    collection_rules = collection_routing_rules.get(collection_name)
-    if not collection_rules or not collection_rules.get("rules"):
+    """UPDATED: Advanced routing logic to handle a list of rules."""
+    collection_rules_config = collection_routing_rules.get(collection_name)
+
+    if not collection_rules_config or not collection_rules_config.get("rules"):
         return federation_clients.get("default"), "default"
 
-    for rule in collection_rules["rules"]:
-        if document.get(rule["field"]) == rule["value"]:
+    # Find the first rule that matches the document
+    for rule in collection_rules_config["rules"]:
+        doc_value = document.get(rule["field"])
+        if doc_value is not None and str(doc_value) == rule["value"]:
             target_cluster_name = rule["cluster"]
             client = federation_clients.get(target_cluster_name)
             if not client: raise HTTPException(status_code=404,
                                                detail=f"Target cluster '{target_cluster_name}' from rule not found.")
             return client, target_cluster_name
 
-    default_cluster_name = collection_rules.get("default_cluster", "default")
+    default_cluster_name = collection_rules_config.get("default_cluster", "default")
     return federation_clients.get(default_cluster_name), default_cluster_name
 
 
@@ -160,7 +194,9 @@ def get_clients_for_collection_search(collection_name: str) -> List[typesense.Cl
         rule = collection_routing_rules[collection_name]
         cluster_names = {r["cluster"] for r in rule.get("rules", [])}
         cluster_names.add(rule.get("default_cluster", "default"))
-        return [federation_clients[name] for name in cluster_names if name in federation_clients]
+        # Return all unique clients that are part of the rules
+        return [federation_clients[name] for name in set(cluster_names) if name in federation_clients]
+    # If no rules, search across all known external clusters + default
     return list(federation_clients.values())
 
 
@@ -168,16 +204,9 @@ def get_clients_for_collection_search(collection_name: str) -> List[typesense.Cl
 @app.post("/ingest/{collection_name}")
 def ingest_document(collection_name: str, document: Dict[str, Any]):
     doc_id = document.get("id")
-    if not doc_id:
-        raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
-
+    if not doc_id: raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
     _, target_cluster_name = get_client_for_document(collection_name, document)
-    enriched_message = {
-        "target_cluster": target_cluster_name,
-        "collection": collection_name,
-        "document": document
-    }
-
+    enriched_message = {"target_cluster": target_cluster_name, "collection": collection_name, "document": document}
     topic_name = f"{settings.KAFKA_TOPIC_PREFIX}_{collection_name}"
     try:
         get_producer().send(topic_name, key=str(doc_id).encode('utf-8'), value=enriched_message)
@@ -264,21 +293,10 @@ async def create_collection(schema: CollectionSchema):
     tasks = [create_on_one_cluster(client, name) for name, client in federation_clients.items()]
     await asyncio.gather(*tasks)
 
-    if schema.name not in collection_routing_rules: collection_routing_rules[schema.name] = {"rules": [],
-                                                                                             "default_cluster": "default"}
+    if schema.name not in collection_routing_rules:
+        collection_routing_rules[schema.name] = {"rules": [], "default_cluster": "default"}
     save_state_to_typesense()
     return {"message": "Collection created successfully on all clusters."}
-
-
-@app.get("/admin/collections/{collection_name}", status_code=200)
-def get_collection_schema(collection_name: str):
-    if not ha_client: raise HTTPException(status_code=500, detail="Default HA client not available.")
-    try:
-        return ha_client.collections[collection_name].retrieve()
-    except typesense.exceptions.ObjectNotFound:
-        raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve schema: {e}")
 
 
 @app.delete("/admin/collections/{collection_name}", status_code=200)
@@ -298,11 +316,35 @@ async def delete_collection(collection_name: str):
     return {"status": "ok", "message": f"Collection '{collection_name}' deleted."}
 
 
+@app.get("/admin/collections/{collection_name}", status_code=200)
+def get_collection_schema(collection_name: str):
+    if not ha_client: raise HTTPException(status_code=500, detail="Default HA client not available.")
+    try:
+        schema_info = ha_client.collections[collection_name].retrieve()
+        return {"fields": schema_info.get("fields", [])}
+    except typesense.exceptions.ObjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Collection '{collection_name}' not found.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve schema: {str(e)}")
+
+
 @app.post("/admin/routing-rules", status_code=201)
 def set_routing_rules(rules_config: RoutingRules):
-    collection_routing_rules[rules_config.collection] = rules_config.dict()
+    collection_name = rules_config.collection
+    try:
+        ha_client.collections[collection_name].retrieve()
+    except typesense.exceptions.ObjectNotFound:
+        raise HTTPException(status_code=404,
+                            detail=f"Cannot set rules for non-existent collection '{collection_name}'.")
+
+    all_clusters_in_rules = {r.cluster for r in rules_config.rules}
+    all_clusters_in_rules.add(rules_config.default_cluster)
+    if not all_clusters_in_rules.issubset(federation_clients.keys()):
+        raise HTTPException(status_code=404, detail="One or more clusters specified in the rules are not registered.")
+
+    collection_routing_rules[collection_name] = rules_config.dict()
     save_state_to_typesense()
-    return {"status": "ok", "message": f"Routing rules for '{rules_config.collection}' set."}
+    return {"status": "ok", "message": f"Routing rules for '{collection_name}' have been updated."}
 
 
 @app.delete("/admin/routing-rules/{collection_name}", status_code=200)
@@ -310,8 +352,9 @@ def delete_routing_rule(collection_name: str):
     if collection_name in collection_routing_rules:
         collection_routing_rules[collection_name] = {"rules": [], "default_cluster": "default"}
         save_state_to_typesense()
-    return {"status": "ok", "message": f"Routing rule for '{collection_name}' deleted."}
+    return {"status": "ok", "message": f"Routing rules for '{collection_name}' have been deleted."}
 
 
 @app.get("/admin/routing-map")
-def get_routing_map(): return {"clusters": list(federation_clients.keys()), "collections": collection_routing_rules}
+def get_routing_map():
+    return {"clusters": list(federation_clients.keys()), "collections": collection_routing_rules}
