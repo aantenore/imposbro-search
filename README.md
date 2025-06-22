@@ -153,3 +153,5 @@ To check the status of your deployment, you can run:
 * \[ \] Test Helm chart for Kubernetes deployment.
 
 * \[ \] Enhance UI/UX with more feedback and loading states.
+
+* \[ \] Multi - fields federation.
