@@ -57,3 +57,9 @@ docker-compose up --build
     curl "http://localhost:8000/search/users?q=*&query_by=name"
     ```
     *Expected Output:* You will see both Giovanni and John in the search results.
+
+### 4. Next steps
+
+1.  Tests
+2.  Support for alias and collection copy
+3.  Helm and K8 support
