@@ -29,49 +29,7 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 
 IMPOSBRO Search is built on a microservices architecture designed for resilience, scalability, and maintainability.
 
-```mermaid
-graph TD
-    subgraph User Interaction
-        A[User/Client]
-    end
-
-    subgraph Core Services
-        B[Admin UI<br>(Next.js)]
-        C[Query API<br>(FastAPI)]
-    end
-
-    subgraph Data & Messaging
-        D[Kafka<br>(Message Queue)]
-        E[Typesense HA Cluster<br>(Internal State)]
-    end
-
-    subgraph Asynchronous Workers
-        F[Indexing Service<br>(Python Worker)]
-    end
-
-    subgraph External Data Stores
-        G[External Cluster 1<br>(Typesense)]
-        H[External Cluster 2<br>(Typesense)]
-        I[External Cluster 3<br>(Typesense)]
-    end
-
-    A -- Manages System --> B
-    A -- Ingests & Searches --> C
-
-    B -- Proxies API Calls --> C
-
-    C -- Publishes Documents --> D
-    C -- Manages State --> E
-    C -- Searches Across --> G
-    C -- Searches Across --> H
-    C -- Searches Across --> I
-
-
-    D -- Streams Documents --> F
-    F -- Indexes Documents --> G
-    F -- Indexes Documents --> H
-    F -- Indexes Documents --> I
-```
+<pre><code>```mermaid graph TD subgraph User Interaction A[User/Client] end subgraph Core Services B[Admin UI&lt;br&gt;(Next.js)] C[Query API&lt;br&gt;(FastAPI)] end subgraph Data & Messaging D[Kafka&lt;br&gt;(Message Queue)] E[Typesense HA Cluster&lt;br&gt;(Internal State)] end subgraph Asynchronous Workers F[Indexing Service&lt;br&gt;(Python Worker)] end subgraph External Data Stores G[External Cluster 1&lt;br&gt;(Typesense)] H[External Cluster 2&lt;br&gt;(Typesense)] I[External Cluster 3&lt;br&gt;(Typesense)] end A -- Manages System --> B A -- Ingests & Searches --> C B -- Proxies API Calls --> C C -- Publishes Documents --> D C -- Manages State --> E C -- Searches Across --> G C -- Searches Across --> H C -- Searches Across --> I D -- Streams Documents --> F F -- Indexes Documents --> G F -- Indexes Documents --> H F -- Indexes Documents --> I ```</code></pre>
 
 ### Component Roles
 
