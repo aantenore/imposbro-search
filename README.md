@@ -1,7 +1,8 @@
-# IMPOSBRO SEARCH (Enterprise Federated Architecture)
+# IMPOSBRO SEARCH (Enterprise Federated Architecture Typesense bassed search engine)
 
-Welcome to the final, enterprise-grade version of **IMPOSBRO SEARCH**. This is a complete open-source search framework designed for true document-level sharding, high availability, and comprehensive management.
+Welcome to **IMPOSBRO SEARCH**. The name is an acronym for the Italian sentence **"il mio primo progetto open source scritto con un braccio rotto"**, reflecting the project's challenging origins.
 
+This is a complete, enterprise-grade open-source search framework designed for true document-level sharding, high availability, and comprehensive management.
 ## ✨ Final Features
 
 * **Document-Level Sharding:** Define routing rules based on document fields (e.g., `country`, `tenant_id`) to distribute a single logical collection across multiple physical clusters.
@@ -63,3 +64,4 @@ docker-compose up --build
 1.  Tests
 2.  Support for alias and collection copy
 3.  Helm and K8 support
+4.  Better UI :D
