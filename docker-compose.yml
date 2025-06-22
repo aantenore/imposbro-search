@@ -12,41 +12,49 @@ services:
       KAFKA_CFG_ADVERTISED_LISTENERS: 'INTERNAL://kafka:29092,EXTERNAL://localhost:9092'
       KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT'
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
-    healthcheck:
-      # Corrected to use a single string format for wider compatibility
-      test: "kafka-topics.sh --bootstrap-server localhost:9092 --list"
-      interval: 15s
-      timeout: 10s
-      retries: 10
     volumes:
       - kafka_data:/bitnami/kafka
 
-  typesense:
-    image: typesense/typesense:0.25.2
-    ports:
-      - '8108:8108'
-    environment:
-      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
-      TYPESENSE_DATA_DIR: /data
-      TYPESENSE_ENABLE_CORS: 'true'
-    volumes:
-      - typesense_data_default:/data
-
-  typesense-replica:
-    image: typesense/typesense:0.25.2
-    ports:
-      - '8109:8108'
-    environment:
-      TYPESENSE_API_KEY: xyz-replica
-      TYPESENSE_DATA_DIR: /data
-      TYPESENSE_ENABLE_CORS: 'true'
-    volumes:
-      - typesense_data_replica:/data
-  
   redis:
     image: redis:7-alpine
     ports:
       - '6379:6379'
+    volumes:
+      - redis_data:/data
+
+  # --- MODIFIED: Typesense nodes configured as a 3-node HA cluster ---
+  typesense-1:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
+    volumes:
+      - typesense_data_1:/data
+      - ./typesense-nodes:/app/typesense-nodes
+
+  typesense-2:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
+    volumes:
+      - typesense_data_2:/data
+      - ./typesense-nodes:/app/typesense-nodes
+
+  typesense-3:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
+    volumes:
+      - typesense_data_3:/data
+      - ./typesense-nodes:/app/typesense-nodes
 
   query_api:
     build: ./query_api
@@ -54,20 +62,19 @@ services:
       - '8000:8000'
     depends_on:
       - kafka
-      - typesense
-      - typesense-replica
       - redis
+      - typesense-1
+      - typesense-2
+      - typesense-3
     env_file: .env
 
   indexing_service:
     build: ./indexing_service
     depends_on:
-      kafka:
-        condition: service_healthy
       query_api:
         condition: service_started
     env_file: .env
-    
+
   admin_ui:
     build:
       context: ./admin_ui
@@ -81,29 +88,25 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    ports:
-      - '9090:9090'
-    volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-    # Corrected to use a single string format
+    ports: ['9090:9090']
+    volumes: ['./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml']
     command: --config.file=/etc/prometheus/prometheus.yml
-    depends_on:
-      - query_api
+    depends_on: [query_api]
 
   grafana:
     image: grafana/grafana:latest
-    ports:
-      - '3000:3000'
+    ports: ['3000:3000']
     volumes:
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
       - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-    depends_on:
-      - prometheus
+    depends_on: [prometheus]
 
 volumes:
   kafka_data:
-  typesense_data_default:
-  typesense_data_replica:
+  redis_data:
+  typesense_data_1:
+  typesense_data_2:
+  typesense_data_3:
