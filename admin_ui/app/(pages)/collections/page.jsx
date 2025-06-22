@@ -1,10 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Plus, X, Trash2 } from 'lucide-react'; // Import delete icon
+import { Plus, X, Trash2 } from 'lucide-react';
 
 const API_BASE = '/api';
 
-// Confirmation Modal Component for Deletion
 const ConfirmationModal = ({ onConfirm, onCancel, resourceName, resourceType }) => {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
@@ -37,7 +36,7 @@ export default function CollectionsPage() {
     const [newCollection, setNewCollection] = useState({ name: '', fields: [{ name: '', type: 'string', facet: false }]});
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
-    const [collectionToDelete, setCollectionToDelete] = useState(null); // State for deletion modal
+    const [collectionToDelete, setCollectionToDelete] = useState(null);
 
     const fetchRoutingMap = async () => {
         try {
@@ -83,30 +82,26 @@ export default function CollectionsPage() {
         } catch (err) { setError(err.message); }
     };
 
-    // --- NEW: Function to handle the confirmed deletion of a collection ---
     const handleDeleteConfirm = async () => {
         if (!collectionToDelete) return;
         setError(''); setSuccess('');
-
         try {
             const res = await fetch(`${API_BASE}/admin/collections/${collectionToDelete}`, {
                 method: 'DELETE',
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Failed to delete collection');
-
             setSuccess(`Collection '${collectionToDelete}' deleted successfully!`);
-            fetchRoutingMap(); // Refresh the list
+            fetchRoutingMap();
         } catch (err) {
             setError(err.message);
         } finally {
-            setCollectionToDelete(null); // Close the modal
+            setCollectionToDelete(null);
         }
     };
 
     return (
         <div>
-            {/* --- NEW: Render the confirmation modal conditionally --- */}
             {collectionToDelete && (
                 <ConfirmationModal
                     resourceName={collectionToDelete}
@@ -126,11 +121,10 @@ export default function CollectionsPage() {
                                 <li key={col} className='p-3 flex justify-between items-center'>
                                   <div className="flex flex-col">
                                     <span className="text-white font-semibold">{col}</span>
-                                    <span className={`mt-1 text-xs px-2 py-0.5 rounded-full w-fit ${rule.field ? 'bg-purple-600/50 text-purple-300' : 'bg-gray-600 text-gray-300'}`}>
-                                        {rule.field ? `Sharded by "${rule.field}"` : 'Not Sharded'}
+                                    <span className={`mt-1 text-xs px-2 py-0.5 rounded-full w-fit ${rule.rules && rule.rules.length > 0 ? 'bg-purple-600/50 text-purple-300' : 'bg-gray-600 text-gray-300'}`}>
+                                        {rule.rules && rule.rules.length > 0 ? `Sharded` : 'Not Sharded'}
                                     </span>
                                   </div>
-                                  {/* --- NEW: Delete button for each collection --- */}
                                   <button
                                       onClick={() => setCollectionToDelete(col)}
                                       className='p-2 text-gray-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors'
