@@ -1,20 +1,23 @@
-# query_api/app/settings.py
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Kafka Configuration
     KAFKA_BROKER_URL: str
     KAFKA_TOPIC_PREFIX: str
-
-    # Typesense HA Cluster Configuration
-    TYPESENSE_NODES: str  # Comma-separated list of nodes, e.g., "typesense-1,typesense-2"
-    TYPESENSE_API_KEY: str
-
-    # Redis Configuration
     REDIS_URL: str
 
-    # Internal Service URL (used by other services like the indexer)
+    # Internal State Cluster
+    INTERNAL_STATE_NODES: str
+    INTERNAL_STATE_API_KEY: str
+
+    # Default Federated Data Cluster
+    DEFAULT_DATA_CLUSTER_NODES: str
+    DEFAULT_DATA_CLUSTER_API_KEY: str
+
+    # Secondary Federated Data Cluster
+    DEFAULT_DATA2_CLUSTER_NODES: str
+    DEFAULT_DATA2_CLUSTER_API_KEY: str
+
     INTERNAL_QUERY_API_URL: str
 
     class Config:

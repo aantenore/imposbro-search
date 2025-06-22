@@ -17,91 +17,58 @@ from settings import settings
 STATE_COLLECTION_NAME = "_imposbro_state"
 STATE_DOCUMENT_ID = "config_v1"
 
-# --- In-Memory State for Federation (will be populated from Typesense) ---
+# --- In-Memory State for Federation ---
 federation_clusters_config: Dict[str, Dict] = {}
 federation_clients: Dict[str, typesense.Client] = {}
 collection_routing_rules: Dict[str, Dict] = {}
 
-# This client connects to the entire HA cluster for resilience
-ha_client: Optional[typesense.Client] = None
+# Client for the internal, stateful HA cluster
+state_ha_client: Optional[typesense.Client] = None
 
 
 def save_state_to_typesense():
-    """Saves the current configuration state to a document in the Typesense HA cluster."""
-    if not ha_client:
-        print("🔥 Cannot save state: HA Typesense client not available.")
-        return
+    if not state_ha_client: return
     try:
-        # Create a clean version of the config for saving, by excluding the "default" cluster
-        # which is managed internally and not a user-defined external cluster.
-        config_to_save = {k: v for k, v in federation_clusters_config.items() if k != 'default'}
-
         state = {
-            "federation_clusters_config": config_to_save,
+            "federation_clusters_config": federation_clusters_config,
             "collection_routing_rules": collection_routing_rules,
         }
         state_document = {"id": STATE_DOCUMENT_ID, "state_data": json.dumps(state)}
-        ha_client.collections[STATE_COLLECTION_NAME].documents.upsert(state_document)
-        print(f"✅ State successfully saved to Typesense collection '{STATE_COLLECTION_NAME}'.")
+        state_ha_client.collections[STATE_COLLECTION_NAME].documents.upsert(state_document)
+        print(f"✅ State successfully saved to internal Typesense.")
     except Exception as e:
-        print(f"🔥 Failed to save state to Typesense: {e}")
+        print(f"🔥 Failed to save state: {e}")
 
 
-def load_and_reconcile_state_from_typesense():
-    """
-    Loads configuration state from Typesense and reconciles it with the actual
-    collections present in the cluster.
-    """
+def load_state_from_typesense():
     global federation_clusters_config, collection_routing_rules, federation_clients
-    if not ha_client: return
-
+    if not state_ha_client: return False
     try:
         try:
-            ha_client.collections[STATE_COLLECTION_NAME].retrieve()
+            state_ha_client.collections[STATE_COLLECTION_NAME].retrieve()
         except typesense.exceptions.ObjectNotFound:
-            print(f"💡 State collection '{STATE_COLLECTION_NAME}' not found. Creating it.")
-            ha_client.collections.create({
-                'name': STATE_COLLECTION_NAME,
-                'fields': [{'name': 'state_data', 'type': 'string'}]
-            })
+            print(f"💡 State collection '{STATE_COLLECTION_NAME}' not found. Will create it after loading.")
+            return False  # Indicate that no state was loaded
 
-        state_document = ha_client.collections[STATE_COLLECTION_NAME].documents[STATE_DOCUMENT_ID].retrieve()
+        state_document = state_ha_client.collections[STATE_COLLECTION_NAME].documents[STATE_DOCUMENT_ID].retrieve()
         state = json.loads(state_document.get("state_data", "{}"))
 
-        # Load the saved configs and rules
         federation_clusters_config.update(state.get("federation_clusters_config", {}))
         collection_routing_rules.update(state.get("collection_routing_rules", {}))
 
-        # Re-initialize Typesense clients for all saved external clusters
         for name, config in federation_clusters_config.items():
-            federation_clients[name] = typesense.Client(
-                nodes=[{'host': config['host'], 'port': config['port'], 'protocol': 'http'}],
-                api_key=config['api_key'],
-                connection_timeout_seconds=5
-            )
-        print(f"✅ Loaded {len(federation_clusters_config)} external cluster(s) from Typesense state.")
+            nodes = [{'host': h, 'port': config['port'], 'protocol': 'http'} for h in config['host'].split(',')]
+            federation_clients[name] = typesense.Client(nodes=nodes, api_key=config['api_key'],
+                                                        connection_timeout_seconds=5)
+
+        print(f"✅ Loaded {len(federation_clusters_config)} federated cluster(s) from state.")
+        return True
     except typesense.exceptions.ObjectNotFound:
-        print(f"💡 No saved state document found. Will discover live collections.")
+        print(f"💡 No saved state document found.")
+        return False
     except Exception as e:
-        print(f"🔥 Error loading saved state: {e}")
-
-    try:
-        live_collections = ha_client.collections.retrieve()
-        live_collection_names = {col['name'] for col in live_collections if not col['name'].startswith('_')}
-
-        state_changed = False
-        for name in live_collection_names:
-            if name not in collection_routing_rules:
-                print(f"💡 Discovered new collection '{name}'. Creating default routing rule.")
-                collection_routing_rules[name] = {"rules": [], "default_cluster": "default"}
-                state_changed = True
-
-        if state_changed:
-            print("💾 Saving reconciled state back to Typesense...")
-            save_state_to_typesense()
-
-    except Exception as e:
-        print(f"🔥 Error discovering live collections from Typesense: {e}")
+        print(f"🔥 Error loading state: {e}")
+        return False
 
 
 # --- Kafka Producer & Pydantic Models ---
@@ -145,32 +112,48 @@ Instrumentator().instrument(app).expose(app)
 
 @app.on_event("startup")
 async def startup_event():
-    global ha_client
+    global state_ha_client
 
-    print("⏳ Initializing Typesense HA client object...")
-    typesense_nodes = [{"host": host, "port": "8108", "protocol": "http"} for host in
-                       settings.TYPESENSE_NODES.split(',')]
-    ha_client = typesense.Client(
-        {'nodes': typesense_nodes, 'api_key': settings.TYPESENSE_API_KEY, 'connection_timeout_seconds': 10,
-         'retry_interval_seconds': 2, 'num_retries': 5})
-
-    federation_clients["default"] = ha_client
-
-    print("✅ HA Typesense client object created.")
-
+    # 1. Initialize and wait for the INTERNAL STATE cluster
     while True:
         try:
-            print("⏳ Checking Typesense cluster readiness...")
-            load_and_reconcile_state_from_typesense()
-            print("✅ Typesense cluster is ready.")
+            print("⏳ Attempting to initialize Internal State HA client...")
+            state_nodes = [{"host": host, "port": "8108", "protocol": "http"} for host in
+                           settings.INTERNAL_STATE_NODES.split(',')]
+            state_ha_client = typesense.Client(
+                {'nodes': state_nodes, 'api_key': settings.INTERNAL_STATE_API_KEY, 'connection_timeout_seconds': 10,
+                 'retry_interval_seconds': 2, 'num_retries': 5})
+            state_ha_client.health.retrieve()
+            print("✅ Internal State HA client initialized and cluster is healthy.")
             break
-        except (typesense.exceptions.ServiceUnavailable, typesense.exceptions.ConnectionError,
-                typesense.exceptions.ConnectionTimeout) as e:
-            print(f"⚠️ Typesense cluster not ready yet ({type(e).__name__}). Retrying in 5 seconds...")
-            time.sleep(5)
         except Exception as e:
-            print(f"🔥 An unexpected error occurred during startup health check: {e}. Retrying...")
+            print(f"🔥 Failed to initialize Internal State HA client: {e}. Retrying...")
             time.sleep(5)
+
+    # 2. Try to load state. If it fails or is empty, bootstrap the default data cluster.
+    state_loaded = load_state_from_typesense()
+    if not state_loaded:
+        print("💡 No existing state found. Bootstrapping default data cluster configuration...")
+        default_data_nodes_str = settings.DEFAULT_DATA_CLUSTER_NODES
+        default_data_nodes = [{'host': h, 'port': '8108', 'protocol': 'http'} for h in
+                              default_data_nodes_str.split(',')]
+
+        default_client_config = {
+            'name': 'default-data-cluster',
+            'host': default_data_nodes_str,  # Store the comma-separated string
+            'port': 8108,
+            'api_key': settings.DEFAULT_DATA_CLUSTER_API_KEY
+        }
+
+        # Create client and register it
+        federation_clients['default-data-cluster'] = typesense.Client(nodes=default_data_nodes,
+                                                                      api_key=settings.DEFAULT_DATA_CLUSTER_API_KEY)
+        federation_clusters_config['default-data-cluster'] = default_client_config
+
+        # This becomes the default destination for un-routed documents
+        # Note: We need a mechanism to set this in collection_routing_rules
+        print("✅ Default data cluster bootstrapped.")
+        save_state_to_typesense()
 
     get_producer()
 
