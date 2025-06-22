@@ -4,17 +4,17 @@ import { Plus, X, GitBranch, Trash2 } from 'lucide-react';
 
 const API_BASE = '/api';
 
-const ConfirmationModal = ({ onConfirm, onCancel, resourceName, resourceType }) => {
+const ConfirmationModal = ({ onConfirm, onCancel, resourceName }) => {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
             <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700 w-full max-w-md mx-4">
                 <h2 className="text-xl font-bold text-white mb-4">Confirm Deletion</h2>
                 <p className="text-gray-300 mb-6">
-                    Are you sure you want to delete the {resourceType} for <span className="font-bold text-red-400">{resourceName}</span>? The collection itself will not be deleted.
+                    Are you sure you want to delete all routing rules for <span className="font-bold text-red-400">{resourceName}</span>? The collection will revert to using the default cluster.
                 </p>
                 <div className="flex justify-end space-x-4">
-                    <button onClick={onCancel} className="px-4 py-2 rounded-md bg-gray-600 hover:bg-gray-500 text-white font-semibold">Cancel</button>
-                    <button onClick={onConfirm} className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-bold">Delete Rule</button>
+                    <button onClick={onCancel} className="px-4 py-2 rounded-md bg-gray-600 hover:bg-gray-500">Cancel</button>
+                    <button onClick={onConfirm} className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 font-bold">Delete Rules</button>
                 </div>
             </div>
         </div>
@@ -38,12 +38,12 @@ export default function RoutingPage() {
     const fetchData = async () => {
         try {
             const res = await fetch(`${API_BASE}/admin/routing-map`);
-            if (!res.ok) throw new Error('Failed to fetch data');
+            if (!res.ok) throw new Error('Failed to fetch routing data');
             const data = await res.json();
             setCollections(Object.keys(data.collections || {}));
             setClusters(data.clusters || []);
             setCurrentRules(data.collections || {});
-            if (data.clusters && data.clusters.length > 0) {
+            if (data.clusters.length > 0) {
                 setDefaultCluster(data.clusters[0]);
             }
         } catch (err) { setError(err.message); }
@@ -52,33 +52,38 @@ export default function RoutingPage() {
     useEffect(() => { fetchData(); }, []);
 
     useEffect(() => {
-        if (!selectedCollection) {
-            setAvailableFields([]);
-            return;
-        }
-        const fetchSchema = async () => {
+        const fetchSchemaAndSetRules = async () => {
+            if (!selectedCollection) {
+                setAvailableFields([]);
+                setRules([]);
+                return;
+            }
+            setError('');
             try {
                 const res = await fetch(`${API_BASE}/admin/collections/${selectedCollection}`);
                 if (!res.ok) {
                     setAvailableFields([]);
-                    throw new Error('Failed to fetch collection schema');
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || 'Failed to fetch collection schema');
                 }
                 const schemaData = await res.json();
                 setAvailableFields(schemaData.fields || []);
+
+                const existingRuleSet = currentRules[selectedCollection];
+                if (existingRuleSet && existingRuleSet.rules) {
+                    setRules(existingRuleSet.rules);
+                    setDefaultCluster(existingRuleSet.default_cluster);
+                } else {
+                    setRules([]);
+                    setDefaultCluster(clusters[0] || '');
+                }
             } catch (err) {
-                setError(err.message);
+                setError(`Could not fetch schema for ${selectedCollection}. Collection may be empty or invalid.`);
+                setAvailableFields([]);
+                setRules([]);
             }
         };
-        fetchSchema();
-
-        const existingRuleSet = currentRules[selectedCollection];
-        if (existingRuleSet && existingRuleSet.rules) {
-            setRules(existingRuleSet.rules);
-            setDefaultCluster(existingRuleSet.default_cluster);
-        } else {
-            setRules([]);
-            setDefaultCluster(clusters[0] || '');
-        }
+        fetchSchemaAndSetRules();
     }, [selectedCollection, clusters, currentRules]);
 
     const handleAddRule = () => {
@@ -116,37 +121,25 @@ export default function RoutingPage() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Failed to set routing rules');
-            setSuccess(`Routing rules for '${selectedCollection}' set successfully!`);
+            setSuccess(`Routing rules for '${selectedCollection}' saved successfully!`);
             fetchData();
         } catch (err) { setError(err.message); }
     };
 
     const handleDeleteConfirm = async () => {
         if (!ruleToDelete) return;
-        setError(''); setSuccess('');
         try {
-            const res = await fetch(`${API_BASE}/admin/routing-rules/${ruleToDelete}`, {
-                method: 'DELETE',
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Failed to delete routing rule');
-            setSuccess(`Routing rule for '${ruleToDelete}' deleted successfully!`);
+            const res = await fetch(`${API_BASE}/admin/routing-rules/${ruleToDelete}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete routing rule');
+            setSuccess(`Routing rules for '${ruleToDelete}' have been deleted.`);
             fetchData();
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setRuleToDelete(null);
-        }
+        } catch (err) { setError(err.message); }
+        finally { setRuleToDelete(null); }
     };
 
     return (
         <div>
-            {ruleToDelete && ( <ConfirmationModal
-                resourceName={ruleToDelete}
-                resourceType="routing rule"
-                onConfirm={handleDeleteConfirm}
-                onCancel={() => setRuleToDelete(null)}
-            /> )}
+            {ruleToDelete && ( <ConfirmationModal resourceName={ruleToDelete} onConfirm={handleDeleteConfirm} onCancel={() => setRuleToDelete(null)} /> )}
             <h1 className='text-3xl font-bold mb-4'>Document Routing Rules</h1>
             <p className="text-gray-400 mb-6 max-w-2xl">Define a set of rules to shard a collection. The first rule that matches a document determines its destination.</p>
 
@@ -168,18 +161,18 @@ export default function RoutingPage() {
                                    <label className="block text-sm font-medium text-gray-300 mb-1">2. Define Specific Rules</label>
                                    {rules.map((rule, index) => (
                                        <div key={index} className='grid grid-cols-12 gap-2 items-center mt-2 p-2 bg-gray-900/50 rounded-md'>
-                                            <select name='field' value={rule.field} onChange={e => handleRuleChange(index, e)} className='col-span-4 bg-gray-800 border-gray-600 rounded-md text-sm'>
+                                            <select name='field' value={rule.field} onChange={e => handleRuleChange(index, e)} className='col-span-4 bg-gray-800 border-gray-600 rounded-md text-sm' disabled={availableFields.length === 0}>
                                                 <option value="">-- Field --</option>
                                                 {availableFields.map(f => <option key={f.name} value={f.name}>{f.name}</option>)}
                                             </select>
-                                            <input type='text' name='value' placeholder='Value (e.g., IT)' value={rule.value} onChange={e => handleRuleChange(index, e)} className='col-span-4 bg-gray-800 border-gray-600 rounded-md text-sm' />
+                                            <input type='text' name='value' placeholder='Value' value={rule.value} onChange={e => handleRuleChange(index, e)} className='col-span-4 bg-gray-800 border-gray-600 rounded-md text-sm' />
                                             <select name='cluster' value={rule.cluster} onChange={e => handleRuleChange(index, e)} className='col-span-3 bg-gray-800 border-gray-600 rounded-md text-sm'>
                                                 {clusters.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                            <button type='button' onClick={() => handleRemoveRule(index)} className='col-span-1 p-1 text-gray-400 hover:text-red-400 justify-self-center'><X size={16}/></button>
                                        </div>
                                    ))}
-                                   <button type='button' onClick={handleAddRule} className='mt-3 flex items-center text-sm text-blue-400 hover:text-blue-300'><Plus size={16} className='mr-1'/> Add Rule</button>
+                                   <button type='button' onClick={handleAddRule} className='mt-3 flex items-center text-sm text-blue-400 hover:text-blue-300' disabled={availableFields.length === 0}><Plus size={16} className='mr-1'/> Add Rule</button>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-300 mb-1">3. Set Default Cluster</label>
@@ -187,7 +180,7 @@ export default function RoutingPage() {
                                         {clusters.map(c => <option key={c} value={c}>{c}</option>)}
                                     </select>
                                 </div>
-                                <button type='submit' className='w-full bg-purple-600 hover:bg-purple-700 rounded-md py-2 font-semibold flex items-center justify-center transition-colors'><GitBranch size={18} className="mr-2"/> Save Routing Rules</button>
+                                <button type='submit' className='w-full bg-purple-600 hover:bg-purple-700 rounded-md py-2 font-semibold flex items-center justify-center'><GitBranch size={18} className="mr-2"/> Save Routing Rules</button>
                             </>
                         )}
 
@@ -198,20 +191,14 @@ export default function RoutingPage() {
                 <div>
                      <h2 className='text-xl font-semibold mb-3'>Current Routing Configuration</h2>
                      <div className='bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-4'>
-                        {Object.values(currentRules).filter(rule => rule.rules && rule.rules.length > 0).length > 0 ? Object.values(currentRules).filter(rule => rule.rules && rule.rules.length > 0).map((rule) => (
-                            <div key={rule.collection} className="p-3 bg-gray-900/50 rounded-lg relative">
-                               <p className="font-bold text-white">{rule.collection}</p>
+                        {Object.values(currentRules).filter(rule => rule.rules && rule.rules.length > 0).length > 0 ? Object.values(currentRules).filter(rule => rule.rules && rule.rules.length > 0).map((ruleConfig, idx) => (
+                            <div key={idx} className="p-3 bg-gray-900/50 rounded-lg relative">
+                               <p className="font-bold text-white">{ruleConfig.collection}</p>
                                <ul className="mt-2 text-sm space-y-1">
-                                   {rule.rules.map((r, i) => <li key={i} className="flex items-center"><span className="font-mono bg-gray-700 px-1.5 py-0.5 rounded w-1/3 truncate">{r.field}: {r.value}</span> <span className="text-gray-500 mx-2">→</span> <span className="text-blue-400 font-semibold">{r.cluster}</span></li>)}
-                                   <li className="mt-2 pt-2 border-t border-gray-700 flex items-center"><span className="text-gray-300 w-1/3">Default</span> <span className="text-gray-500 mx-2">→</span> <span className="text-blue-400 font-semibold">{rule.default_cluster}</span></li>
+                                   {ruleConfig.rules.map((r, i) => <li key={i} className="flex items-center"><span className="font-mono bg-gray-700 px-1.5 py-0.5 rounded w-2/5 truncate">{r.field}: {r.value}</span> <span className="text-gray-500 mx-2">→</span> <span className="text-blue-400 font-semibold">{r.cluster}</span></li>)}
+                                   <li className="mt-2 pt-2 border-t border-gray-700 flex items-center"><span className="text-gray-300 w-2/5">Default</span> <span className="text-gray-500 mx-2">→</span> <span className="text-blue-400 font-semibold">{ruleConfig.default_cluster}</span></li>
                                </ul>
-                               <button
-                                   onClick={() => setRuleToDelete(rule.collection)}
-                                   className='absolute top-2 right-2 p-2 text-gray-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors'
-                                   title={`Delete routing rule for ${rule.collection}`}
-                               >
-                                   <Trash2 size={16}/>
-                               </button>
+                               <button onClick={() => setRuleToDelete(ruleConfig.collection)} className='absolute top-2 right-2 p-2 text-gray-400 hover:text-red-500 hover:bg-red-900/50 rounded-full' title={`Delete routing rules for ${ruleConfig.collection}`}><Trash2 size={16}/></button>
                             </div>
                         )) : (<p className='text-gray-400 p-3'>No routing rules configured yet.</p>)}
                      </div>
