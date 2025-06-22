@@ -32,8 +32,12 @@ def save_state_to_typesense():
         print("🔥 Cannot save state: HA Typesense client not available.")
         return
     try:
+        # Create a clean version of the config for saving, by excluding the "default" cluster
+        # which is managed internally and not a user-defined external cluster.
+        config_to_save = {k: v for k, v in federation_clusters_config.items() if k != 'default'}
+
         state = {
-            "federation_clusters_config": federation_clusters_config,
+            "federation_clusters_config": config_to_save,
             "collection_routing_rules": collection_routing_rules,
         }
         state_document = {"id": STATE_DOCUMENT_ID, "state_data": json.dumps(state)}
@@ -51,7 +55,6 @@ def load_and_reconcile_state_from_typesense():
     global federation_clusters_config, collection_routing_rules, federation_clients
     if not ha_client: return
 
-    # 1. Load the saved configuration state (clusters, rules)
     try:
         try:
             ha_client.collections[STATE_COLLECTION_NAME].retrieve()
@@ -62,32 +65,30 @@ def load_and_reconcile_state_from_typesense():
                 'fields': [{'name': 'state_data', 'type': 'string'}]
             })
 
-        state_document = ha_client.collections[STATE_DOCUMENT_ID].retrieve()
+        state_document = ha_client.collections[STATE_COLLECTION_NAME].documents[STATE_DOCUMENT_ID].retrieve()
         state = json.loads(state_document.get("state_data", "{}"))
 
+        # Load the saved configs and rules
         federation_clusters_config.update(state.get("federation_clusters_config", {}))
         collection_routing_rules.update(state.get("collection_routing_rules", {}))
 
+        # Re-initialize Typesense clients for all saved external clusters
         for name, config in federation_clusters_config.items():
-            if name != "default":
-                federation_clients[name] = typesense.Client(
-                    nodes=[{'host': config['host'], 'port': config['port'], 'protocol': 'http'}],
-                    api_key=config['api_key'],
-                    connection_timeout_seconds=5
-                )
-        print(f"✅ Loaded saved state from Typesense.")
+            federation_clients[name] = typesense.Client(
+                nodes=[{'host': config['host'], 'port': config['port'], 'protocol': 'http'}],
+                api_key=config['api_key'],
+                connection_timeout_seconds=5
+            )
+        print(f"✅ Loaded {len(federation_clusters_config)} external cluster(s) from Typesense state.")
     except typesense.exceptions.ObjectNotFound:
         print(f"💡 No saved state document found. Will discover live collections.")
     except Exception as e:
-        # Re-raise the exception so the startup loop can catch it
-        raise e
+        print(f"🔥 Error loading saved state: {e}")
 
-    # 2. Discover live collections from the Typesense cluster
     try:
         live_collections = ha_client.collections.retrieve()
         live_collection_names = {col['name'] for col in live_collections if not col['name'].startswith('_')}
 
-        # 3. Reconcile: Ensure every live collection has a routing rule entry
         state_changed = False
         for name in live_collection_names:
             if name not in collection_routing_rules:
@@ -95,7 +96,6 @@ def load_and_reconcile_state_from_typesense():
                 collection_routing_rules[name] = {"rules": [], "default_cluster": "default"}
                 state_changed = True
 
-        # 4. If we discovered new collections, save the updated state
         if state_changed:
             print("💾 Saving reconciled state back to Typesense...")
             save_state_to_typesense()
@@ -139,7 +139,7 @@ class FieldRule(BaseModel): field: str; value: str; cluster: str
 class RoutingRules(BaseModel): collection: str; rules: List[FieldRule]; default_cluster: str = "default"
 
 
-app = FastAPI(title="IMPOSBRO Federated Search & Admin API", version="3.4.0-Resilient-Startup-Fix")
+app = FastAPI(title="IMPOSBRO Federated Search & Admin API", version="3.4.1-Fix")
 Instrumentator().instrument(app).expose(app)
 
 
@@ -147,7 +147,6 @@ Instrumentator().instrument(app).expose(app)
 async def startup_event():
     global ha_client
 
-    # Initialize the HA client object once
     print("⏳ Initializing Typesense HA client object...")
     typesense_nodes = [{"host": host, "port": "8108", "protocol": "http"} for host in
                        settings.TYPESENSE_NODES.split(',')]
@@ -156,31 +155,23 @@ async def startup_event():
          'retry_interval_seconds': 2, 'num_retries': 5})
 
     federation_clients["default"] = ha_client
-    if "default" not in federation_clusters_config:
-        federation_clusters_config["default"] = {"name": "default", "host": "Internal HA Cluster", "port": 8108,
-                                                 "api_key": "N/A"}
+
     print("✅ HA Typesense client object created.")
 
-    # Now, wait for the cluster to be ready before proceeding
     while True:
         try:
             print("⏳ Checking Typesense cluster readiness...")
-            # The first real operation is to load state, which requires a healthy leader.
-            # This serves as our health check.
             load_and_reconcile_state_from_typesense()
             print("✅ Typesense cluster is ready.")
             break
         except (typesense.exceptions.ServiceUnavailable, typesense.exceptions.ConnectionError,
                 typesense.exceptions.ConnectionTimeout) as e:
-            # These exceptions are expected if the cluster is not ready or has no leader.
             print(f"⚠️ Typesense cluster not ready yet ({type(e).__name__}). Retrying in 5 seconds...")
             time.sleep(5)
         except Exception as e:
-            # Handle other potential exceptions during startup
             print(f"🔥 An unexpected error occurred during startup health check: {e}. Retrying...")
             time.sleep(5)
 
-    # Once the cluster is ready, initialize Kafka
     get_producer()
 
 
@@ -260,21 +251,18 @@ async def search(request: Request, collection_name: str, q: str = Query(..., min
     return {"found": total_found, "page": page, "hits": unique_hits}
 
 
-# Codice Corretto
 @app.post("/admin/federation/clusters", status_code=201)
 def register_cluster(cluster: Cluster):
     if cluster.name in federation_clients:
         raise HTTPException(status_code=409, detail=f"Cluster '{cluster.name}' is already registered.")
     try:
-        # Crea un dizionario di configurazione
+        # Correctly create client with a config dictionary
         config = {
             'nodes': [{'host': cluster.host, 'port': cluster.port, 'protocol': 'http'}],
             'api_key': cluster.api_key,
-            'connection_timeout_seconds': 5  # È buona pratica aggiungere un timeout
+            'connection_timeout_seconds': 5
         }
-        # Passa il singolo dizionario al client
         new_client = typesense.Client(config)
-
         federation_clients[cluster.name] = new_client
         federation_clusters_config[cluster.name] = cluster.dict()
         save_state_to_typesense()
@@ -285,9 +273,19 @@ def register_cluster(cluster: Cluster):
 
 @app.delete("/admin/federation/clusters/{cluster_name}", status_code=200)
 def delete_cluster(cluster_name: str):
-    if cluster_name == "default": raise HTTPException(status_code=400, detail="Cannot delete the default cluster.")
-    if cluster_name not in federation_clients: raise HTTPException(status_code=404,
-                                                                   detail=f"Cluster '{cluster_name}' not found.")
+    if cluster_name == "default":
+        raise HTTPException(status_code=400, detail="Cannot delete the default cluster.")
+    if cluster_name not in federation_clients:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_name}' not found.")
+
+    # Check if cluster is in use before deleting
+    for collection, rule_config in collection_routing_rules.items():
+        if rule_config.get("default_cluster") == cluster_name:
+            raise HTTPException(status_code=400, detail=f"Cluster in use as default for collection '{collection}'.")
+        for rule in rule_config.get("rules", []):
+            if rule.get("cluster") == cluster_name:
+                raise HTTPException(status_code=400, detail=f"Cluster in use by a rule for collection '{collection}'.")
+
     del federation_clients[cluster_name]
     del federation_clusters_config[cluster_name]
     save_state_to_typesense()
@@ -295,13 +293,23 @@ def delete_cluster(cluster_name: str):
 
 
 @app.get("/admin/federation/clusters")
-def get_all_clusters(): return federation_clusters_config
+def get_all_clusters():
+    # Create a display-friendly version of the config for the UI
+    display_config = federation_clusters_config.copy()
+    display_config["default"] = {
+        "name": "default",
+        "host": "Internal HA Cluster",
+        "port": 8108,
+        "api_key": "N/A"
+    }
+    return display_config
 
 
 @app.post("/admin/collections", status_code=201)
 async def create_collection(schema: CollectionSchema):
     schema_dict = schema.dict()
-    if schema_dict.get("default_sorting_field") is None: del schema_dict["default_sorting_field"]
+    if schema_dict.get("default_sorting_field") is None:
+        del schema_dict["default_sorting_field"]
 
     async def create_on_one_cluster(client, name):
         try:
@@ -339,7 +347,8 @@ async def delete_collection(collection_name: str):
 
 @app.get("/admin/collections/{collection_name}", status_code=200)
 def get_collection_schema(collection_name: str):
-    if not ha_client: raise HTTPException(status_code=500, detail="Default HA client not available.")
+    if not ha_client:
+        raise HTTPException(status_code=500, detail="Default HA client not available.")
     try:
         schema_info = ha_client.collections[collection_name].retrieve()
         return {"fields": schema_info.get("fields", [])}
