@@ -1,0 +1,7 @@
+{
+  "__inputs": [],"__requires": [], "annotations": { "list": [] },"editable": true, "panels": [
+    {"id": 1, "title": "Total Documents Ingested", "type": "stat", "datasource": {"type": "prometheus"},"targets": [{"expr": "sum(documents_ingested_total)", "legendFormat": "Total Documents"}]},
+    {"id": 2, "title": "Query API: Request Rate (5m)", "type": "timeseries", "datasource": {"type": "prometheus"},"targets": [{"expr": "sum(rate(fastapi_requests_total{job=\"imposbro_services\"}[5m])) by (app_name)", "legendFormat": "{{app_name}} reqs/s"}]},
+    {"id": 3, "title": "Query API: P95 Latency", "type": "timeseries", "datasource": {"type": "prometheus"}, "unit": "s", "targets": [{"expr": "histogram_quantile(0.95, sum(rate(fastapi_requests_latency_seconds_bucket{job=\"imposbro_services\"}[5m])) by (le, app_name))", "legendFormat": "{{app_name}} P95"}]}
+  ], "title": "IMPOSBRO Search Overview"
+}
