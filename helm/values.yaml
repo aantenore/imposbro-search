@@ -1,0 +1,55 @@
+# values.yaml
+
+# Global values
+replicaCount: 1
+imagePullPolicy: IfNotPresent
+
+# Configuration for the query-api service
+queryApi:
+  name: query-api
+  image: "your-registry/imposbro-query-api:latest" # <-- IMPORTANT: Replace with your Docker image name
+  port: 8000
+  service:
+    type: ClusterIP
+    port: 80
+
+# Configuration for the admin-ui service
+adminUi:
+  name: admin-ui
+  image: "your-registry/imposbro-admin-ui:latest" # <-- IMPORTANT: Replace with your Docker image name
+  port: 3000
+  service:
+    type: LoadBalancer # Expose this service outside the cluster
+    port: 80
+
+# Configuration for backend services (Kafka, Typesense, Redis)
+# For a production setup, these should come from external Helm charts (as dependencies)
+# or be managed services from your cloud provider.
+kafka:
+  name: kafka
+  port: 9092
+
+typesense:
+  name: typesense
+  port: 8108
+  replica:
+    name: typesense-replica
+    port: 8108
+
+redis:
+  name: redis
+  port: 6379
+
+# Centralized configuration for environment variables
+# These will be loaded into a ConfigMap and used by the containers
+config:
+  KAFKA_BROKER_URL: "kafka:9092"
+  KAFKA_TOPIC_PREFIX: "imposbro_search_sharded"
+  TYPESENSE_HOST: "typesense"
+  TYPESENSE_PORT: "8108"
+  # SECURITY NOTE: API keys and other credentials should be managed via Kubernetes Secrets, not ConfigMaps.
+  # This is a simplified example for demonstration.
+  TYPESENSE_API_KEY: "xyz"
+  REDIS_URL: "redis://redis:6379"
+  # This URL is used for internal communication between containers in the Kubernetes cluster
+  INTERNAL_QUERY_API_URL: "http://query-api:80"
