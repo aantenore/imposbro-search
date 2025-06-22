@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-config
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+data:
+  KAFKA_BROKER_URL: {{ .Values.config.KAFKA_BROKER_URL | quote }}
+  KAFKA_TOPIC_PREFIX: {{ .Values.config.KAFKA_TOPIC_PREFIX | quote }}
+  TYPESENSE_HOST: {{ .Values.config.TYPESENSE_HOST | quote }}
+  TYPESENSE_PORT: {{ .Values.config.TYPESENSE_PORT | quote }}
+  REDIS_URL: {{ .Values.config.REDIS_URL | quote }}
+  INTERNAL_QUERY_API_URL: {{ .Values.config.INTERNAL_QUERY_API_URL | quote }}
+  # WARNING: This is for demo purposes. In production, use Secrets for API keys.
+  TYPESENSE_API_KEY: {{ .Values.config.TYPESENSE_API_KEY | quote }}
