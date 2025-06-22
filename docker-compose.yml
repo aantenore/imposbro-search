@@ -22,9 +22,11 @@ services:
     volumes:
       - redis_data:/data
 
-  # --- MODIFIED: Typesense nodes configured as a 3-node HA cluster ---
+  # --- MODIFIED: Typesense nodes now expose their API ports ---
   typesense-1:
     image: typesense/typesense:0.25.2
+    ports: # <-- ADDED
+      - "8108:8108"
     environment:
       - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
       - TYPESENSE_DATA_DIR=/data
@@ -36,6 +38,8 @@ services:
 
   typesense-2:
     image: typesense/typesense:0.25.2
+    ports: # <-- ADDED
+      - "8109:8108"
     environment:
       - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
       - TYPESENSE_DATA_DIR=/data
@@ -47,6 +51,8 @@ services:
 
   typesense-3:
     image: typesense/typesense:0.25.2
+    ports: # <-- ADDED
+      - "8110:8108"
     environment:
       - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
       - TYPESENSE_DATA_DIR=/data
