@@ -222,7 +222,8 @@ Add the hostnames of the new nodes to this file so all nodes in the cluster can 
 
 ```
 # In the 'typesense-nodes' file:
-typesense-1:8108:http,typesense-2:8108:http,typesense-3:8108:http,typesense-4:8108:http,typesense-5:8108:http
+in the format hostname:peering_port:api_port
+typesense-1:8107:8108,typesense-2:8107:8108,typesense-3:8107:8108,...
 ```
 
 ### Step 3: Update the `.env` File
