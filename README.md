@@ -25,9 +25,9 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 
 ---
 
-## 🏛️ Architecture Overview
+### 🏛️ Architecture Overview
 
-IMPOSBRO Search is built on a microservices architecture designed for resilience, scalability, and maintainability.
+IMPOSBRO Search is built on a distributed microservices architecture designed for resilience, scalability, and maintainability. It decouples the API from the indexing process, ensures high availability of its configuration, and provides a clear separation of concerns between components.
 
 ```mermaid
 graph TD;
@@ -36,23 +36,23 @@ graph TD;
     end
 
     subgraph Core_Services
-        B[Admin UI - Nextjs];
+        B[Admin UI - Next.js];
         C[Query API - FastAPI];
     end
 
     subgraph Data_and_Messaging
-        D[Kafka Message Queue];
-        E[Typesense HA Cluster];
+        D[Kafka - Message Queue];
+        E[Typesense HA Cluster - Internal State];
     end
 
     subgraph Async_Workers
-        F[Indexing Service Python Worker];
+        F[Indexing Service - Python Worker];
     end
 
     subgraph External_Data_Stores
-        G[External Cluster 1 Typesense];
-        H[External Cluster 2 Typesense];
-        I[External Cluster 3 Typesense];
+        G[External Cluster 1 - Typesense];
+        H[External Cluster 2 - Typesense];
+        I[External Cluster 3 - Typesense];
     end
 
     A -->|Manages System| B;
@@ -71,17 +71,49 @@ graph TD;
     F -->|Indexes Documents| H;
     F -->|Indexes Documents| I;
 
-
 ```
 
-### Component Roles
+---
+
+### 🧩 Component Roles
 
 * **Query API (`query-api`)**: The "brain" of the system. This FastAPI service handles all incoming requests for ingestion, federated search, and administration. It determines where documents should be routed (including fan-out logic to multiple destinations) and stores the system's configuration in the internal Typesense HA cluster.
+
 * **Admin UI (`admin-ui`)**: The control panel. A Next.js application providing a user-friendly interface to manage all aspects of the search federation.
+
 * **Indexing Service (`indexing-service`)**: A dedicated background worker. It consumes document ingestion messages from Kafka and reliably indexes them into the appropriate target clusters. This decouples the ingestion process from the API response, ensuring high throughput.
-* **Typesense HA Cluster**: A 3-node, highly available Typesense cluster that acts as the persistent backend for the `query_api`, storing all application state.
-* **Kafka**: A durable message broker that acts as a buffer for ingestion requests, ensuring data integrity.
-* **Prometheus & Grafana**: A standard stack for metrics collection and observability.
+
+* **Typesense HA Cluster**: A 3-node, highly available Typesense cluster that acts as the persistent backend for the `query-api`, storing all application state and configuration using Raft consensus.
+
+* **Kafka**: A durable message broker that acts as a buffer for ingestion requests, ensuring data integrity and decoupling document submission from indexing.
+
+* **Prometheus & Grafana**: A standard observability stack for metrics collection, health monitoring, and performance visualization of the full system.
+
+---
+
+### 🔁 Data Flow Example: Document Ingestion
+
+1. A user sends a `POST /ingest/{collection}` request with a document to the `query-api`.
+2. The `query-api` loads routing rules from memory (synced with the internal Typesense HA cluster).
+3. It applies those rules to decide the `target_cluster`.
+4. It constructs a message with the document and cluster ID.
+5. The message is published to a Kafka topic (e.g., `imposbro_search_sharded_users`).
+6. The `query-api` immediately returns a 200 OK response.
+7. Independently, the `indexing-service` consumes the message from Kafka.
+8. It reads the cluster ID and indexes the document via the appropriate Typesense client.
+
+---
+
+### 🔍 Data Flow Example: Federated Search
+
+1. A user sends a `GET /search/{collection}` request with query parameters to the `query-api`.
+2. The `query-api` evaluates the routing rules to determine relevant clusters.
+3. It issues parallel search queries to all matching clusters (scatter phase).
+4. It handles timeouts or errors gracefully.
+5. It gathers all hits from successful responses (gather phase).
+6. It merges and re-ranks results based on relevance.
+7. It returns a unified, paginated response as if from a single large collection.
+
 
 ---
 
