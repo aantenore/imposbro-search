@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-admin-ui
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-ui
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin-ui
+  template:
+    metadata:
+      labels:
+        {{- include "imposbro-search.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: admin-ui
+    spec:
+      containers:
+        - name: {{ .Values.adminUi.name }}
+          image: "{{ .Values.adminUi.image }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.adminUi.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "imposbro-search.fullname" . }}-config

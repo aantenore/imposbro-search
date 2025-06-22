@@ -71,12 +71,13 @@ services:
   admin_ui:
     build:
       context: ./admin_ui
+      args:
+        - INTERNAL_QUERY_API_URL=${INTERNAL_QUERY_API_URL}
     ports:
       - '3001:3000'
     depends_on:
       - query_api
-    environment:
-      - INTERNAL_QUERY_API_URL=${INTERNAL_QUERY_API_URL}
+    env_file: .env
 
   prometheus:
     image: prom/prometheus:latest
