@@ -22,45 +22,101 @@ services:
     volumes:
       - redis_data:/data
 
-  # --- MODIFIED: Typesense nodes now expose their API ports ---
-  typesense-1:
+  # --- Internal HA Cluster for Application State ---
+  typesense-state-1:
     image: typesense/typesense:0.25.2
-    ports: # <-- ADDED
-      - "8108:8108"
     environment:
-      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - TYPESENSE_API_KEY=${INTERNAL_STATE_API_KEY}
       - TYPESENSE_DATA_DIR=/data
       - GLOG_logtostderr=1
-    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
+    command: '--nodes=/app/typesense-nodes-internal --api-key=${INTERNAL_STATE_API_KEY}'
     volumes:
-      - typesense_data_1:/data
-      - ./typesense-nodes:/app/typesense-nodes
+      - typesense_data_state_1:/data
+      - ./typesense-nodes-internal:/app/typesense-nodes-internal
+  typesense-state-2:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${INTERNAL_STATE_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes-internal --api-key=${INTERNAL_STATE_API_KEY}'
+    volumes:
+      - typesense_data_state_2:/data
+      - ./typesense-nodes-internal:/app/typesense-nodes-internal
+  typesense-state-3:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${INTERNAL_STATE_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes-internal --api-key=${INTERNAL_STATE_API_KEY}'
+    volumes:
+      - typesense_data_state_3:/data
+      - ./typesense-nodes-internal:/app/typesense-nodes-internal
 
-  typesense-2:
+  # --- Default Federated Cluster 1 for User Data ---
+  typesense-data-1:
     image: typesense/typesense:0.25.2
-    ports: # <-- ADDED
-      - "8109:8108"
     environment:
-      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - TYPESENSE_API_KEY=${DEFAULT_DATA_CLUSTER_API_KEY}
       - TYPESENSE_DATA_DIR=/data
       - GLOG_logtostderr=1
-    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
+    command: '--nodes=/app/typesense-nodes-data --api-key=${DEFAULT_DATA_CLUSTER_API_KEY}'
     volumes:
-      - typesense_data_2:/data
-      - ./typesense-nodes:/app/typesense-nodes
+      - typesense_data_default_1:/data
+      - ./typesense-nodes-data:/app/typesense-nodes-data
+  typesense-data-2:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${DEFAULT_DATA_CLUSTER_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes-data --api-key=${DEFAULT_DATA_CLUSTER_API_KEY}'
+    volumes:
+      - typesense_data_default_2:/data
+      - ./typesense-nodes-data:/app/typesense-nodes-data
+  typesense-data-3:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${DEFAULT_DATA_CLUSTER_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes-data --api-key=${DEFAULT_DATA_CLUSTER_API_KEY}'
+    volumes:
+      - typesense_data_default_3:/data
+      - ./typesense-nodes-data:/app/typesense-nodes-data
 
-  typesense-3:
+  # --- NEW: Second Federated Cluster for User Data ---
+  typesense-data2-1:
     image: typesense/typesense:0.25.2
-    ports: # <-- ADDED
-      - "8110:8108"
     environment:
-      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+      - TYPESENSE_API_KEY=${DEFAULT_DATA2_CLUSTER_API_KEY}
       - TYPESENSE_DATA_DIR=/data
       - GLOG_logtostderr=1
-    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
+    command: '--nodes=/app/typesense-nodes-data2 --api-key=${DEFAULT_DATA2_CLUSTER_API_KEY}'
     volumes:
-      - typesense_data_3:/data
-      - ./typesense-nodes:/app/typesense-nodes
+      - typesense_data_default2_1:/data
+      - ./typesense-nodes-data2:/app/typesense-nodes-data2
+  typesense-data2-2:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${DEFAULT_DATA2_CLUSTER_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes-data2 --api-key=${DEFAULT_DATA2_CLUSTER_API_KEY}'
+    volumes:
+      - typesense_data_default2_2:/data
+      - ./typesense-nodes-data2:/app/typesense-nodes-data2
+  typesense-data2-3:
+    image: typesense/typesense:0.25.2
+    environment:
+      - TYPESENSE_API_KEY=${DEFAULT_DATA2_CLUSTER_API_KEY}
+      - TYPESENSE_DATA_DIR=/data
+      - GLOG_logtostderr=1
+    command: '--nodes=/app/typesense-nodes-data2 --api-key=${DEFAULT_DATA2_CLUSTER_API_KEY}'
+    volumes:
+      - typesense_data_default2_3:/data
+      - ./typesense-nodes-data2:/app/typesense-nodes-data2
 
   query_api:
     build: ./query_api
@@ -69,9 +125,9 @@ services:
     depends_on:
       - kafka
       - redis
-      - typesense-1
-      - typesense-2
-      - typesense-3
+      - typesense-state-1
+      - typesense-data-1
+      - typesense-data2-1 # <-- ADDED dependency
     env_file: .env
 
   indexing_service:
@@ -113,6 +169,13 @@ services:
 volumes:
   kafka_data:
   redis_data:
-  typesense_data_1:
-  typesense_data_2:
-  typesense_data_3:
+  typesense_data_state_1:
+  typesense_data_state_2:
+  typesense_data_state_3:
+  typesense_data_default_1:
+  typesense_data_default_2:
+  typesense_data_default_3:
+  # NEW: Volumes for the second data cluster
+  typesense_data_default2_1:
+  typesense_data_default2_2:
+  typesense_data_default2_3:
