@@ -1,4 +1,4 @@
-# IMPOSBRO SEARCH (Enterprise Federated Architecture Typesense bassed search engine)
+# IMPOSBRO SEARCH (Enterprise Federated Architecture Typesense based search engine)
 
 Welcome to **IMPOSBRO SEARCH**. The name is an acronym for the Italian sentence **"il mio primo progetto open source scritto con un braccio rotto"**, reflecting the project's challenging origins.
 
