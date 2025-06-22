@@ -79,6 +79,7 @@ services:
       - query_api
     environment:
       - NEXT_PUBLIC_QUERY_API_URL=${NEXT_PUBLIC_QUERY_API_URL}
+      - INTERNAL_QUERY_API_URL=${INTERNAL_QUERY_API_URL}
 
   prometheus:
     image: prom/prometheus:latest
