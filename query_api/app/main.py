@@ -114,41 +114,37 @@ Instrumentator().instrument(app).expose(app)
 async def startup_event():
     global state_ha_client
 
-    # 1. Initialize and wait for the INTERNAL STATE cluster
+    # Initialize and wait for the INTERNAL STATE cluster
     while True:
         try:
-            print("⏳ Attempting to initialize Internal State HA client...")
-            state_nodes = [{"host": host, "port": "8108", "protocol": "http"} for host in
-                           settings.INTERNAL_STATE_NODES.split(',')]
-            state_ha_client = typesense.Client(
-                {'nodes': state_nodes, 'api_key': settings.INTERNAL_STATE_API_KEY, 'connection_timeout_seconds': 10,
-                 'retry_interval_seconds': 2, 'num_retries': 5})
-            state_ha_client.health.retrieve()
-            print("✅ Internal State HA client initialized and cluster is healthy.")
+            print("⏳ Checking Typesense cluster readiness...")
+            # The first real operation is to load state, which requires a healthy leader.
+            # This serves as our health check.
+
+            conf = create_client_config('internal-state-cluster',settings.INTERNAL_STATE_NODES, settings.INTERNAL_STATE_API_KEY)
+            state_ha_client = create_client(conf)
+
+            state_loaded = load_state_from_typesense()
+            print("✅ Typesense cluster is ready.")
             break
+        except (typesense.exceptions.ServiceUnavailable, typesense.exceptions.ConnectionError,
+                typesense.exceptions.ConnectionTimeout) as e:
+            # These exceptions are expected if the cluster is not ready or has no leader.
+            print(f"⚠️ Typesense cluster not ready yet ({type(e).__name__}). Retrying in 5 seconds...")
+            time.sleep(5)
         except Exception as e:
-            print(f"🔥 Failed to initialize Internal State HA client: {e}. Retrying...")
+            # Handle other potential exceptions during startup
+            print(f"🔥 An unexpected error occurred during startup health check: {e}. Retrying...")
             time.sleep(5)
 
-    # 2. Try to load state. If it fails or is empty, bootstrap the default data cluster.
-    state_loaded = load_state_from_typesense()
     if not state_loaded:
         print("💡 No existing state found. Bootstrapping default data cluster configuration...")
-        default_data_nodes_str = settings.DEFAULT_DATA_CLUSTER_NODES
-        default_data_nodes = [{'host': h, 'port': '8108', 'protocol': 'http'} for h in
-                              default_data_nodes_str.split(',')]
-
-        default_client_config = {
-            'name': 'default-data-cluster',
-            'host': default_data_nodes_str,  # Store the comma-separated string
-            'port': 8108,
-            'api_key': settings.DEFAULT_DATA_CLUSTER_API_KEY
-        }
 
         # Create client and register it
-        federation_clients['default-data-cluster'] = typesense.Client(nodes=default_data_nodes,
-                                                                      api_key=settings.DEFAULT_DATA_CLUSTER_API_KEY)
-        federation_clusters_config['default-data-cluster'] = default_client_config
+        name = 'default-data-cluster'
+
+        federation_clusters_config[name] = create_client_config(name, settings.DEFAULT_DATA_CLUSTER_NODES, settings.DEFAULT_DATA_CLUSTER_API_KEY)
+        federation_clients[name] = create_client(federation_clusters_config[name])
 
         # This becomes the default destination for un-routed documents
         # Note: We need a mechanism to set this in collection_routing_rules
@@ -156,6 +152,21 @@ async def startup_event():
         save_state_to_typesense()
 
     get_producer()
+
+
+def create_client_config(name, nodes_str, api_key):
+    return {
+        'name': name,
+        'host': nodes_str,
+        'port': 8108,
+        'api_key': api_key
+    }
+
+def create_client(conf):
+    state_nodes = [{'host': h, 'port': '8108', 'protocol': 'http'} for h in
+                           conf['host'].split(',')]
+    return typesense.Client(
+        {'nodes': state_nodes, 'api_key': conf['api_key']})
 
 
 # --- Helper Functions ---
