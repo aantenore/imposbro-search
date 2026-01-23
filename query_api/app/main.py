@@ -10,10 +10,11 @@ Key Features:
 - Fan-out routing to multiple clusters
 - Asynchronous indexing via Kafka
 - High availability state management
+- Real-time config synchronization via Redis Pub/Sub
 - Full admin UI support
 
 Author: IMPOSBRO Team
-Version: 3.5.0
+Version: 4.0.0
 """
 
 import logging
@@ -26,12 +27,14 @@ from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from settings import settings
-from services import StateManager, FederationService, KafkaService
+from services import (
+    StateManager,
+    FederationService,
+    KafkaService,
+    ConfigSyncService,
+    SyncConfigNotifier,
+)
 from routers import admin_router, search_router
-from routers.admin import get_federation_service as admin_get_federation
-from routers.admin import get_state_manager as admin_get_state_manager
-from routers.search import get_federation_service as search_get_federation
-from routers.search import get_kafka_service as search_get_kafka
 
 # Configure logging
 logging.basicConfig(
@@ -43,28 +46,26 @@ logger = logging.getLogger(__name__)
 federation_service: Optional[FederationService] = None
 state_manager: Optional[StateManager] = None
 kafka_service: Optional[KafkaService] = None
+config_sync_service: Optional[ConfigSyncService] = None
+config_notifier: Optional[SyncConfigNotifier] = None
 
 
 def create_state_client() -> typesense.Client:
     """
     Create and return a Typesense client for the internal state cluster.
-
-    Waits for the cluster to be ready before returning.
     """
     nodes = [
         {"host": h.strip(), "port": "8108", "protocol": "http"}
         for h in settings.INTERNAL_STATE_NODES.split(",")
     ]
 
-    client = typesense.Client(
+    return typesense.Client(
         {
             "nodes": nodes,
             "api_key": settings.INTERNAL_STATE_API_KEY,
             "connection_timeout_seconds": 5,
         }
     )
-
-    return client
 
 
 def wait_for_typesense() -> typesense.Client:
@@ -75,7 +76,6 @@ def wait_for_typesense() -> typesense.Client:
         try:
             logger.info("Checking Typesense cluster readiness...")
             client = create_state_client()
-            # Try to access the cluster to verify it's ready
             client.operations.perform("health", {})
             logger.info("Typesense cluster is ready.")
             return client
@@ -93,18 +93,41 @@ def wait_for_typesense() -> typesense.Client:
             time.sleep(5)
 
 
+async def reload_configuration():
+    """
+    Callback invoked when configuration changes are detected via Redis Pub/Sub.
+
+    Reloads the federation configuration from the Typesense state store,
+    ensuring all API instances have consistent configuration.
+    """
+    global federation_service, state_manager
+
+    if not state_manager or not federation_service:
+        logger.warning("Cannot reload config: services not initialized")
+        return
+
+    logger.info("Reloading configuration from state store...")
+    clusters_config, routing_rules = state_manager.load_state()
+
+    if clusters_config is not None and routing_rules is not None:
+        federation_service.reload_from_state(clusters_config, routing_rules)
+        logger.info("Configuration reloaded successfully")
+    else:
+        logger.warning("Failed to reload configuration: no state found")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
 
     Initializes all services on startup and cleans up on shutdown.
-    This replaces the deprecated @app.on_event decorators.
+    Includes Redis Pub/Sub for multi-instance configuration sync.
     """
-    global federation_service, state_manager, kafka_service
+    global federation_service, state_manager, kafka_service, config_sync_service, config_notifier
 
     logger.info("=" * 60)
-    logger.info("IMPOSBRO Search API Starting...")
+    logger.info("IMPOSBRO Search API v4.0.0 Starting...")
     logger.info("=" * 60)
 
     # Initialize Typesense client and state manager
@@ -154,10 +177,18 @@ async def lifespan(app: FastAPI):
     kafka_service = KafkaService(
         broker_url=settings.KAFKA_BROKER_URL, topic_prefix=settings.KAFKA_TOPIC_PREFIX
     )
-    # Trigger connection
     _ = kafka_service.producer
 
-    # Override dependency injection functions
+    # Initialize Redis Pub/Sub for config sync across instances
+    config_sync_service = ConfigSyncService(
+        redis_url=settings.REDIS_URL, on_config_change=reload_configuration
+    )
+    await config_sync_service.start()
+
+    # Create synchronous notifier for use in route handlers
+    config_notifier = SyncConfigNotifier(settings.REDIS_URL)
+
+    # Dependency injection setup
     def get_federation():
         return federation_service
 
@@ -167,23 +198,31 @@ async def lifespan(app: FastAPI):
     def get_kafka():
         return kafka_service
 
+    def get_notifier():
+        return config_notifier
+
     # Inject dependencies into routers
     import routers.admin as admin_module
     import routers.search as search_module
 
     admin_module.get_federation_service = get_federation
     admin_module.get_state_manager = get_state
+    admin_module.get_config_notifier = get_notifier
     search_module.get_federation_service = get_federation
     search_module.get_kafka_service = get_kafka
 
     logger.info("=" * 60)
     logger.info("IMPOSBRO Search API Ready!")
+    logger.info(f"  Clusters: {len(federation_service.clients)}")
+    logger.info(f"  Config sync: Redis Pub/Sub enabled")
     logger.info("=" * 60)
 
     yield
 
     # Cleanup on shutdown
     logger.info("Shutting down IMPOSBRO Search API...")
+    if config_sync_service:
+        await config_sync_service.stop()
     if kafka_service:
         kafka_service.close()
     logger.info("Shutdown complete.")
@@ -198,17 +237,12 @@ Enterprise-grade federated search system built on Typesense.
 ## Features
 - **Document-level sharding** with configurable routing rules
 - **Federated search** across multiple clusters with scatter-gather
+- **Deep pagination** with correct result merging
 - **Asynchronous indexing** via Kafka for high throughput
+- **Config synchronization** via Redis Pub/Sub for multi-instance consistency
 - **High availability** state management with Typesense HA cluster
-
-## Getting Started
-1. Register external clusters at `/admin/federation/clusters`
-2. Create collections at `/admin/collections`
-3. Configure routing rules at `/admin/routing-rules`
-4. Ingest documents at `/ingest/{collection}`
-5. Search with `/search/{collection}`
     """,
-    version="3.5.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -225,7 +259,7 @@ def root():
     """Health check endpoint."""
     return {
         "service": "IMPOSBRO Federated Search API",
-        "version": "3.5.0",
+        "version": "4.0.0",
         "status": "healthy",
     }
 
@@ -239,4 +273,5 @@ def health():
         "collections": (
             len(federation_service.routing_rules) if federation_service else 0
         ),
+        "config_sync": "enabled",
     }
