@@ -1,142 +1,189 @@
 'use client';
+
 import { useState, useEffect } from 'react';
-import { Trash2 } from 'lucide-react'; // Import delete icon
+import { Trash2, Server } from 'lucide-react';
+import { api } from '../../lib/api';
+import { useNotification, Notification } from '../../hooks/useNotification';
+import { ConfirmationModal } from '../../components/ui';
+import Card from '../../components/ui/Card';
+import Button, { IconButton } from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
+import PageHeader from '../../components/ui/PageHeader';
+import EmptyState from '../../components/ui/EmptyState';
 
-const API_BASE = '/api';
-
-// Confirmation Modal Component
-const ConfirmationModal = ({ onConfirm, onCancel, resourceName, resourceType }) => {
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
-            <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700 w-full max-w-md mx-4">
-                <h2 className="text-xl font-bold text-white mb-4">Confirm Deletion</h2>
-                <p className="text-gray-300 mb-6">
-                    Are you sure you want to delete the {resourceType} <span className="font-bold text-red-400">{resourceName}</span>? This action cannot be undone.
-                </p>
-                <div className="flex justify-end space-x-4">
-                    <button
-                        onClick={onCancel}
-                        className="px-4 py-2 rounded-md bg-gray-600 hover:bg-gray-500 text-white font-semibold transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={onConfirm}
-                        className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-bold transition-colors"
-                    >
-                        Delete {resourceType}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-
+/**
+ * Clusters Page
+ * 
+ * Manages federated Typesense cluster registration and configuration.
+ * Allows users to register new clusters and view/delete existing ones.
+ */
 export default function ClustersPage() {
     const [clusters, setClusters] = useState([]);
-    const [newCluster, setNewCluster] = useState({ name: '', host: '', port: 8108, api_key: '' });
-    const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
-    const [clusterToDelete, setClusterToDelete] = useState(null); // State to manage which cluster is targeted for deletion
+    const [newCluster, setNewCluster] = useState({
+        name: '',
+        host: '',
+        port: 8108,
+        api_key: ''
+    });
+    const [clusterToDelete, setClusterToDelete] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const { notification, showSuccess, showError } = useNotification();
+
+    // Fetch clusters on mount
+    useEffect(() => {
+        fetchClusters();
+    }, []);
 
     const fetchClusters = async () => {
         try {
-            const res = await fetch(`${API_BASE}/admin/federation/clusters`);
-            if (!res.ok) throw new Error('Failed to fetch clusters');
-            const data = await res.json();
+            setIsLoading(true);
+            const data = await api.clusters.list();
             setClusters(Object.values(data) || []);
-        } catch (err) { setError(err.message); }
+        } catch (err) {
+            showError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
     };
-
-    useEffect(() => { fetchClusters(); }, []);
 
     const handleRegister = async (e) => {
         e.preventDefault();
-        setError(''); setSuccess('');
+        setIsSubmitting(true);
+
         try {
-            const res = await fetch(`${API_BASE}/admin/federation/clusters`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newCluster),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Failed to register cluster');
-            setSuccess(`Cluster '${newCluster.name}' registered successfully!`);
+            await api.clusters.create(newCluster);
+            showSuccess(`Cluster '${newCluster.name}' registered successfully!`);
             setNewCluster({ name: '', host: '', port: 8108, api_key: '' });
             fetchClusters();
-        } catch (err) { setError(err.message); }
+        } catch (err) {
+            showError(err.message);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const handleDeleteConfirm = async () => {
         if (!clusterToDelete) return;
-        setError(''); setSuccess('');
 
         try {
-            const res = await fetch(`${API_BASE}/admin/federation/clusters/${clusterToDelete.name}`, {
-                method: 'DELETE',
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Failed to delete cluster');
-
-            setSuccess(`Cluster '${clusterToDelete.name}' deleted successfully!`);
-            fetchClusters(); // Refresh the list of clusters
+            await api.clusters.delete(clusterToDelete.name);
+            showSuccess(`Cluster '${clusterToDelete.name}' deleted successfully!`);
+            fetchClusters();
         } catch (err) {
-            setError(err.message);
+            showError(err.message);
         } finally {
-            setClusterToDelete(null); // Close the modal regardless of outcome
+            setClusterToDelete(null);
         }
+    };
+
+    const handleInputChange = (field) => (e) => {
+        const value = field === 'port' ? parseInt(e.target.value) : e.target.value;
+        setNewCluster(prev => ({ ...prev, [field]: value }));
     };
 
     return (
         <div>
+            {/* Delete Confirmation Modal */}
             {clusterToDelete && (
                 <ConfirmationModal
-                    clusterName={clusterToDelete.name}
+                    resourceName={clusterToDelete.name}
                     resourceType="cluster"
                     onConfirm={handleDeleteConfirm}
                     onCancel={() => setClusterToDelete(null)}
                 />
             )}
 
-            <h1 className='text-3xl font-bold mb-4'>Cluster Management</h1>
-            <div className='grid grid-cols-1 lg:grid-cols-2 gap-8'>
-                <div>
-                    <h2 className='text-xl font-semibold mb-3'>Registered Clusters</h2>
-                    <div className='bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-1'>
-                        {clusters.length > 0 ? (
-                            clusters.map(c =>
-                                <div key={c.name} className='p-3 flex justify-between items-center border-b border-gray-700 last:border-b-0'>
+            <PageHeader
+                title="Cluster Management"
+                description="Register and manage your federated Typesense clusters. Each cluster can store sharded document data."
+            />
+
+            {/* Notifications */}
+            {notification && (
+                <div className="mb-6">
+                    <Notification {...notification} />
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Registered Clusters List */}
+                <Card title="Registered Clusters" noPadding>
+                    <div className="divide-y divide-gray-700">
+                        {isLoading ? (
+                            <div className="p-6 text-center text-gray-400">Loading clusters...</div>
+                        ) : clusters.length > 0 ? (
+                            clusters.map((cluster) => (
+                                <div
+                                    key={cluster.name}
+                                    className="p-4 flex justify-between items-center hover:bg-gray-700/30 transition-colors"
+                                >
                                     <div>
-                                        <p className='font-semibold text-white'>{c.name}</p>
-                                        <p className='text-xs text-gray-400 font-mono'>{c.host}:{c.port}</p>
+                                        <p className="font-semibold text-white">{cluster.name}</p>
+                                        <p className="text-xs text-gray-400 font-mono">
+                                            {cluster.host}:{cluster.port}
+                                        </p>
                                     </div>
-                                    {c.name !== 'default' && (
-                                        <button
-                                            onClick={() => setClusterToDelete(c)}
-                                            className='p-2 text-gray-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors'
-                                            title={`Delete cluster ${c.name}`}
+                                    {cluster.name !== 'default' && (
+                                        <IconButton
+                                            variant="danger"
+                                            onClick={() => setClusterToDelete(cluster)}
+                                            title={`Delete cluster ${cluster.name}`}
                                         >
-                                            <Trash2 size={16}/>
-                                        </button>
+                                            <Trash2 size={16} />
+                                        </IconButton>
                                     )}
                                 </div>
-                            )
-                        ) : (<p className='text-gray-400 p-3'>No clusters registered yet.</p>)}
+                            ))
+                        ) : (
+                            <EmptyState
+                                icon={<Server size={48} />}
+                                title="No clusters registered"
+                                description="Register your first Typesense cluster to get started."
+                            />
+                        )}
                     </div>
-                </div>
-                <div>
-                    <h2 className='text-xl font-semibold mb-3'>Register New Cluster</h2>
-                    <form onSubmit={handleRegister} className='bg-gray-800/50 border border-gray-700 rounded-lg p-6 space-y-4'>
-                        <input type='text' placeholder='Cluster Name (e.g., cluster-us)' value={newCluster.name} onChange={(e) => setNewCluster({...newCluster, name: e.target.value})} className='w-full bg-gray-900 border-gray-600 rounded-md' required />
-                        <input type='text' placeholder='Host (e.g., typesense-replica)' value={newCluster.host} onChange={(e) => setNewCluster({...newCluster, host: e.target.value})} className='w-full bg-gray-900 border-gray-600 rounded-md' required />
-                        <input type='number' placeholder='Port' value={newCluster.port} onChange={(e) => setNewCluster({...newCluster, port: parseInt(e.target.value)})} className='w-full bg-gray-900 border-gray-600 rounded-md' required />
-                        <input type='text' placeholder='API Key' value={newCluster.api_key} onChange={(e) => setNewCluster({...newCluster, api_key: e.target.value})} className='w-full bg-gray-900 border-gray-600 rounded-md' required />
-                        <button type='submit' className='w-full bg-blue-600 hover:bg-blue-700 rounded-md py-2 font-semibold transition-colors'>Register Cluster</button>
-                        {success && <p className='text-green-400 text-sm mt-2'>{success}</p>}
-                        {error && <p className='text-red-400 text-sm mt-2'>{error}</p>}
+                </Card>
+
+                {/* Register New Cluster Form */}
+                <Card title="Register New Cluster">
+                    <form onSubmit={handleRegister} className="space-y-4">
+                        <Input
+                            placeholder="Cluster Name (e.g., cluster-us)"
+                            value={newCluster.name}
+                            onChange={handleInputChange('name')}
+                            required
+                        />
+                        <Input
+                            placeholder="Host (e.g., typesense-replica)"
+                            value={newCluster.host}
+                            onChange={handleInputChange('host')}
+                            required
+                        />
+                        <Input
+                            type="number"
+                            placeholder="Port"
+                            value={newCluster.port}
+                            onChange={handleInputChange('port')}
+                            required
+                        />
+                        <Input
+                            type="password"
+                            placeholder="API Key"
+                            value={newCluster.api_key}
+                            onChange={handleInputChange('api_key')}
+                            required
+                        />
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            fullWidth
+                            loading={isSubmitting}
+                        >
+                            Register Cluster
+                        </Button>
                     </form>
-                </div>
+                </Card>
             </div>
         </div>
     );
