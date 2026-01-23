@@ -7,8 +7,11 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 ## Table of Contents
 - [✨ Core Features](#-core-features)
 - [🏛️ Architecture Overview](#️-architecture-overview)
+- [📁 Project Structure](#-project-structure)
 - [🚀 Local Deployment with Docker Compose](#-local-deployment-with-docker-compose)
-- [ Scaling the Typesense HA Cluster](#-scaling-the-typesense-ha-cluster)
+- [📖 API Documentation](#-api-documentation)
+- [🔧 Configuration](#-configuration)
+- [📊 Scaling the Typesense HA Cluster](#-scaling-the-typesense-ha-cluster)
 - [🚀 Deployment to Kubernetes with Helm](#-deployment-to-kubernetes-with-helm)
 - [🛣️ Roadmap & Next Steps](#️-roadmap--next-steps)
 
@@ -25,7 +28,7 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 
 ---
 
-### 🏛️ Architecture Overview
+## 🏛️ Architecture Overview
 
 IMPOSBRO Search is built on a distributed microservices architecture designed for resilience, scalability, and maintainability. It decouples the API from the indexing process, ensures high availability of its configuration, and provides a clear separation of concerns between components.
 
@@ -75,13 +78,75 @@ graph TD;
 
 ---
 
+## 📁 Project Structure
+
+The codebase follows a modular architecture with clear separation of concerns:
+
+```
+imposbro-search/
+├── query_api/                    # FastAPI backend service
+│   └── app/
+│       ├── main.py               # Application entry point with lifespan
+│       ├── settings.py           # Configuration via pydantic-settings
+│       ├── models/               # Pydantic schemas
+│       │   ├── __init__.py
+│       │   └── schemas.py        # Request/response models
+│       ├── services/             # Business logic layer
+│       │   ├── __init__.py
+│       │   ├── federation.py     # Cluster & routing management
+│       │   ├── kafka_producer.py # Kafka message publishing
+│       │   └── state_manager.py  # Typesense state persistence
+│       └── routers/              # API endpoints
+│           ├── __init__.py
+│           ├── admin.py          # Cluster, collection, routing APIs
+│           └── search.py         # Search & ingestion APIs
+│
+├── admin_ui/                     # Next.js frontend
+│   └── app/
+│       ├── components/
+│       │   ├── Sidebar.jsx       # Navigation sidebar
+│       │   └── ui/               # Shared UI component library
+│       │       ├── Button.jsx
+│       │       ├── Card.jsx
+│       │       ├── ConfirmationModal.jsx
+│       │       ├── EmptyState.jsx
+│       │       ├── Input.jsx
+│       │       ├── PageHeader.jsx
+│       │       └── StatusBadge.jsx
+│       ├── hooks/                # Custom React hooks
+│       │   └── useNotification.js
+│       ├── lib/                  # Utilities
+│       │   └── api.js            # Centralized API client
+│       └── (pages)/              # Page components
+│           ├── dashboard/
+│           ├── clusters/
+│           ├── collections/
+│           └── routing/
+│
+├── indexing_service/             # Kafka consumer service
+│   └── app/
+│       ├── main.py               # Entry point with config fetching
+│       └── consumer.py           # Kafka consumer with graceful shutdown
+│
+├── monitoring/                   # Observability stack
+│   ├── grafana/
+│   └── prometheus/
+│
+├── helm/                         # Kubernetes deployment
+│
+├── docker-compose.yml            # Local development setup
+└── .env.example                  # Environment template
+```
+
+---
+
 ### 🧩 Component Roles
 
 * **Query API (`query-api`)**: The "brain" of the system. This FastAPI service handles all incoming requests for ingestion, federated search, and administration. It determines where documents should be routed (including fan-out logic to multiple destinations) and stores the system's configuration in the internal Typesense HA cluster.
 
-* **Admin UI (`admin-ui`)**: The control panel. A Next.js application providing a user-friendly interface to manage all aspects of the search federation.
+* **Admin UI (`admin-ui`)**: The control panel. A Next.js application providing a user-friendly interface to manage all aspects of the search federation. Built with a reusable component library for consistency.
 
-* **Indexing Service (`indexing-service`)**: A dedicated background worker. It consumes document ingestion messages from Kafka and reliably indexes them into the appropriate target clusters. This decouples the ingestion process from the API response, ensuring high throughput.
+* **Indexing Service (`indexing-service`)**: A dedicated background worker. It consumes document ingestion messages from Kafka and reliably indexes them into the appropriate target clusters. Features graceful shutdown and comprehensive logging.
 
 * **Typesense HA Cluster**: A 3-node, highly available Typesense cluster that acts as the persistent backend for the `query-api`, storing all application state and configuration using Raft consensus.
 
@@ -138,6 +203,7 @@ docker-compose up --build
 ### 2. Access the UIs
 
 * **Admin UI:** `http://localhost:3001` - **Your primary control panel.**
+* **API Documentation:** `http://localhost:8000/docs` - **Interactive Swagger UI**
 * **Grafana Monitoring:** `http://localhost:3000` (Login: `admin` / `admin`)
 
 ### 3. Test Document-Level Sharding
@@ -167,7 +233,59 @@ docker-compose up --build
 
 ---
 
-## Scaling the Typesense HA Cluster
+## 📖 API Documentation
+
+The Query API provides comprehensive endpoints for search, ingestion, and administration:
+
+### Search & Ingestion
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/ingest/{collection}` | POST | Ingest a document (requires `id` field) |
+| `/search/{collection}` | GET | Federated search across clusters |
+
+### Administration
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/admin/federation/clusters` | GET | List all registered clusters |
+| `/admin/federation/clusters` | POST | Register a new cluster |
+| `/admin/federation/clusters/{name}` | DELETE | Remove a cluster |
+| `/admin/collections` | POST | Create a collection on all clusters |
+| `/admin/collections/{name}` | GET | Get collection schema |
+| `/admin/collections/{name}` | DELETE | Delete a collection |
+| `/admin/routing-rules` | POST | Set routing rules for a collection |
+| `/admin/routing-rules/{collection}` | DELETE | Delete routing rules |
+| `/admin/routing-map` | GET | Get complete routing configuration |
+
+### Health Checks
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Basic health check |
+| `/health` | GET | Detailed health with cluster count |
+| `/metrics` | GET | Prometheus metrics |
+
+---
+
+## 🔧 Configuration
+
+All configuration is done via environment variables. See `.env.example` for the full list:
+
+| Variable | Description |
+|----------|-------------|
+| `KAFKA_BROKER_URL` | Kafka broker connection string |
+| `KAFKA_TOPIC_PREFIX` | Prefix for Kafka topics |
+| `REDIS_URL` | Redis connection string |
+| `INTERNAL_STATE_NODES` | Comma-separated internal Typesense nodes |
+| `INTERNAL_STATE_API_KEY` | API key for internal cluster |
+| `DEFAULT_DATA_CLUSTER_NODES` | Default federated cluster nodes |
+| `DEFAULT_DATA_CLUSTER_API_KEY` | API key for default cluster |
+| `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
+
+---
+
+## 📊 Scaling the Typesense HA Cluster
 
 The architecture is designed to easily scale the internal Typesense High-Availability (HA) cluster, which is responsible for storing the application's configuration state. Adding more nodes increases fault tolerance and read performance.
 
@@ -306,3 +424,15 @@ Kubernetes makes it easy to scale your stateless application services.
 * [ ] Enhance UI/UX with more feedback, loading states, and real-time metric dashboards.
 * [x] Support for multi-field routing federation.
 * [x] Resilient HA cluster state management.
+* [x] Modular backend architecture with separation of concerns.
+* [x] Reusable frontend component library.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## 📄 License
+
+This project is open source. See the LICENSE file for details.
