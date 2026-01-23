@@ -2,13 +2,12 @@
 IMPOSBRO Search - Indexing Service Consumer
 
 This module consumes document ingestion messages from Kafka and indexes
-them into the appropriate Typesense clusters based on routing rules.
+them into the appropriate Typesense clusters.
 
-Features:
-- Graceful shutdown handling
-- Configurable logging
-- Re-routing logic for document placement
-- Error handling with retry support
+Architecture Decision: SMART PRODUCER PATTERN
+The Producer (Query API) determines the target cluster and includes it in the
+Kafka message. The Consumer trusts this decision and executes it directly.
+This ensures consistency and avoids routing logic duplication.
 """
 
 import os
@@ -39,49 +38,17 @@ def signal_handler(signum, frame):
     shutdown_requested = True
 
 
-def determine_target_cluster(
-    collection_name: str, document: Dict, routing_rules: Dict
-) -> str:
-    """
-    Determine the target cluster for a document based on routing rules.
-
-    This logic mirrors the Query API's routing logic to ensure consistent
-    document placement.
-
-    Args:
-        collection_name: Name of the target collection
-        document: Document being indexed
-        routing_rules: Dictionary of routing rules keyed by collection
-
-    Returns:
-        Target cluster name
-    """
-    rule = routing_rules.get(collection_name)
-    target_cluster_name = "default"  # Fallback cluster
-
-    if not rule:
-        return target_cluster_name
-
-    # Check each rule in order
-    for r in rule.get("rules", []):
-        doc_value = document.get(r.get("field"))
-        if doc_value is not None and str(doc_value) == str(r.get("value")):
-            return r.get("cluster", target_cluster_name)
-
-    # No rule matched, use default cluster for this collection
-    return rule.get("default_cluster", target_cluster_name)
-
-
-def run_consumer(typesense_clients: Dict, collection_routing_rules: Dict) -> None:
+def run_consumer(typesense_clients: Dict) -> None:
     """
     Main consumer loop for indexing documents from Kafka.
 
-    Consumes messages from Kafka topics matching the configured pattern
-    and indexes documents into the appropriate Typesense clusters.
+    Implements the SMART PRODUCER pattern:
+    - The Producer (Query API) decides the target cluster
+    - The Consumer trusts and executes that decision
+    - No routing logic duplication
 
     Args:
         typesense_clients: Dictionary mapping cluster names to Typesense clients
-        collection_routing_rules: Dictionary of routing rules by collection
     """
     global shutdown_requested
 
@@ -139,9 +106,7 @@ def run_consumer(typesense_clients: Dict, collection_routing_rules: Dict) -> Non
                         break
 
                     try:
-                        process_message(
-                            message.value, typesense_clients, collection_routing_rules
-                        )
+                        process_message(message.value, typesense_clients)
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
                         # Continue processing other messages
@@ -159,36 +124,45 @@ def run_consumer(typesense_clients: Dict, collection_routing_rules: Dict) -> Non
     logger.info("Indexing service shutdown complete.")
 
 
-def process_message(
-    message: Dict, typesense_clients: Dict, routing_rules: Dict
-) -> None:
+def process_message(message: Dict, typesense_clients: Dict) -> None:
     """
     Process a single message from Kafka.
 
+    SMART PRODUCER PATTERN:
+    The message contains `target_cluster` as determined by the Producer.
+    We trust this value and execute the indexing operation directly.
+
     Args:
-        message: The message payload containing document and metadata
+        message: The message payload containing document and routing info
         typesense_clients: Available Typesense clients
-        routing_rules: Current routing rules
     """
     collection_name = message.get("collection")
     document = message.get("document")
+    target_cluster = message.get("target_cluster")
 
+    # Validate message structure
     if not collection_name or not document:
-        logger.warning(
-            f"Invalid message format (missing collection or document): {message}"
-        )
+        logger.warning(f"Invalid message format (missing collection or document)")
         return
+
+    if not target_cluster:
+        logger.warning(
+            f"Message missing target_cluster field. "
+            f"Falling back to 'default' cluster for backward compatibility."
+        )
+        target_cluster = "default"
 
     doc_id = document.get("id", "unknown")
 
-    # Determine target cluster using current routing rules
-    target_cluster = determine_target_cluster(collection_name, document, routing_rules)
-
+    # Get the client for the target cluster (as determined by Producer)
     client = typesense_clients.get(target_cluster)
+
     if not client:
-        logger.warning(
+        # Log error but don't crash - cluster might have been removed
+        logger.error(
             f"No client found for cluster '{target_cluster}'. "
-            f"Document {doc_id} may be lost."
+            f"Document {doc_id} cannot be indexed. "
+            f"Available clusters: {list(typesense_clients.keys())}"
         )
         return
 
@@ -200,5 +174,7 @@ def process_message(
             f"on cluster '{target_cluster}'"
         )
     except Exception as e:
-        logger.error(f"Failed to index document {doc_id}: {e}")
+        logger.error(
+            f"Failed to index document {doc_id} to {collection_name}@{target_cluster}: {e}"
+        )
         raise

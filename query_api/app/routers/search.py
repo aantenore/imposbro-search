@@ -2,15 +2,16 @@
 Search Router for IMPOSBRO Search API.
 
 This module contains endpoints for document ingestion and federated search.
+Implements industry-standard scatter-gather search with correct deep pagination.
 """
 
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Response
 from typing import Dict, Any, Optional, List
 from prometheus_client import Counter
 
-from models import IngestResponse, SearchResponse
+from models import IngestResponse
 from services import FederationService, KafkaService
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,10 @@ router = APIRouter(tags=["Search & Ingestion"])
 documents_ingested = Counter(
     "documents_ingested_total", "Total number of documents ingested.", ["collection"]
 )
+
+# Configuration for deep pagination
+MAX_DEEP_PAGINATION_DOCS = 10000  # Maximum documents to fetch for deep pagination
+DEEP_PAGINATION_WARNING_PAGE = 10  # Warn user when page exceeds this
 
 
 def get_federation_service() -> FederationService:
@@ -90,6 +95,7 @@ def ingest_document(
 
 @router.get("/search/{collection_name}", summary="Federated search")
 async def search(
+    response: Response,
     collection_name: str,
     q: str = Query(..., min_length=1, description="Search query"),
     query_by: str = Query(..., description="Comma-separated fields to search"),
@@ -102,10 +108,16 @@ async def search(
     """
     Perform a federated search across all relevant clusters.
 
-    This endpoint implements scatter-gather search:
-    1. Scatter: Send query to all clusters that may contain matching documents
-    2. Gather: Collect results from all clusters
-    3. Merge: Deduplicate and re-rank results by relevance
+    This endpoint implements scatter-gather search with CORRECT deep pagination:
+
+    1. Scatter: Calculate total docs needed (page * per_page)
+    2. Fetch that many results from EACH cluster (not just the target page)
+    3. Gather: Collect all results from all clusters
+    4. Merge: Deduplicate by document ID
+    5. Sort: Re-rank by relevance score
+    6. Slice: Return only the requested page
+
+    This ensures mathematically correct pagination across sharded data.
 
     Args:
         collection_name: Collection to search
@@ -127,46 +139,91 @@ async def search(
             detail=f"Collection '{collection_name}' not found on any registered cluster.",
         )
 
-    # Build search parameters
-    search_params = {"q": q, "query_by": query_by, "page": page, "per_page": per_page}
+    # Deep pagination: Calculate how many docs we need from each cluster
+    # To get page N correctly, we need to fetch pages 1 through N from each cluster
+    total_needed = page * per_page
+
+    # Cap to prevent memory issues
+    if total_needed > MAX_DEEP_PAGINATION_DOCS:
+        total_needed = MAX_DEEP_PAGINATION_DOCS
+        response.headers["X-Pagination-Warning"] = (
+            f"Deep pagination capped at {MAX_DEEP_PAGINATION_DOCS} documents. "
+            "Results may be incomplete for very deep pages."
+        )
+
+    # Add warning header for deep pagination
+    if page > DEEP_PAGINATION_WARNING_PAGE:
+        response.headers["X-Pagination-Info"] = (
+            f"Deep pagination (page {page}) requires fetching {total_needed} docs "
+            f"from each of {len(clients)} clusters. Consider using filters to narrow results."
+        )
+
+    # Build search parameters - fetch all needed docs from each cluster
+    search_params = {
+        "q": q,
+        "query_by": query_by,
+        "page": 1,  # Always fetch from page 1
+        "per_page": total_needed,  # Fetch enough to cover requested page
+    }
     if filter_by:
         search_params["filter_by"] = filter_by
     if sort_by:
         search_params["sort_by"] = sort_by
 
-    async def search_cluster(client) -> Optional[Dict]:
+    async def search_cluster(client, cluster_idx: int) -> Optional[Dict]:
         """Execute search on a single cluster."""
         try:
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 client.collections[collection_name].documents.search, search_params
             )
+            return result
         except Exception as e:
-            logger.warning(f"Search failed for one cluster: {e}")
+            logger.warning(f"Search failed for cluster {cluster_idx}: {e}")
             return None
 
-    # Scatter: Execute searches in parallel
-    tasks = [search_cluster(client) for client in clients]
+    # Scatter: Execute searches in parallel across all clusters
+    tasks = [search_cluster(client, i) for i, client in enumerate(clients)]
     results_list = await asyncio.gather(*tasks)
 
-    # Gather: Collect all hits
+    # Gather: Collect all hits from successful responses
     all_hits: List[Dict] = []
     total_found = 0
+    successful_clusters = 0
 
     for result in results_list:
         if result:
             all_hits.extend(result.get("hits", []))
             total_found += result.get("found", 0)
+            successful_clusters += 1
 
-    # Merge: Deduplicate by document ID and sort by relevance
-    unique_hits_map = {}
+    # Merge: Deduplicate by document ID (keep first occurrence = highest score)
+    unique_hits_map: Dict[str, Dict] = {}
     for hit in all_hits:
         doc_id = hit.get("document", {}).get("id")
         if doc_id and doc_id not in unique_hits_map:
             unique_hits_map[doc_id] = hit
 
-    # Sort by text_match score (lower is better in Typesense)
+    # Sort: Re-rank all unique hits by relevance score
+    # text_match in Typesense: lower = better match
     sorted_hits = sorted(
         unique_hits_map.values(), key=lambda x: x.get("text_match", float("inf"))
     )
 
-    return {"found": total_found, "page": page, "hits": sorted_hits}
+    # Slice: Return only the requested page
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_hits = sorted_hits[start_idx:end_idx]
+
+    # Calculate if there are more results
+    has_more = end_idx < len(sorted_hits)
+
+    return {
+        "found": total_found,
+        "page": page,
+        "per_page": per_page,
+        "hits": page_hits,
+        "out_of": len(sorted_hits),  # Deduplicated count
+        "clusters_queried": len(clients),
+        "clusters_responded": successful_clusters,
+        "has_more": has_more,
+    }

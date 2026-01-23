@@ -418,14 +418,26 @@ Kubernetes makes it easy to scale your stateless application services.
 
 ## 🛣️ Roadmap & Next Steps
 
-* [ ] Add functional and integration test suites.
-* [ ] Implement support for collection aliases and live re-indexing strategies.
-* [x] Finalize Helm chart for Kubernetes deployment.
-* [ ] Enhance UI/UX with more feedback, loading states, and real-time metric dashboards.
-* [x] Support for multi-field routing federation.
-* [x] Resilient HA cluster state management.
-* [x] Modular backend architecture with separation of concerns.
-* [x] Reusable frontend component library.
+### ✅ Completed
+
+* [x] **Finalize Helm chart** for Kubernetes deployment
+* [x] **Multi-field routing federation** with document-level sharding
+* [x] **Resilient HA cluster state management** with Typesense
+* [x] **Modular backend architecture** with separation of concerns (services/, routers/, models/)
+* [x] **Reusable frontend component library** (Button, Card, Modal, Input, etc.)
+* [x] **Redis Pub/Sub config sync** for multi-instance consistency
+* [x] **Correct federated pagination** with deep pagination pattern
+* [x] **Smart Producer architecture** eliminating routing logic duplication
+
+### 🚧 In Progress / Future
+
+* [ ] Add functional and integration test suites (pytest, Cypress)
+* [ ] Implement collection aliases for zero-downtime re-indexing
+* [ ] Add real-time metrics dashboard in Admin UI (WebSocket updates)
+* [ ] Implement cursor-based pagination for very deep result sets
+* [ ] Add authentication/authorization layer (OAuth2/OIDC)
+* [ ] Horizontal scaling documentation and best practices
+* [ ] Grafana dashboards for business metrics (queries/sec, latency percentiles)
 
 ---
 

@@ -4,8 +4,9 @@ IMPOSBRO Search - Indexing Service Entry Point
 This service consumes document ingestion messages from Kafka and indexes
 them into the appropriate federated Typesense clusters.
 
-The service fetches its configuration (cluster connections and routing rules)
-from the Query API at startup, ensuring consistency across the system.
+Architecture: SMART PRODUCER PATTERN
+The Query API (Producer) determines routing. This Consumer executes the
+routing decision without recalculating it.
 """
 
 import os
@@ -49,22 +50,24 @@ def create_typesense_client(cluster_info: Dict) -> typesense.Client:
     )
 
 
-def fetch_configuration(query_api_url: str) -> tuple:
+def fetch_cluster_configuration(query_api_url: str) -> Dict[str, typesense.Client]:
     """
-    Fetch cluster and routing configuration from the Query API.
+    Fetch cluster configuration from the Query API.
+
+    Note: With Smart Producer pattern, we only need cluster clients.
+    Routing rules are no longer needed by the Consumer.
 
     Args:
         query_api_url: Base URL of the Query API
 
     Returns:
-        Tuple of (federation_clients dict, routing_rules dict)
+        Dictionary mapping cluster names to Typesense clients
     """
     federation_clients: Dict[str, typesense.Client] = {}
-    collection_routing_rules: Dict = {}
 
     while True:
         try:
-            # Fetch cluster configuration
+            # Fetch only cluster configuration (no routing rules needed)
             logger.info(
                 f"Fetching cluster config from {query_api_url}/admin/federation/clusters..."
             )
@@ -73,16 +76,6 @@ def fetch_configuration(query_api_url: str) -> tuple:
             )
             cluster_response.raise_for_status()
             cluster_data = cluster_response.json()
-
-            # Fetch routing rules
-            logger.info(
-                f"Fetching routing rules from {query_api_url}/admin/routing-map..."
-            )
-            rules_response = requests.get(
-                f"{query_api_url}/admin/routing-map", timeout=10
-            )
-            rules_response.raise_for_status()
-            rules_data = rules_response.json()
 
             if not cluster_data:
                 logger.warning(
@@ -104,11 +97,10 @@ def fetch_configuration(query_api_url: str) -> tuple:
                     except Exception as e:
                         logger.error(f"Failed to create client for {cluster_name}: {e}")
 
-            # Store routing rules
-            collection_routing_rules = rules_data.get("collections", {})
-            logger.info(f"Loaded {len(collection_routing_rules)} routing rule(s).")
-
-            return federation_clients, collection_routing_rules
+            logger.info(
+                f"Successfully loaded {len(federation_clients)} cluster client(s)"
+            )
+            return federation_clients
 
         except requests.exceptions.RequestException as e:
             logger.warning(
@@ -121,26 +113,32 @@ def main():
     """Main entry point for the Indexing Service."""
     logger.info("=" * 60)
     logger.info("IMPOSBRO Search - Indexing Service")
+    logger.info("Architecture: Smart Producer Pattern")
     logger.info("=" * 60)
 
     # Get Query API URL from environment
     query_api_url = os.environ.get("INTERNAL_QUERY_API_URL", "http://query_api:8000")
 
-    # Fetch configuration from Query API
-    federation_clients, routing_rules = fetch_configuration(query_api_url)
+    # Fetch cluster configuration from Query API
+    # Note: No routing rules needed - Smart Producer pattern means
+    # the Producer (Query API) determines routing
+    federation_clients = fetch_cluster_configuration(query_api_url)
 
     if not federation_clients:
         logger.error("No federation clients available. Cannot start consumer.")
         sys.exit(1)
 
     logger.info(
-        f"Starting Indexing Service with {len(federation_clients)} federated client(s)..."
+        f"Starting Indexing Service with {len(federation_clients)} cluster client(s)"
+    )
+    logger.info(
+        "Consumer will trust Producer's routing decisions (Smart Producer pattern)"
     )
 
     # Import and run the consumer
     from consumer import run_consumer
 
-    run_consumer(federation_clients, routing_rules)
+    run_consumer(federation_clients)
 
 
 if __name__ == "__main__":

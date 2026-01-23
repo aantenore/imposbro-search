@@ -241,3 +241,25 @@ class FederationService:
             )
 
         logger.info(f"Loaded {len(clusters_config)} federated cluster(s) from state.")
+
+    def reload_from_state(
+        self, clusters_config: Dict[str, Dict], routing_rules: Dict[str, Dict]
+    ) -> None:
+        """
+        Reload federation configuration from saved state.
+
+        Unlike load_from_state, this clears existing config before loading,
+        ensuring a complete refresh for config synchronization.
+
+        Args:
+            clusters_config: Fresh cluster configurations
+            routing_rules: Fresh routing rules
+        """
+        # Clear existing state
+        self.clusters_config.clear()
+        self.clients.clear()
+        self.routing_rules.clear()
+
+        # Load fresh state
+        self.load_from_state(clusters_config, routing_rules)
+        logger.info("Configuration reloaded from state store.")

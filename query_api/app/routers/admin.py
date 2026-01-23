@@ -2,7 +2,8 @@
 Admin Router for IMPOSBRO Search API.
 
 This module contains all administrative endpoints for managing clusters,
-collections, and routing rules.
+collections, and routing rules. All configuration changes are broadcast
+via Redis Pub/Sub for multi-instance synchronization.
 """
 
 import asyncio
@@ -12,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any
 
 from models import Cluster, CollectionSchema, RoutingRules, OperationResponse
-from services import FederationService, StateManager
+from services import FederationService, StateManager, SyncConfigNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,19 @@ def get_federation_service() -> FederationService:
 def get_state_manager() -> StateManager:
     """Dependency injection placeholder - set at startup."""
     raise NotImplementedError("State manager not initialized")
+
+
+def get_config_notifier() -> SyncConfigNotifier:
+    """Dependency injection placeholder - set at startup."""
+    raise NotImplementedError("Config notifier not initialized")
+
+
+def _notify_config_change(notifier: SyncConfigNotifier, change_type: str):
+    """Helper to broadcast config changes to all instances."""
+    try:
+        notifier.notify(change_type)
+    except Exception as e:
+        logger.warning(f"Failed to broadcast config change: {e}")
 
 
 # ----- Cluster Management -----
@@ -57,11 +71,13 @@ def register_cluster(
     cluster: Cluster,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Register a new Typesense cluster with the federation.
 
     The cluster will be available for routing rules and federated search.
+    All API instances will be notified of this change.
     """
     try:
         federation.register_cluster(
@@ -71,6 +87,7 @@ def register_cluster(
             api_key=cluster.api_key,
         )
         state_manager.save_state(federation.clusters_config, federation.routing_rules)
+        _notify_config_change(notifier, f"cluster_registered:{cluster.name}")
         return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -86,11 +103,13 @@ def delete_cluster(
     cluster_name: str,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Remove a cluster from the federation.
 
     The cluster must not be in use by any routing rules.
+    All API instances will be notified of this change.
     """
     if cluster_name == "default":
         raise HTTPException(
@@ -100,6 +119,7 @@ def delete_cluster(
     try:
         federation.unregister_cluster(cluster_name)
         state_manager.save_state(federation.clusters_config, federation.routing_rules)
+        _notify_config_change(notifier, f"cluster_deleted:{cluster_name}")
         return OperationResponse(message=f"Cluster '{cluster_name}' deleted.")
     except ValueError as e:
         if "not found" in str(e).lower():
@@ -143,11 +163,13 @@ async def create_collection(
     schema: CollectionSchema,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Create a collection across all federated clusters.
 
     The schema is applied to all registered clusters simultaneously.
+    All API instances will be notified of this change.
     """
     schema_dict = schema.model_dump()
     if schema_dict.get("default_sorting_field") is None:
@@ -177,6 +199,7 @@ async def create_collection(
         }
 
     state_manager.save_state(federation.clusters_config, federation.routing_rules)
+    _notify_config_change(notifier, f"collection_created:{schema.name}")
 
     return OperationResponse(message="Collection created successfully on all clusters.")
 
@@ -186,9 +209,11 @@ async def delete_collection(
     collection_name: str,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Delete a collection from all federated clusters.
+    All API instances will be notified of this change.
     """
 
     async def delete_on_cluster(client: typesense.Client) -> None:
@@ -204,6 +229,7 @@ async def delete_collection(
         del federation.routing_rules[collection_name]
 
     state_manager.save_state(federation.clusters_config, federation.routing_rules)
+    _notify_config_change(notifier, f"collection_deleted:{collection_name}")
 
     return OperationResponse(message=f"Collection '{collection_name}' deleted.")
 
@@ -229,12 +255,13 @@ def set_routing_rules(
     rules_config: RoutingRules,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Set or update routing rules for a collection.
 
     Rules are evaluated in order - the first matching rule determines
-    the target cluster for a document.
+    the target cluster for a document. All API instances will be notified.
     """
     collection_name = rules_config.collection
 
@@ -257,6 +284,7 @@ def set_routing_rules(
             default_cluster=rules_config.default_cluster,
         )
         state_manager.save_state(federation.clusters_config, federation.routing_rules)
+        _notify_config_change(notifier, f"routing_updated:{collection_name}")
         return OperationResponse(
             message=f"Routing rules for '{collection_name}' have been updated."
         )
@@ -269,12 +297,15 @@ def delete_routing_rule(
     collection_name: str,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Delete all routing rules for a collection, reverting to default routing.
+    All API instances will be notified.
     """
     federation.delete_routing_rules(collection_name)
     state_manager.save_state(federation.clusters_config, federation.routing_rules)
+    _notify_config_change(notifier, f"routing_deleted:{collection_name}")
     return OperationResponse(
         message=f"Routing rules for '{collection_name}' have been deleted."
     )
