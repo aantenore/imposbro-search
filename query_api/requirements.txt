@@ -4,5 +4,5 @@ typesense
 pydantic-settings
 prometheus-fastapi-instrumentator
 kafka-python-ng
-aioredis
+redis[hiredis]
 asyncio
