@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-indexing-service
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+spec:
+  replicas: {{ .Values.indexingService.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: indexing-service
+  template:
+    metadata:
+      labels:
+        {{- include "imposbro-search.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: indexing-service
+    spec:
+      containers:
+        - name: {{ .Values.indexingService.name }}
+          image: "{{ .Values.indexingService.image }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "imposbro-search.fullname" . }}-config

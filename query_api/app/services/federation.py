@@ -129,9 +129,23 @@ class FederationService:
         del self.clusters_config[name]
         logger.info(f"Cluster '{name}' unregistered.")
 
+    def _resolve_default_cluster(self) -> Optional[str]:
+        """
+        Resolve the virtual 'default' cluster to an actual registered cluster.
+        The admin API exposes 'default' as the internal HA cluster; for routing
+        we need a real data cluster (e.g. default-data-cluster).
+        """
+        if "default" in self.clients:
+            return "default"
+        if "default-data-cluster" in self.clients:
+            return "default-data-cluster"
+        if self.clients:
+            return next(iter(self.clients.keys()))
+        return None
+
     def get_client_for_document(
         self, collection_name: str, document: Dict
-    ) -> Tuple[Optional[typesense.Client], str]:
+    ) -> Tuple[Optional[typesense.Client], Optional[str]]:
         """
         Determine the target cluster for a document based on routing rules.
 
@@ -140,12 +154,16 @@ class FederationService:
             document: Document to route
 
         Returns:
-            Tuple of (Typesense client, cluster name)
+            Tuple of (Typesense client, cluster name). Cluster name may be None
+            if no suitable cluster is available.
         """
         collection_rules = self.routing_rules.get(collection_name)
 
         if not collection_rules or not collection_rules.get("rules"):
-            return self.clients.get("default"), "default"
+            default_name = self._resolve_default_cluster()
+            if default_name is None:
+                return None, None
+            return self.clients.get(default_name), default_name
 
         for rule in collection_rules["rules"]:
             doc_value = document.get(rule["field"])
@@ -158,6 +176,10 @@ class FederationService:
                 return None, target_name
 
         default_name = collection_rules.get("default_cluster", "default")
+        if default_name == "default":
+            default_name = self._resolve_default_cluster()
+        if default_name is None:
+            return None, None
         return self.clients.get(default_name), default_name
 
     def get_clients_for_search(self, collection_name: str) -> List[typesense.Client]:
@@ -176,7 +198,13 @@ class FederationService:
         rules = self.routing_rules.get(collection_name, {})
         if rules.get("rules"):
             cluster_names = {r["cluster"] for r in rules.get("rules", [])}
-            cluster_names.add(rules.get("default_cluster", "default"))
+            default_name = rules.get("default_cluster", "default")
+            if default_name == "default":
+                resolved = self._resolve_default_cluster()
+                if resolved:
+                    cluster_names.add(resolved)
+            else:
+                cluster_names.add(default_name)
             return [
                 self.clients[name] for name in cluster_names if name in self.clients
             ]
@@ -194,9 +222,15 @@ class FederationService:
             rules: List of routing rules
             default_cluster: Default cluster when no rules match
         """
-        # Validate all clusters exist
+        # Validate all clusters exist (resolve virtual "default" for validation)
         all_clusters = {r["cluster"] for r in rules}
-        all_clusters.add(default_cluster)
+        effective_default = (
+            self._resolve_default_cluster()
+            if default_cluster == "default"
+            else default_cluster
+        )
+        if effective_default:
+            all_clusters.add(effective_default)
 
         missing = all_clusters - set(self.clients.keys())
         if missing:
@@ -228,8 +262,11 @@ class FederationService:
         self.routing_rules.update(routing_rules)
 
         for name, config in clusters_config.items():
+            port = config.get("port", 8108)
+            if isinstance(port, int):
+                port = str(port)
             nodes = [
-                {"host": h.strip(), "port": config["port"], "protocol": "http"}
+                {"host": h.strip(), "port": port, "protocol": "http"}
                 for h in config["host"].split(",")
             ]
             self.clients[name] = typesense.Client(

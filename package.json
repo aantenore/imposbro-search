@@ -1,0 +1,12 @@
+{
+  "name": "imposbro-search",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Enterprise federated search on Typesense – root workspace",
+  "scripts": {
+    "test": "npm run test:api",
+    "test:api": "cd query_api && python -m pytest tests -v"
+  },
+  "keywords": ["search", "typesense", "federated", "kafka"],
+  "license": "MIT"
+}
