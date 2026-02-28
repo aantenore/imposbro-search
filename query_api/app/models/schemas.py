@@ -5,8 +5,8 @@ This module contains all the data models used for request/response validation
 and serialization throughout the API.
 """
 
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Optional, Self
 
 
 class Cluster(BaseModel):
@@ -58,18 +58,29 @@ class CollectionSchema(BaseModel):
 
 class FieldRule(BaseModel):
     """
-    A single routing rule that maps a field value to a target cluster.
+    A single routing rule that maps a field value to one or more target clusters.
     
-    Example: If field='region' and value='EU', route to cluster='cluster-eu'
+    Use 'cluster' for single-cluster routing, or 'clusters' for fan-out (replicate
+    document to multiple clusters, e.g. for multi-region).
     
     Attributes:
         field: Document field to evaluate
         value: Value that triggers this rule
-        cluster: Target cluster name when rule matches
+        cluster: Target cluster when rule matches (use this OR clusters)
+        clusters: Target clusters for fan-out (use this OR cluster)
     """
     field: str = Field(..., description="Document field to check")
     value: str = Field(..., description="Value that triggers this routing rule")
-    cluster: str = Field(..., description="Target cluster for matching documents")
+    cluster: Optional[str] = Field(None, description="Single target cluster")
+    clusters: Optional[List[str]] = Field(None, description="Target clusters for fan-out (replication)")
+
+    @model_validator(mode="after")
+    def require_cluster_or_clusters(self) -> Self:
+        if (self.cluster is None) == (self.clusters is None):
+            raise ValueError("Set exactly one of 'cluster' or 'clusters'")
+        if self.clusters is not None and len(self.clusters) == 0:
+            raise ValueError("'clusters' must not be empty")
+        return self
 
 
 class RoutingRules(BaseModel):

@@ -109,9 +109,11 @@ cd query_api
 pip install -r requirements-dev.txt
 python -m pytest tests -v   # TESTING=1 is set in conftest
 
-# Full stack (integration)
-docker-compose up --build
-# Then run API tests against localhost:8000
+# Integration tests (require live Kafka/Redis/Typesense)
+# By default they are skipped. To run them:
+docker-compose up -d   # start the stack
+cd query_api && INTEGRATION=1 python -m pytest tests -v -m integration
+# Or exclude integration from CI: pytest tests -v -m "not integration"
 ```
 
 The Admin UI proxies `/api/*` to the Query API via `app/api/[[...path]]/route.js`; set `INTERNAL_QUERY_API_URL` (e.g. in `.env`) to the backend URL.

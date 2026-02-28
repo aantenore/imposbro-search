@@ -2,9 +2,25 @@
 Dependency injection: read services from app.state (set in lifespan).
 Allows tests and production to use the same code path without mutating router modules.
 """
-from fastapi import Request
+from fastapi import Request, Header, HTTPException
 
+from settings import settings
 from services import FederationService, StateManager, KafkaService, SyncConfigNotifier
+
+
+def require_admin_api_key(
+    request: Request,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    authorization: str | None = Header(None),
+) -> None:
+    """If ADMIN_API_KEY is set, require X-API-Key or Authorization: Bearer to match."""
+    if not settings.ADMIN_API_KEY:
+        return
+    provided = x_api_key
+    if not provided and authorization and authorization.startswith("Bearer "):
+        provided = authorization[7:].strip()
+    if not provided or provided != settings.ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 def get_federation_service(request: Request) -> FederationService:

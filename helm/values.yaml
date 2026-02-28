@@ -47,15 +47,18 @@ redis:
   port: 6379
 
 # Centralized configuration for environment variables
-# These will be loaded into a ConfigMap and used by the containers
+# Non-sensitive values go to ConfigMap; sensitive ones to Secret when useSecret is true.
 config:
+  useSecret: false  # Set to true and provide secret.* values (e.g. via --set) to use a Secret for credentials
   KAFKA_BROKER_URL: "kafka:9092"
   KAFKA_TOPIC_PREFIX: "imposbro_search_sharded"
   TYPESENSE_HOST: "typesense"
   TYPESENSE_PORT: "8108"
-  # SECURITY NOTE: API keys and other credentials should be managed via Kubernetes Secrets, not ConfigMaps.
-  # This is a simplified example for demonstration.
+  # For production: use Secrets (config.useSecret: true) and set these via --set or a secure values file
   TYPESENSE_API_KEY: "xyz"
   REDIS_URL: "redis://redis:6379"
-  # This URL is used for internal communication between containers in the Kubernetes cluster
   INTERNAL_QUERY_API_URL: "http://query-api:80"
+  # Optional: when useSecret is true, these are written to the Secret (same env names the app expects)
+  INTERNAL_STATE_API_KEY: ""
+  DEFAULT_DATA_CLUSTER_API_KEY: ""
+  ADMIN_API_KEY: ""
