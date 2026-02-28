@@ -1,61 +1,98 @@
 'use client';
 
-/**
- * Card Component
- * 
- * A reusable container with consistent styling for content sections.
- * Supports different variants and optional header/footer slots.
- * 
- * @param {Object} props
- * @param {React.ReactNode} props.children - Card content
- * @param {string} [props.className] - Additional CSS classes
- * @param {string} [props.title] - Optional card title
- * @param {React.ReactNode} [props.action] - Optional action element in header
- * @param {boolean} [props.noPadding] - Remove default padding
- */
-export default function Card({
-    children,
-    className = '',
-    title,
-    action,
-    noPadding = false
-}) {
-    return (
-        <div className={`
-      bg-gray-800/50 
-      border border-gray-700 
-      rounded-xl 
-      backdrop-blur-sm
-      ${noPadding ? '' : 'p-6'}
-      ${className}
-    `}>
-            {(title || action) && (
-                <div className={`flex justify-between items-center mb-4 ${noPadding ? 'px-6 pt-6' : ''}`}>
-                    {title && <h3 className="text-lg font-semibold text-white">{title}</h3>}
-                    {action}
-                </div>
-            )}
-            {children}
-        </div>
-    );
+import { cn } from '../../lib/utils';
+
+export function Card({ className, ...props }) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border border-border bg-card text-card-foreground shadow-sm',
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
+export function CardHeader({ className, ...props }) {
+  return (
+    <div
+      className={cn('flex flex-col space-y-1.5 p-6', className)}
+      {...props}
+    />
+  );
+}
+
+export function CardTitle({ className, ...props }) {
+  return (
+    <h3
+      className={cn(
+        'text-2xl font-semibold leading-none tracking-tight',
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
+export function CardDescription({ className, ...props }) {
+  return (
+    <p
+      className={cn('text-sm text-muted-foreground', className)}
+      {...props}
+    />
+  );
+}
+
+export function CardContent({ className, ...props }) {
+  return <div className={cn('p-6 pt-0', className)} {...props} />;
+}
+
+export function CardFooter({ className, ...props }) {
+  return (
+    <div
+      className={cn('flex items-center p-6 pt-0', className)}
+      {...props}
+    />
+  );
 }
 
 /**
- * CardItem Component
- * 
- * A list item within a card with consistent styling.
+ * Backward-compatible Card with optional title/action and noPadding.
+ * Renders as shadcn Card + CardHeader when title/action present.
  */
+export default function CardCompat({
+  children,
+  className = '',
+  title,
+  action,
+  noPadding = false,
+  ...rest
+}) {
+  return (
+    <Card className={className} {...rest}>
+      {(title || action) && (
+        <CardHeader className={noPadding ? 'px-6 pt-6 pb-0' : ''}>
+          <div className="flex items-center justify-between space-y-0">
+            {title && <CardTitle className="text-lg">{title}</CardTitle>}
+            {action}
+          </div>
+        </CardHeader>
+      )}
+      <div className={noPadding ? '' : 'p-6 pt-0'}>{children}</div>
+    </Card>
+  );
+}
+
 export function CardItem({ children, className = '' }) {
-    return (
-        <div className={`
-      p-4 
-      border-b border-gray-700 
-      last:border-b-0 
-      hover:bg-gray-700/30 
-      transition-colors
-      ${className}
-    `}>
-            {children}
-        </div>
-    );
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between border-b border-border p-4 last:border-0 hover:bg-muted/50 transition-colors',
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
 }

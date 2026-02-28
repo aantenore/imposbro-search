@@ -1,31 +1,23 @@
 'use client';
 
-/**
- * PageHeader Component
- * 
- * Consistent page header with title and optional description.
- * 
- * @param {Object} props
- * @param {string} props.title - Page title
- * @param {string} [props.description] - Optional description text
- * @param {React.ReactNode} [props.action] - Optional action button/element
- */
-export default function PageHeader({ title, description, action }) {
-    return (
-        <div className="mb-8">
-            <div className="flex justify-between items-start">
-                <div>
-                    <h1 className="text-3xl font-bold text-white tracking-tight">
-                        {title}
-                    </h1>
-                    {description && (
-                        <p className="mt-2 text-gray-400 max-w-2xl">
-                            {description}
-                        </p>
-                    )}
-                </div>
-                {action && <div>{action}</div>}
-            </div>
+import { cn } from '../../lib/utils';
+
+export default function PageHeader({ title, description, action, className }) {
+  return (
+    <div className={cn('mb-8', className)}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+            {title}
+          </h1>
+          {description && (
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              {description}
+            </p>
+          )}
         </div>
-    );
+        {action && <div className="flex-shrink-0">{action}</div>}
+      </div>
+    </div>
+  );
 }

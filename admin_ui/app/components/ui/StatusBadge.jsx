@@ -1,38 +1,42 @@
 'use client';
 
-/**
- * StatusBadge Component
- * 
- * Visual indicator for status with different color variants.
- * 
- * @param {Object} props
- * @param {string} props.children - Badge text
- * @param {string} [props.variant='default'] - Color variant
- */
-export default function StatusBadge({
-    children,
-    variant = 'default',
-    className = ''
-}) {
-    const variants = {
-        default: 'bg-gray-600 text-gray-200',
-        success: 'bg-green-600/50 text-green-300',
-        warning: 'bg-yellow-600/50 text-yellow-300',
-        error: 'bg-red-600/50 text-red-300',
-        info: 'bg-blue-600/50 text-blue-300',
-        purple: 'bg-purple-600/50 text-purple-300',
-    };
+import { cva } from 'class-variance-authority';
+import { cn } from '../../lib/utils';
 
-    return (
-        <span className={`
-      inline-flex items-center
-      px-2.5 py-0.5
-      text-xs font-medium
-      rounded-full
-      ${variants[variant]}
-      ${className}
-    `}>
-            {children}
-        </span>
-    );
+const badgeVariants = cva(
+  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+  {
+    variants: {
+      variant: {
+        default: 'border-transparent bg-primary text-primary-foreground',
+        secondary: 'border-transparent bg-secondary text-secondary-foreground',
+        destructive: 'border-transparent bg-destructive text-destructive-foreground',
+        outline: 'text-foreground',
+        success:
+          'border-transparent bg-emerald-500/15 text-emerald-400 dark:bg-emerald-500/20',
+        warning:
+          'border-transparent bg-amber-500/15 text-amber-400 dark:bg-amber-500/20',
+        error:
+          'border-transparent bg-destructive/15 text-destructive dark:bg-destructive/20',
+        info: 'border-transparent bg-primary/15 text-primary dark:bg-primary/20',
+        purple:
+          'border-transparent bg-violet-500/15 text-violet-400 dark:bg-violet-500/20',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+    },
+  }
+);
+
+/**
+ * StatusBadge – backward compat: "default" maps to secondary style.
+ */
+export default function StatusBadge({ children, variant = 'default', className = '' }) {
+  const mapped = variant === 'default' ? 'secondary' : variant;
+  return (
+    <span className={cn(badgeVariants({ variant: mapped }), className)}>
+      {children}
+    </span>
+  );
 }

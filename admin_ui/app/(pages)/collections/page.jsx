@@ -152,17 +152,17 @@ export default function CollectionsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Existing Collections List */}
                 <Card title="Existing Collections" noPadding>
-                    <div className="divide-y divide-gray-700">
+                    <div className="divide-y divide-border">
                         {isLoading ? (
-                            <div className="p-6 text-center text-gray-400">Loading collections...</div>
+                            <div className="p-6 text-center text-muted-foreground">Loading collections...</div>
                         ) : collections.length > 0 ? (
                             collections.map(([name, rule]) => (
                                 <div
                                     key={name}
-                                    className="p-4 flex justify-between items-center hover:bg-gray-700/30 transition-colors"
+                                    className="flex items-center justify-between p-4 transition-colors hover:bg-muted/50"
                                 >
                                     <div className="flex flex-col gap-1">
-                                        <span className="text-white font-semibold">{name}</span>
+                                        <span className="font-semibold text-foreground">{name}</span>
                                         <StatusBadge
                                             variant={rule.rules?.length > 0 ? 'purple' : 'default'}
                                         >
@@ -199,12 +199,12 @@ export default function CollectionsPage() {
                         />
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-2">
+                            <label className="mb-2 block text-sm font-medium text-foreground">
                                 Schema Fields
                             </label>
 
                             {newCollection.fields.map((field, index) => (
-                                <div key={index} className="flex items-center gap-2 mt-2 p-3 bg-gray-900/50 rounded-lg">
+                                <div key={index} className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-3">
                                     <Input
                                         className="flex-1"
                                         placeholder="Field Name"

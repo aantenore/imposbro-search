@@ -55,34 +55,31 @@ export function useNotification(autoHideDelay = 5000) {
 }
 
 /**
- * Notification Component
- * 
- * Renders a notification message with appropriate styling.
+ * Notification Component – shadcn-style alert.
  */
 export function Notification({ type, message, onClose }) {
-    const styles = {
-        success: 'bg-green-900/50 border-green-700 text-green-300',
-        error: 'bg-red-900/50 border-red-700 text-red-300',
-        info: 'bg-blue-900/50 border-blue-700 text-blue-300',
-    };
+  const styles = {
+    success: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400',
+    error: 'border-destructive/50 bg-destructive/10 text-destructive',
+    info: 'border-primary/50 bg-primary/10 text-primary',
+  };
 
-    return (
-        <div className={`
-      p-3 rounded-lg border
-      flex items-center justify-between
-      ${styles[type]}
-    `}>
-            <span className="text-sm">{message}</span>
-            {onClose && (
-                <button
-                    onClick={onClose}
-                    className="ml-4 text-current opacity-70 hover:opacity-100"
-                >
-                    ×
-                </button>
-            )}
-        </div>
-    );
+  return (
+    <div
+      className={`flex items-center justify-between rounded-lg border p-3 text-sm ${styles[type] || styles.info}`}
+    >
+      <span>{message}</span>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-4 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring rounded"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default useNotification;
