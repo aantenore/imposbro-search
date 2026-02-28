@@ -139,7 +139,7 @@ export default function CollectionsPage() {
 
             <PageHeader
                 title="Collection Management"
-                description="Create and manage collection schemas. Collections are created across all federated clusters."
+                description="Create search indexes (collections) with a schema. Each collection is created on all registered clusters; use Routing to decide which cluster stores which documents."
             />
 
             {/* Notifications */}
@@ -190,17 +190,23 @@ export default function CollectionsPage() {
 
                 {/* Create New Collection Form */}
                 <Card title="Create New Collection">
+                    <p className="mb-4 text-sm text-muted-foreground">
+                        Define a name and at least one field. The collection will be created on every registered cluster.
+                    </p>
                     <form onSubmit={handleCreate} className="space-y-4">
-                        <Input
-                            placeholder="Collection Name"
-                            value={newCollection.name}
-                            onChange={(e) => setNewCollection(prev => ({ ...prev, name: e.target.value }))}
-                            required
-                        />
+                        <div>
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Collection name</label>
+                            <Input
+                                placeholder="e.g. products"
+                                value={newCollection.name}
+                                onChange={(e) => setNewCollection(prev => ({ ...prev, name: e.target.value }))}
+                                required
+                            />
+                        </div>
 
                         <div>
                             <label className="mb-2 block text-sm font-medium text-foreground">
-                                Schema Fields
+                                Schema fields
                             </label>
 
                             {newCollection.fields.map((field, index) => (

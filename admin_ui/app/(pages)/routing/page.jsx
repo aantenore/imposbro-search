@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, GitBranch, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
@@ -10,12 +10,13 @@ import Button, { IconButton } from '../../components/ui/Button';
 import Input, { Select } from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import RoutingDiagram from '../../components/RoutingDiagram';
 
 /**
  * Routing Page
- * 
+ *
  * Manages document-level routing rules for collections.
- * Allows defining rules that determine which cluster stores each document.
+ * Rules are evaluated in order; first match determines the target cluster.
  */
 export default function RoutingPage() {
     const [collections, setCollections] = useState([]);
@@ -27,54 +28,68 @@ export default function RoutingPage() {
     const [currentRules, setCurrentRules] = useState({});
     const [ruleToDelete, setRuleToDelete] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isLoadingSchema, setIsLoadingSchema] = useState(false);
     const { notification, showSuccess, showError } = useNotification();
 
-    useEffect(() => {
-        fetchData();
-    }, []);
-
-    useEffect(() => {
-        if (selectedCollection) {
-            fetchSchemaAndSetRules();
-        } else {
-            setAvailableFields([]);
-            setRules([]);
-        }
-    }, [selectedCollection, clusters, currentRules]);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         try {
             const data = await api.routing.getMap();
-            setCollections(Object.keys(data.collections || {}));
-            setClusters(data.clusters || []);
+            const colls = Object.keys(data.collections || {});
+            const clus = data.clusters || [];
+            setCollections(colls);
+            setClusters(clus);
             setCurrentRules(data.collections || {});
-            if (data.clusters?.length > 0) {
-                setDefaultCluster(data.clusters[0]);
-            }
+            if (clus.length > 0) setDefaultCluster((prev) => prev || clus[0]);
         } catch (err) {
             showError(err.message);
         }
-    };
+    }, [showError]);
 
-    const fetchSchemaAndSetRules = async () => {
-        try {
-            const schemaData = await api.collections.get(selectedCollection);
-            setAvailableFields(schemaData.fields || []);
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
-            const existingRuleSet = currentRules[selectedCollection];
-            if (existingRuleSet?.rules) {
-                setRules(existingRuleSet.rules);
-                setDefaultCluster(existingRuleSet.default_cluster);
-            } else {
-                setRules([]);
-                setDefaultCluster(clusters[0] || '');
-            }
-        } catch (err) {
-            showError(`Could not fetch schema for ${selectedCollection}.`);
+    useEffect(() => {
+        if (!selectedCollection) {
             setAvailableFields([]);
             setRules([]);
+            return;
         }
-    };
+        let cancelled = false;
+        setIsLoadingSchema(true);
+        Promise.all([
+            api.collections.get(selectedCollection),
+            api.routing.getMap(),
+        ])
+            .then(([schemaData, mapData]) => {
+                if (cancelled) return;
+                setAvailableFields(schemaData.fields || []);
+                const existing = (mapData.collections || {})[selectedCollection];
+                const clus = mapData.clusters || [];
+                if (existing?.rules?.length) {
+                    setRules(existing.rules.map((r) => ({
+                        field: r.field,
+                        value: r.value,
+                        cluster: r.cluster || (r.clusters && r.clusters[0]) || clus[0] || '',
+                    })));
+                    setDefaultCluster(existing.default_cluster || clus[0] || '');
+                } else {
+                    setRules([]);
+                    setDefaultCluster(clus[0] || '');
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    showError(`Could not load schema for ${selectedCollection}.`);
+                    setAvailableFields([]);
+                    setRules([]);
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setIsLoadingSchema(false);
+            });
+        return () => { cancelled = true; };
+    }, [selectedCollection, showError]);
 
     const handleAddRule = () => {
         if (availableFields.length === 0) return;
@@ -164,6 +179,10 @@ export default function RoutingPage() {
                 </div>
             )}
 
+            <div className="mb-8">
+                <RoutingDiagram />
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Set/Update Rules Form */}
                 <Card title="Set / Update Rules">
@@ -171,31 +190,38 @@ export default function RoutingPage() {
                         {/* Step 1: Select Collection */}
                         <div>
                             <label className="mb-2 block text-sm font-medium text-foreground">
-                                1. Select Collection
+                                1. Select collection
                             </label>
                             <Select
                                 value={selectedCollection}
                                 onChange={(e) => setSelectedCollection(e.target.value)}
+                                disabled={isLoadingSchema}
                             >
-                                <option value="">-- Select a Collection --</option>
+                                <option value="">— Select a collection —</option>
                                 {collections.map(c => (
                                     <option key={c} value={c}>{c}</option>
                                 ))}
                             </Select>
+                            {collections.length === 0 && (
+                                <p className="mt-1 text-xs text-muted-foreground">Create a collection first (Collections).</p>
+                            )}
                         </div>
 
                         {selectedCollection && (
                             <>
                                 {/* Step 2: Define Rules */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                                        2. Define Specific Rules
+                                    <label className="block text-sm font-medium text-foreground mb-1">
+                                        2. Rules (evaluated in order)
                                     </label>
+                                    <p className="mb-2 text-xs text-muted-foreground">
+                                        When a document matches a rule (field = value), it is sent to the chosen cluster.
+                                    </p>
 
                                     {rules.map((rule, index) => (
                                         <div
                                             key={index}
-                                            className="grid grid-cols-12 gap-2 items-center mt-2 p-3 bg-gray-900/50 rounded-lg"
+                                            className="grid grid-cols-12 gap-2 items-center mt-2 p-3 bg-muted/30 rounded-lg border border-border"
                                         >
                                             <Select
                                                 className="col-span-4"
@@ -250,8 +276,11 @@ export default function RoutingPage() {
                                 {/* Step 3: Default Cluster */}
                                 <div>
                                     <label className="mb-2 block text-sm font-medium text-foreground">
-                                        3. Set Default Cluster
+                                        3. Default cluster
                                     </label>
+                                    <p className="mb-1 text-xs text-muted-foreground">
+                                        Used when no rule matches the document.
+                                    </p>
                                     <Select
                                         value={defaultCluster}
                                         onChange={(e) => setDefaultCluster(e.target.value)}

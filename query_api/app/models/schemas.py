@@ -6,7 +6,12 @@ and serialization throughout the API.
 """
 
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Self
+from typing import List, Optional
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 
 class Cluster(BaseModel):

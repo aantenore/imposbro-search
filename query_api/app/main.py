@@ -75,25 +75,30 @@ def create_state_client() -> typesense.Client:
 def wait_for_typesense() -> typesense.Client:
     """
     Wait for Typesense cluster to be ready and return the client.
+    Uses GET /collections to verify the server responds (works across Typesense versions).
     """
     while True:
         try:
             logger.info("Checking Typesense cluster readiness...")
             client = create_state_client()
-            client.operations.perform("health", {})
+            # List collections: server must respond; 200 or empty list means ready
+            client.collections.retrieve()
             logger.info("Typesense cluster is ready.")
             return client
         except (
             typesense.exceptions.ServiceUnavailable,
-            typesense.exceptions.ConnectionError,
-            typesense.exceptions.ConnectionTimeout,
+            typesense.exceptions.Timeout,
         ) as e:
             logger.warning(
-                f"Typesense cluster not ready ({type(e).__name__}). Retrying in 5s..."
+                "Typesense cluster not ready (%s). Retrying in 5s...", type(e).__name__
             )
             time.sleep(5)
         except Exception as e:
-            logger.error(f"Unexpected error during health check: {e}. Retrying...")
+            logger.warning(
+                "Typesense health check failed (%s): %s. Retrying in 5s...",
+                type(e).__name__,
+                e,
+            )
             time.sleep(5)
 
 
