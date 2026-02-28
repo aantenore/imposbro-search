@@ -5,7 +5,10 @@ import { LayoutDashboard, Server, Database, GitBranch, ExternalLink } from 'luci
 import Link from 'next/link';
 import { api } from '../../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/Card';
+import RoutingDiagram from '../../components/RoutingDiagram';
 import { cn } from '../../lib/utils';
+
+const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL || 'http://localhost:3000';
 
 function FeatureCard({ href, icon: Icon, iconColor, title, description, external = false }) {
   const CardWrapper = external ? 'a' : Link;
@@ -146,46 +149,61 @@ export default function DashboardPage() {
           description="Define document-level sharding rules to distribute data across clusters."
         />
         <FeatureCard
-          href="http://localhost:3000"
+          href={GRAFANA_URL}
           icon={LayoutDashboard}
           iconColor="text-amber-500"
           title="View Monitoring"
-          description="Open Grafana to monitor system health, performance, and metrics."
+          description="Open Grafana to monitor system health, performance, and metrics (port 3000)."
           external
         />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg font-semibold">Architecture Overview</CardTitle>
-          <CardDescription>How IMPOSBRO Search is built</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-6 text-sm md:grid-cols-3">
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <h4 className="font-semibold text-primary">Ingestion Pipeline</h4>
-              <p className="mt-2 text-muted-foreground leading-relaxed">
-                Documents are routed through Kafka for reliable, asynchronous indexing
-                with guaranteed delivery.
-              </p>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold">How routing works</CardTitle>
+            <CardDescription>Document-level sharding at a glance</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RoutingDiagram compact />
+            <Link
+              href="/routing"
+              className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+            >
+              Configure routing →
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold">Architecture</CardTitle>
+            <CardDescription>How IMPOSBRO Search is built</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4 text-sm">
+              <div className="rounded-lg border border-border bg-muted/30 p-4">
+                <h4 className="font-semibold text-primary">Ingestion</h4>
+                <p className="mt-1 text-muted-foreground leading-relaxed">
+                  Documents go through Kafka for reliable, asynchronous indexing.
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/30 p-4">
+                <h4 className="font-semibold text-emerald-500">Federated search</h4>
+                <p className="mt-1 text-muted-foreground leading-relaxed">
+                  Scatter-gather across clusters with automatic merge and ranking.
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/30 p-4">
+                <h4 className="font-semibold text-violet-500">High availability</h4>
+                <p className="mt-1 text-muted-foreground leading-relaxed">
+                  State in a 3-node Typesense HA cluster with Raft consensus.
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <h4 className="font-semibold text-emerald-500">Federated Search</h4>
-              <p className="mt-2 text-muted-foreground leading-relaxed">
-                Scatter-gather queries across all relevant clusters with automatic
-                result merging and ranking.
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <h4 className="font-semibold text-violet-500">High Availability</h4>
-              <p className="mt-2 text-muted-foreground leading-relaxed">
-                Configuration state is stored in a 3-node Typesense HA cluster with
-                Raft consensus.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

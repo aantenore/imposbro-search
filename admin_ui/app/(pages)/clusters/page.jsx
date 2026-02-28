@@ -96,7 +96,7 @@ export default function ClustersPage() {
 
             <PageHeader
                 title="Cluster Management"
-                description="Register and manage your federated Typesense clusters. Each cluster can store sharded document data."
+                description="Register Typesense clusters that will store your data. You need at least one cluster before creating collections or routing rules."
             />
 
             {/* Notifications */}
@@ -147,33 +147,48 @@ export default function ClustersPage() {
 
                 {/* Register New Cluster Form */}
                 <Card title="Register New Cluster">
+                    <p className="mb-4 text-sm text-muted-foreground">
+                        Add a Typesense node or cluster. The name is used in routing rules (e.g. default-data-cluster).
+                    </p>
                     <form onSubmit={handleRegister} className="space-y-4">
-                        <Input
-                            placeholder="Cluster Name (e.g., cluster-us)"
-                            value={newCluster.name}
-                            onChange={handleInputChange('name')}
-                            required
-                        />
-                        <Input
-                            placeholder="Host (e.g., typesense-replica)"
-                            value={newCluster.host}
-                            onChange={handleInputChange('host')}
-                            required
-                        />
-                        <Input
-                            type="number"
-                            placeholder="Port"
-                            value={newCluster.port}
-                            onChange={handleInputChange('port')}
-                            required
-                        />
-                        <Input
-                            type="password"
-                            placeholder="API Key"
-                            value={newCluster.api_key}
-                            onChange={handleInputChange('api_key')}
-                            required
-                        />
+                        <div>
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Name</label>
+                            <Input
+                                placeholder="e.g. cluster-us"
+                                value={newCluster.name}
+                                onChange={handleInputChange('name')}
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Host</label>
+                            <Input
+                                placeholder="e.g. typesense.example.com"
+                                value={newCluster.host}
+                                onChange={handleInputChange('host')}
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Port</label>
+                            <Input
+                                type="number"
+                                placeholder="8108"
+                                value={newCluster.port}
+                                onChange={handleInputChange('port')}
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground">API Key</label>
+                            <Input
+                                type="password"
+                                placeholder="Typesense API key"
+                                value={newCluster.api_key}
+                                onChange={handleInputChange('api_key')}
+                                required
+                            />
+                        </div>
                         <Button
                             type="submit"
                             variant="primary"

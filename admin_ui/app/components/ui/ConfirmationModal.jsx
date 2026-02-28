@@ -37,15 +37,7 @@ export default function ConfirmationModal({
           {title}
         </h2>
         <p className="mt-4 text-sm text-muted-foreground">
-          {message ? (
-            message
-          ) : (
-            <>
-              {defaultMessage.split(`"${resourceName}"`)[0]}
-              <span className="font-medium text-destructive">{resourceName}</span>
-              {defaultMessage.split(`"${resourceName}"`)[1]}
-            </>
-          )}
+          {displayMessage}
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="outline" onClick={onCancel}>
