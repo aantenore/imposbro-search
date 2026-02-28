@@ -1,131 +1,82 @@
 'use client';
 
 import { forwardRef } from 'react';
+import { cn } from '../../lib/utils';
 
-/**
- * Input Component
- * 
- * A styled text input with consistent appearance.
- * 
- * @param {Object} props
- * @param {string} [props.label] - Optional label text
- * @param {string} [props.error] - Error message to display
- * @param {string} [props.className] - Additional CSS classes
- */
-const Input = forwardRef(function Input({
-    label,
-    error,
-    className = '',
-    ...props
-}, ref) {
-    return (
-        <div className="w-full">
-            {label && (
-                <label className="block text-sm font-medium text-gray-300 mb-1.5">
-                    {label}
-                </label>
-            )}
-            <input
-                ref={ref}
-                className={`
-          w-full
-          px-3 py-2
-          bg-gray-900
-          border border-gray-600
-          rounded-lg
-          text-white
-          placeholder-gray-500
-          transition-colors
-          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-          disabled:opacity-50 disabled:cursor-not-allowed
-          ${error ? 'border-red-500 focus:ring-red-500' : ''}
-          ${className}
-        `}
-                {...props}
-            />
-            {error && (
-                <p className="mt-1 text-sm text-red-400">{error}</p>
-            )}
-        </div>
-    );
+const Input = forwardRef(function Input({ className, type, label, error, ...props }, ref) {
+  return (
+    <div className="w-full">
+      {label && (
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          {label}
+        </label>
+      )}
+      <input
+        type={type}
+        className={cn(
+          'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+          error && 'border-destructive focus-visible:ring-destructive',
+          className
+        )}
+        ref={ref}
+        {...props}
+      />
+      {error && (
+        <p className="mt-1.5 text-sm text-destructive">{error}</p>
+      )}
+    </div>
+  );
 });
 
 export default Input;
 
-/**
- * Select Component
- * 
- * A styled select dropdown with consistent appearance.
- */
-export const Select = forwardRef(function Select({
-    label,
-    error,
-    children,
-    className = '',
-    ...props
-}, ref) {
-    return (
-        <div className="w-full">
-            {label && (
-                <label className="block text-sm font-medium text-gray-300 mb-1.5">
-                    {label}
-                </label>
-            )}
-            <select
-                ref={ref}
-                className={`
-          w-full
-          px-3 py-2
-          bg-gray-900
-          border border-gray-600
-          rounded-lg
-          text-white
-          transition-colors
-          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-          disabled:opacity-50 disabled:cursor-not-allowed
-          ${error ? 'border-red-500 focus:ring-red-500' : ''}
-          ${className}
-        `}
-                {...props}
-            >
-                {children}
-            </select>
-            {error && (
-                <p className="mt-1 text-sm text-red-400">{error}</p>
-            )}
-        </div>
-    );
+export const Select = forwardRef(function Select(
+  { className, label, error, children, ...props },
+  ref
+) {
+  return (
+    <div className="w-full">
+      {label && (
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          {label}
+        </label>
+      )}
+      <select
+        className={cn(
+          'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+          error && 'border-destructive focus-visible:ring-destructive',
+          className
+        )}
+        ref={ref}
+        {...props}
+      >
+        {children}
+      </select>
+      {error && (
+        <p className="mt-1.5 text-sm text-destructive">{error}</p>
+      )}
+    </div>
+  );
 });
 
-/**
- * Checkbox Component
- * 
- * A styled checkbox with label.
- */
-export const Checkbox = forwardRef(function Checkbox({
-    label,
-    className = '',
-    ...props
-}, ref) {
-    return (
-        <label className={`inline-flex items-center cursor-pointer ${className}`}>
-            <input
-                ref={ref}
-                type="checkbox"
-                className="
-          w-4 h-4
-          rounded
-          bg-gray-700
-          border-gray-500
-          text-blue-500
-          focus:ring-blue-500 focus:ring-offset-gray-900
-          transition-colors
-        "
-                {...props}
-            />
-            {label && (
-                <span className="ml-2 text-sm text-gray-300">{label}</span>
-            )}
-        </label>
-    );
+export const Checkbox = forwardRef(function Checkbox(
+  { className, label, ...props },
+  ref
+) {
+  return (
+    <label
+      className={cn(
+        'inline-flex cursor-pointer items-center gap-2 text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70',
+        className
+      )}
+    >
+      <input
+        ref={ref}
+        type="checkbox"
+        className="h-4 w-4 rounded border-input bg-background text-primary focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
+        {...props}
+      />
+      {label && <span className="text-muted-foreground">{label}</span>}
+    </label>
+  );
 });

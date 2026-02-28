@@ -109,18 +109,18 @@ export default function ClustersPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Registered Clusters List */}
                 <Card title="Registered Clusters" noPadding>
-                    <div className="divide-y divide-gray-700">
+                    <div className="divide-y divide-border">
                         {isLoading ? (
-                            <div className="p-6 text-center text-gray-400">Loading clusters...</div>
+                            <div className="p-6 text-center text-muted-foreground">Loading clusters...</div>
                         ) : clusters.length > 0 ? (
                             clusters.map((cluster) => (
                                 <div
                                     key={cluster.name}
-                                    className="p-4 flex justify-between items-center hover:bg-gray-700/30 transition-colors"
+                                    className="flex items-center justify-between p-4 transition-colors hover:bg-muted/50"
                                 >
                                     <div>
-                                        <p className="font-semibold text-white">{cluster.name}</p>
-                                        <p className="text-xs text-gray-400 font-mono">
+                                        <p className="font-semibold text-foreground">{cluster.name}</p>
+                                        <p className="text-xs font-mono text-muted-foreground">
                                             {cluster.host}:{cluster.port}
                                         </p>
                                     </div>

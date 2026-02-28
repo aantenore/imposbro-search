@@ -170,7 +170,7 @@ export default function RoutingPage() {
                     <form onSubmit={handleSubmit} className="space-y-6">
                         {/* Step 1: Select Collection */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-2">
+                            <label className="mb-2 block text-sm font-medium text-foreground">
                                 1. Select Collection
                             </label>
                             <Select
@@ -249,7 +249,7 @@ export default function RoutingPage() {
 
                                 {/* Step 3: Default Cluster */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                                    <label className="mb-2 block text-sm font-medium text-foreground">
                                         3. Set Default Cluster
                                     </label>
                                     <Select
@@ -278,25 +278,25 @@ export default function RoutingPage() {
 
                 {/* Current Routing Configuration */}
                 <Card title="Current Routing Configuration" noPadding>
-                    <div className="divide-y divide-gray-700">
+                    <div className="divide-y divide-border">
                         {configuredRules.length > 0 ? (
                             configuredRules.map(([collection, ruleConfig]) => (
-                                <div key={collection} className="p-4 relative hover:bg-gray-700/30 transition-colors">
-                                    <p className="font-bold text-white mb-3">{collection}</p>
-                                    <ul className="text-sm space-y-2">
+                                <div key={collection} className="relative p-4 transition-colors hover:bg-muted/50">
+                                    <p className="mb-3 font-bold text-foreground">{collection}</p>
+                                    <ul className="space-y-2 text-sm">
                                         {ruleConfig.rules.map((r, i) => (
                                             <li key={i} className="flex items-center gap-2">
-                                                <span className="font-mono bg-gray-700 px-2 py-1 rounded text-xs">
+                                                <span className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs">
                                                     {r.field}: {r.value}
                                                 </span>
-                                                <span className="text-gray-500">→</span>
-                                                <span className="text-blue-400 font-semibold">{r.cluster}</span>
+                                                <span className="text-muted-foreground">→</span>
+                                                <span className="font-semibold text-primary">{r.cluster}</span>
                                             </li>
                                         ))}
-                                        <li className="flex items-center gap-2 pt-2 border-t border-gray-700">
-                                            <span className="text-gray-300">Default</span>
-                                            <span className="text-gray-500">→</span>
-                                            <span className="text-blue-400 font-semibold">{ruleConfig.default_cluster}</span>
+                                        <li className="flex items-center gap-2 border-t border-border pt-2">
+                                            <span className="text-muted-foreground">Default</span>
+                                            <span className="text-muted-foreground">→</span>
+                                            <span className="font-semibold text-primary">{ruleConfig.default_cluster}</span>
                                         </li>
                                     </ul>
                                     <IconButton
