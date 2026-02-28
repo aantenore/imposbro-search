@@ -9,9 +9,11 @@ via Redis Pub/Sub for multi-instance synchronization.
 import asyncio
 import logging
 import typesense
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Path
 from typing import Dict, Any
 
+from constants import NAME_PATTERN
+from deps import get_federation_service, get_state_manager, get_config_notifier
 from models import Cluster, CollectionSchema, RoutingRules, OperationResponse
 from services import FederationService, StateManager, SyncConfigNotifier
 
@@ -20,27 +22,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Administration"])
 
 
-def get_federation_service() -> FederationService:
-    """Dependency injection placeholder - set at startup."""
-    raise NotImplementedError("Federation service not initialized")
-
-
-def get_state_manager() -> StateManager:
-    """Dependency injection placeholder - set at startup."""
-    raise NotImplementedError("State manager not initialized")
-
-
-def get_config_notifier() -> SyncConfigNotifier:
-    """Dependency injection placeholder - set at startup."""
-    raise NotImplementedError("Config notifier not initialized")
-
-
 def _notify_config_change(notifier: SyncConfigNotifier, change_type: str):
     """Helper to broadcast config changes to all instances."""
     try:
         notifier.notify(change_type)
     except Exception as e:
-        logger.warning(f"Failed to broadcast config change: {e}")
+        logger.warning("Failed to broadcast config change: %s", e)
+
+
+def _mask_api_key(api_key: str, visible: int = 4) -> str:
+    """Mask API key for display (show only last visible chars)."""
+    if not api_key or api_key == "N/A":
+        return api_key
+    if len(api_key) <= visible:
+        return "***"
+    return "*" * (len(api_key) - visible) + api_key[-visible:]
 
 
 # ----- Cluster Management -----
@@ -55,8 +51,11 @@ def get_all_clusters(
 
     Returns a dictionary of cluster configurations including a virtual
     'default' entry representing the internal HA cluster.
+    API keys are masked in the response for security.
     """
-    display_config = federation.clusters_config.copy()
+    display_config = {}
+    for name, cfg in federation.clusters_config.items():
+        display_config[name] = {**cfg, "api_key": _mask_api_key(cfg.get("api_key", ""))}
     display_config["default"] = {
         "name": "default",
         "host": "Internal HA Cluster",
@@ -130,9 +129,12 @@ def delete_cluster(
 # ----- Collection Management -----
 
 
-@router.get("/collections/{collection_name}", summary="Get collection schema")
+@router.get(
+    "/collections/{collection_name}",
+    summary="Get collection schema",
+)
 def get_collection_schema(
-    collection_name: str,
+    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     federation: FederationService = Depends(get_federation_service),
 ) -> Dict[str, Any]:
     """
@@ -292,9 +294,12 @@ def set_routing_rules(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.delete("/routing-rules/{collection_name}", summary="Delete routing rules")
+@router.delete(
+    "/routing-rules/{collection_name}",
+    summary="Delete routing rules",
+)
 def delete_routing_rule(
-    collection_name: str,
+    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
     notifier: SyncConfigNotifier = Depends(get_config_notifier),

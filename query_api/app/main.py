@@ -2,7 +2,7 @@
 IMPOSBRO Federated Search & Admin API
 
 A production-ready, enterprise-grade federated search system built on Typesense.
-Provides document-level sharding, resilient scatter-gather search, and
+Provides document-level routing, resilient scatter-gather search, and
 comprehensive management capabilities.
 
 Key Features:
@@ -18,14 +18,18 @@ Version: 4.0.0
 """
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
+from unittest.mock import MagicMock
 
 import typesense
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from constants import APP_NAME, VERSION
 from settings import settings
 from services import (
     StateManager,
@@ -117,6 +121,34 @@ async def reload_configuration():
 
 
 @asynccontextmanager
+async def lifespan_test(app: FastAPI):
+    """Minimal lifespan for testing: injects mocks so no external services are required."""
+    global federation_service, state_manager, kafka_service, config_sync_service, config_notifier
+
+    mock_federation = MagicMock()
+    mock_federation.clients = {"default-data-cluster": MagicMock()}
+    mock_federation.clusters_config = {}  # GET /admin/federation/clusters iterates this
+    mock_federation.routing_rules = {}
+    mock_federation.get_client_for_document = MagicMock(
+        return_value=(MagicMock(), "default-data-cluster")
+    )
+    mock_federation.get_clients_for_search = MagicMock(return_value=[])
+
+    federation_service = mock_federation
+    state_manager = MagicMock()
+    kafka_service = MagicMock()
+    config_sync_service = MagicMock()
+    config_notifier = MagicMock()
+
+    app.state.federation_service = federation_service
+    app.state.state_manager = state_manager
+    app.state.kafka_service = kafka_service
+    app.state.config_notifier = config_notifier
+
+    yield
+
+
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
@@ -127,7 +159,7 @@ async def lifespan(app: FastAPI):
     global federation_service, state_manager, kafka_service, config_sync_service, config_notifier
 
     logger.info("=" * 60)
-    logger.info("IMPOSBRO Search API v4.0.0 Starting...")
+    logger.info("%s %s Starting...", APP_NAME, VERSION)
     logger.info("=" * 60)
 
     # Initialize Typesense client and state manager
@@ -188,28 +220,10 @@ async def lifespan(app: FastAPI):
     # Create synchronous notifier for use in route handlers
     config_notifier = SyncConfigNotifier(settings.REDIS_URL)
 
-    # Dependency injection setup
-    def get_federation():
-        return federation_service
-
-    def get_state():
-        return state_manager
-
-    def get_kafka():
-        return kafka_service
-
-    def get_notifier():
-        return config_notifier
-
-    # Inject dependencies into routers
-    import routers.admin as admin_module
-    import routers.search as search_module
-
-    admin_module.get_federation_service = get_federation
-    admin_module.get_state_manager = get_state
-    admin_module.get_config_notifier = get_notifier
-    search_module.get_federation_service = get_federation
-    search_module.get_kafka_service = get_kafka
+    app.state.federation_service = federation_service
+    app.state.state_manager = state_manager
+    app.state.kafka_service = kafka_service
+    app.state.config_notifier = config_notifier
 
     logger.info("=" * 60)
     logger.info("IMPOSBRO Search API Ready!")
@@ -223,9 +237,18 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down IMPOSBRO Search API...")
     if config_sync_service:
         await config_sync_service.stop()
+    if config_notifier:
+        config_notifier.close()
     if kafka_service:
         kafka_service.close()
     logger.info("Shutdown complete.")
+
+
+def _get_lifespan():
+    """Use test lifespan when TESTING=1 to avoid external service dependencies."""
+    if os.environ.get("TESTING") == "1":
+        return lifespan_test
+    return lifespan
 
 
 # Create FastAPI application
@@ -242,9 +265,19 @@ Enterprise-grade federated search system built on Typesense.
 - **Config synchronization** via Redis Pub/Sub for multi-instance consistency
 - **High availability** state management with Typesense HA cluster
     """,
-    version="4.0.0",
-    lifespan=lifespan,
+    version=VERSION,
+    lifespan=_get_lifespan(),
 )
+
+if settings.CORS_ORIGINS.strip():
+    origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Include routers
 app.include_router(admin_router)
@@ -258,20 +291,50 @@ Instrumentator().instrument(app).expose(app)
 def root():
     """Health check endpoint."""
     return {
-        "service": "IMPOSBRO Federated Search API",
-        "version": "4.0.0",
+        "service": APP_NAME,
+        "version": VERSION,
         "status": "healthy",
     }
 
 
+def _check_redis_ok() -> bool:
+    """Quick Redis connectivity check for health endpoint."""
+    try:
+        import redis
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        r.ping()
+        r.close()
+        return True
+    except Exception:
+        return False
+
+
+def _check_kafka_ok() -> bool:
+    """Quick Kafka connectivity check for health endpoint."""
+    try:
+        if kafka_service and kafka_service._producer:
+            kafka_service.producer.metrics()
+            return True
+        return False
+    except Exception:
+        return False
+
+
 @app.get("/health", tags=["Health"])
 def health():
-    """Detailed health check endpoint."""
+    """Detailed health check endpoint with optional dependency status."""
+    redis_ok = _check_redis_ok()
+    kafka_ok = _check_kafka_ok()
+    clusters = len(federation_service.clients) if federation_service else 0
+    collections = (
+        len(federation_service.routing_rules) if federation_service else 0
+    )
+    status = "healthy" if (clusters > 0 and redis_ok) else "degraded"
     return {
-        "status": "healthy",
-        "clusters": len(federation_service.clients) if federation_service else 0,
-        "collections": (
-            len(federation_service.routing_rules) if federation_service else 0
-        ),
+        "status": status,
+        "clusters": clusters,
+        "collections": collections,
         "config_sync": "enabled",
+        "redis": "ok" if redis_ok else "error",
+        "kafka": "ok" if kafka_ok else "error",
     }
