@@ -2,6 +2,8 @@
 Dependency injection: read services from app.state (set in lifespan).
 Allows tests and production to use the same code path without mutating router modules.
 """
+from typing import Optional
+
 from fastapi import Request, Header, HTTPException
 
 from settings import settings
@@ -10,8 +12,8 @@ from services import FederationService, StateManager, KafkaService, SyncConfigNo
 
 def require_admin_api_key(
     request: Request,
-    x_api_key: str | None = Header(None, alias="X-API-Key"),
-    authorization: str | None = Header(None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
 ) -> None:
     """If ADMIN_API_KEY is set, require X-API-Key or Authorization: Bearer to match."""
     if not settings.ADMIN_API_KEY:

@@ -1,0 +1,7 @@
+# Dependencies and build output (use container's own)
+node_modules
+.next
+.git
+*.md
+.env*
+.DS_Store
