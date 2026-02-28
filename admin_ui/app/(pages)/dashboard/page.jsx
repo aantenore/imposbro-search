@@ -14,17 +14,19 @@ function FeatureCard({ href, icon: Icon, iconColor, title, description, external
     : { href };
 
   return (
-    <CardWrapper {...props} className="block h-full">
-      <Card className="h-full transition-colors hover:bg-accent/50 hover:border-primary/30">
+    <CardWrapper {...props} className="block h-full group">
+      <Card className="h-full transition-all duration-200 hover:bg-card hover:border-primary/40 hover:shadow-card-hover">
         <CardHeader className="flex flex-row items-start justify-between space-y-0">
-          <Icon className={cn('h-10 w-10', iconColor)} />
+          <div className="rounded-xl bg-primary/10 p-2.5 transition-colors group-hover:bg-primary/20">
+            <Icon className={cn('h-6 w-6', iconColor || 'text-primary')} />
+          </div>
           {external && (
-            <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            <ExternalLink className="h-4 w-4 text-muted-foreground opacity-70 group-hover:opacity-100" />
           )}
         </CardHeader>
         <CardContent className="pt-0">
-          <CardTitle className="text-xl">{title}</CardTitle>
-          <CardDescription className="mt-2 leading-relaxed">
+          <CardTitle className="text-lg font-semibold">{title}</CardTitle>
+          <CardDescription className="mt-1.5 text-sm leading-relaxed">
             {description}
           </CardDescription>
         </CardContent>
@@ -68,11 +70,11 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="text-4xl font-bold tracking-tight text-foreground">
+      <div className="border-b border-border pb-8">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
           Welcome to <span className="text-primary">IMPOSBRO</span> Search
         </h1>
-        <p className="mt-4 max-w-3xl text-lg text-muted-foreground">
+        <p className="mt-3 max-w-2xl text-base text-muted-foreground sm:text-lg">
           Your central hub for managing a distributed, sharded search infrastructure.
           Built on Typesense with enterprise-grade federation, high availability, and
           comprehensive monitoring.
@@ -82,8 +84,8 @@ export default function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>System Status</CardDescription>
-            <CardTitle className="flex items-center gap-2 text-2xl">
+            <CardDescription className="text-xs uppercase tracking-wider opacity-90">System Status</CardDescription>
+            <CardTitle className="flex items-center gap-2 text-xl font-semibold">
               {loading ? (
                 <span className="text-muted-foreground">Loading…</span>
               ) : (
@@ -109,14 +111,14 @@ export default function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Clusters</CardDescription>
-            <CardTitle className="text-2xl">{loading ? '—' : clusters}</CardTitle>
+            <CardDescription className="text-xs uppercase tracking-wider opacity-90">Clusters</CardDescription>
+            <CardTitle className="text-2xl font-semibold tabular-nums">{loading ? '—' : clusters}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Collections</CardDescription>
-            <CardTitle className="text-2xl">{loading ? '—' : collections}</CardTitle>
+            <CardDescription className="text-xs uppercase tracking-wider opacity-90">Collections</CardDescription>
+            <CardTitle className="text-2xl font-semibold tabular-nums">{loading ? '—' : collections}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -155,28 +157,28 @@ export default function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Architecture Overview</CardTitle>
+          <CardTitle className="text-lg font-semibold">Architecture Overview</CardTitle>
           <CardDescription>How IMPOSBRO Search is built</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 text-sm md:grid-cols-3">
-            <div>
-              <h4 className="font-medium text-primary">Ingestion Pipeline</h4>
-              <p className="mt-2 text-muted-foreground">
+            <div className="rounded-lg border border-border bg-muted/30 p-4">
+              <h4 className="font-semibold text-primary">Ingestion Pipeline</h4>
+              <p className="mt-2 text-muted-foreground leading-relaxed">
                 Documents are routed through Kafka for reliable, asynchronous indexing
                 with guaranteed delivery.
               </p>
             </div>
-            <div>
-              <h4 className="font-medium text-emerald-500">Federated Search</h4>
-              <p className="mt-2 text-muted-foreground">
+            <div className="rounded-lg border border-border bg-muted/30 p-4">
+              <h4 className="font-semibold text-emerald-500">Federated Search</h4>
+              <p className="mt-2 text-muted-foreground leading-relaxed">
                 Scatter-gather queries across all relevant clusters with automatic
                 result merging and ranking.
               </p>
             </div>
-            <div>
-              <h4 className="font-medium text-violet-500">High Availability</h4>
-              <p className="mt-2 text-muted-foreground">
+            <div className="rounded-lg border border-border bg-muted/30 p-4">
+              <h4 className="font-semibold text-violet-500">High Availability</h4>
+              <p className="mt-2 text-muted-foreground leading-relaxed">
                 Configuration state is stored in a 3-node Typesense HA cluster with
                 Raft consensus.
               </p>

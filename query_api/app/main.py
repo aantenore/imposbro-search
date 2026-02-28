@@ -322,13 +322,29 @@ def _check_kafka_ok() -> bool:
 
 @app.get("/health", tags=["Health"])
 def health():
-    """Detailed health check endpoint with optional dependency status."""
-    redis_ok = _check_redis_ok()
-    kafka_ok = _check_kafka_ok()
-    clusters = len(federation_service.clients) if federation_service else 0
-    collections = (
-        len(federation_service.routing_rules) if federation_service else 0
-    )
+    """Detailed health check endpoint with optional dependency status. Never raises."""
+    try:
+        redis_ok = _check_redis_ok()
+    except Exception:
+        redis_ok = False
+    try:
+        kafka_ok = _check_kafka_ok()
+    except Exception:
+        kafka_ok = False
+    try:
+        clusters = (
+            len(federation_service.clients)
+            if federation_service and hasattr(federation_service, "clients")
+            else 0
+        )
+        collections = (
+            len(federation_service.routing_rules)
+            if federation_service and hasattr(federation_service, "routing_rules")
+            else 0
+        )
+    except Exception:
+        clusters = 0
+        collections = 0
     status = "healthy" if (clusters > 0 and redis_ok) else "degraded"
     return {
         "status": status,
