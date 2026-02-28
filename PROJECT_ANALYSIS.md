@@ -46,20 +46,20 @@
 
 ### High priority
 
-- **Authentication/authorization**: OAuth2/OIDC or API keys for Admin and/or public API (already mentioned in README).
-- **Secrets in production**: Use Kubernetes Secrets for API keys and `REDIS_URL`; do not leave keys in ConfigMaps/values in plain text.
-- **Integration tests**: Tests using Kafka/Redis/Typesense (e.g. in Docker) for end-to-end ingest and search; run optionally in CI.
+- ~~**Authentication/authorization**~~: **Done.** Optional API key for Admin API (`ADMIN_API_KEY`); use `X-API-Key` or `Authorization: Bearer`. OAuth2/OIDC can be added later.
+- ~~**Secrets in production**~~: **Done.** Helm chart supports `config.useSecret: true` and a Secret template for API keys and `REDIS_URL`; deployments can use `envFrom: secretRef`.
+- ~~**Integration tests**~~: **Done.** Pytest marker `integration` and `INTEGRATION=1` to run tests against live Kafka/Redis/Typesense; documented in CONTRIBUTING; CI can run unit tests with `-m "not integration"`.
 
 ### Medium priority
 
-- **Document fan-out**: Routing currently picks a single cluster per document; extend to support multiple clusters per document (replication across regions).
-- **Collection aliases**: For zero-downtime reindexing (swap alias after reindex).
-- **Cursor-based pagination**: For very large result sets, beyond current deep pagination.
-- **Admin UI dashboard**: Real-time metrics (queries/sec, latency) via WebSocket or polling from `/metrics`/Prometheus.
+- ~~**Document fan-out**~~: **Done.** Routing rules support optional `clusters` (list) for replicating a document to multiple clusters; ingest publishes one message per target.
+- ~~**Collection aliases**~~: **Done.** Admin API: `PUT /admin/aliases/{alias_name}`, `GET /admin/aliases`, `DELETE /admin/aliases/{alias_name}` (per cluster) for zero-downtime reindexing.
+- ~~**Cursor-based pagination**~~: **Done.** Search accepts optional `offset` and `limit` for cursor-style deep pagination; response includes `next_offset` when applicable.
+- ~~**Admin UI dashboard**~~: **Done.** Dashboard fetches `/admin/stats` and `/health` every 15s; shows status, clusters, collections, Redis/Kafka.
 
 ### Low priority
 
-- **Grafana**: Predefined dashboards for business metrics (throughput, errors, latency per cluster).
+- ~~**Grafana**~~: **Done.** Overview dashboard extended with "Documents by Collection (1h)" and "Error Rate (5xx)" panels.
 
 ---
 

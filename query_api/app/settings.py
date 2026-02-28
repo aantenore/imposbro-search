@@ -29,5 +29,9 @@ class Settings(BaseSettings):
     # Empty string = CORS middleware not added (same-origin only)
     CORS_ORIGINS: str = ""
 
+    # Optional API key for Admin API. If set, all /admin/* requests must include
+    # header X-API-Key: <value> or Authorization: Bearer <value>
+    ADMIN_API_KEY: str = ""
+
 
 settings = Settings()

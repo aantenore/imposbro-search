@@ -1,5 +1,9 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import { LayoutDashboard, Server, Database, GitBranch, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
+import { api } from '../../lib/api';
 
 /**
  * Dashboard Feature Card
@@ -40,6 +44,38 @@ function FeatureCard({ href, icon: Icon, iconColor, title, description, external
  * Provides navigation to all major features.
  */
 export default function DashboardPage() {
+  const [health, setHealth] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchData() {
+      try {
+        const [h, s] = await Promise.all([
+          api.health.get().catch(() => null),
+          api.stats.get().catch(() => null),
+        ]);
+        if (!cancelled) {
+          setHealth(h);
+          setStats(s);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    fetchData();
+    const t = setInterval(fetchData, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const status = health?.status ?? 'unknown';
+  const clusters = stats?.clusters ?? health?.clusters ?? '—';
+  const collections = stats?.collections ?? health?.collections ?? '—';
+
   return (
     <div>
       {/* Hero Section */}
@@ -54,22 +90,33 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Quick Stats (placeholder for future metrics) */}
+      {/* Quick Stats (live from API) */}
       <div className="mb-10 grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-gradient-to-br from-blue-600/20 to-blue-800/20 border border-blue-700/50 rounded-xl p-5">
           <p className="text-blue-300 text-sm font-medium mb-1">System Status</p>
           <p className="text-2xl font-bold text-white flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"></span>
-            Operational
+            {loading ? (
+              <span className="text-gray-500">Loading…</span>
+            ) : (
+              <>
+                <span className={`w-2.5 h-2.5 rounded-full ${status === 'healthy' ? 'bg-green-400' : 'bg-amber-400'} animate-pulse`}></span>
+                {status === 'healthy' ? 'Operational' : status === 'degraded' ? 'Degraded' : 'Unknown'}
+              </>
+            )}
           </p>
+          {health && (
+            <p className="text-gray-500 text-xs mt-1">
+              Redis: {health.redis ?? '—'} · Kafka: {health.kafka ?? '—'}
+            </p>
+          )}
         </div>
         <div className="bg-gradient-to-br from-purple-600/20 to-purple-800/20 border border-purple-700/50 rounded-xl p-5">
-          <p className="text-purple-300 text-sm font-medium mb-1">Architecture</p>
-          <p className="text-2xl font-bold text-white">Federated</p>
+          <p className="text-purple-300 text-sm font-medium mb-1">Clusters</p>
+          <p className="text-2xl font-bold text-white">{loading ? '—' : clusters}</p>
         </div>
         <div className="bg-gradient-to-br from-green-600/20 to-green-800/20 border border-green-700/50 rounded-xl p-5">
-          <p className="text-green-300 text-sm font-medium mb-1">Version</p>
-          <p className="text-2xl font-bold text-white">v3.5.0</p>
+          <p className="text-green-300 text-sm font-medium mb-1">Collections</p>
+          <p className="text-2xl font-bold text-white">{loading ? '—' : collections}</p>
         </div>
       </div>
 

@@ -18,3 +18,13 @@ def test_get_clusters_includes_default_and_returns_200(client):
     data = r.json()
     assert "default" in data
     assert data["default"].get("api_key") == "N/A"
+
+
+def test_admin_stats_returns_200(client):
+    """GET /admin/stats returns 200 with clusters and collections."""
+    r = client.get("/admin/stats")
+    assert r.status_code == 200
+    data = r.json()
+    assert "clusters" in data
+    assert "collections" in data
+    assert "metrics_url" in data

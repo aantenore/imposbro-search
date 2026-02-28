@@ -23,6 +23,7 @@ Dependencies (FederationService, StateManager, KafkaService, SyncConfigNotifier)
 - **API keys**: Never logged in full. The admin endpoint `GET /admin/federation/clusters` returns **masked** API keys (e.g. `****key`); full keys are only sent when registering a cluster (POST body).
 - **Path parameters**: Collection and cluster names are validated with `Path(..., pattern=NAME_PATTERN)` so only alphanumeric, hyphen, and underscore are allowed (Typesense-compatible, reduces injection risk).
 - **CORS**: Enabled only when `CORS_ORIGINS` is set; use explicit origins in production (e.g. `https://admin.example.com`).
+- **Admin API key**: If `ADMIN_API_KEY` is set, all `/admin/*` requests must include `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, admin endpoints are unprotected (suitable for dev or behind a gateway).
 
 ### 1.4 Error handling and HTTP status
 

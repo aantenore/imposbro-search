@@ -28,3 +28,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "imposbro-search.fullname" . }}-config
+            {{- if .Values.config.useSecret }}
+            - secretRef:
+                name: {{ include "imposbro-search.fullname" . }}-secret
+            {{- end }}
