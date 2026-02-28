@@ -1,129 +1,101 @@
 'use client';
 
 import { forwardRef } from 'react';
+import { cva } from 'class-variance-authority';
+import { cn } from '../../lib/utils';
 
-/**
- * Button Component
- * 
- * A flexible button component with multiple variants for different use cases.
- * 
- * Variants:
- * - primary: Blue, for main actions
- * - secondary: Gray, for secondary actions
- * - success: Green, for positive actions like create
- * - danger: Red, for destructive actions
- * - ghost: Transparent, for subtle actions
- * 
- * @param {Object} props
- * @param {React.ReactNode} props.children - Button content
- * @param {string} [props.variant='primary'] - Button style variant
- * @param {string} [props.size='md'] - Button size (sm, md, lg)
- * @param {boolean} [props.fullWidth] - Make button full width
- * @param {boolean} [props.disabled] - Disable the button
- * @param {boolean} [props.loading] - Show loading state
- * @param {React.ReactNode} [props.leftIcon] - Icon to show on the left
- * @param {string} [props.className] - Additional CSS classes
- */
-const Button = forwardRef(function Button({
-    children,
-    variant = 'primary',
-    size = 'md',
+const buttonVariants = cva(
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  {
+    variants: {
+      variant: {
+        default: 'bg-primary text-primary-foreground hover:bg-primary/90',
+        destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+        outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground',
+        secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        ghost: 'hover:bg-accent hover:text-accent-foreground',
+        link: 'text-primary underline-offset-4 hover:underline',
+      },
+      size: {
+        default: 'h-10 px-4 py-2',
+        sm: 'h-9 rounded-md px-3',
+        lg: 'h-11 rounded-md px-8',
+        icon: 'h-10 w-10',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+      size: 'default',
+    },
+  }
+);
+
+const variantMap = { primary: 'default', danger: 'destructive', success: 'default', purple: 'default' };
+
+const Button = forwardRef(function Button(
+  {
+    className,
+    variant = 'default',
+    size = 'default',
     fullWidth = false,
-    disabled = false,
     loading = false,
     leftIcon,
-    className = '',
-    type = 'button',
+    children,
     ...props
-}, ref) {
-    const baseStyles = `
-    inline-flex items-center justify-center
-    font-semibold
-    rounded-lg
-    transition-all duration-200
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900
-    disabled:opacity-50 disabled:cursor-not-allowed
-  `;
-
-    const variants = {
-        primary: 'bg-blue-600 hover:bg-blue-500 text-white focus:ring-blue-500',
-        secondary: 'bg-gray-700 hover:bg-gray-600 text-white focus:ring-gray-500',
-        success: 'bg-green-600 hover:bg-green-500 text-white focus:ring-green-500',
-        danger: 'bg-red-600 hover:bg-red-500 text-white focus:ring-red-500',
-        ghost: 'bg-transparent hover:bg-gray-700/50 text-gray-300 focus:ring-gray-500',
-        purple: 'bg-purple-600 hover:bg-purple-500 text-white focus:ring-purple-500',
-    };
-
-    const sizes = {
-        sm: 'px-3 py-1.5 text-sm gap-1.5',
-        md: 'px-4 py-2 text-sm gap-2',
-        lg: 'px-6 py-3 text-base gap-2',
-    };
-
-    return (
-        <button
-            ref={ref}
-            type={type}
-            disabled={disabled || loading}
-            className={`
-        ${baseStyles}
-        ${variants[variant]}
-        ${sizes[size]}
-        ${fullWidth ? 'w-full' : ''}
-        ${className}
-      `}
-            {...props}
+  },
+  ref
+) {
+  const resolvedVariant = variantMap[variant] || variant;
+  return (
+    <button
+      ref={ref}
+      className={cn(
+        buttonVariants({ variant: resolvedVariant, size }),
+        fullWidth && 'w-full',
+        className
+      )}
+      disabled={props.disabled || loading}
+      {...props}
+    >
+      {loading ? (
+        <svg
+          className="h-4 w-4 animate-spin"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
         >
-            {loading ? (
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-            ) : leftIcon}
-            {children}
-        </button>
-    );
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          />
+        </svg>
+      ) : (
+        leftIcon
+      )}
+      {children}
+    </button>
+  );
 });
 
 export default Button;
 
-/**
- * IconButton Component
- * 
- * A circular button for icon-only actions.
- */
-export function IconButton({
-    children,
-    variant = 'ghost',
-    size = 'md',
-    className = '',
-    ...props
-}) {
-    const sizes = {
-        sm: 'p-1.5',
-        md: 'p-2',
-        lg: 'p-3',
-    };
-
-    const variants = {
-        ghost: 'text-gray-400 hover:text-white hover:bg-gray-700/50',
-        danger: 'text-gray-400 hover:text-red-500 hover:bg-red-900/30',
-    };
-
-    return (
-        <button
-            type="button"
-            className={`
-        rounded-full
-        transition-colors
-        focus:outline-none focus:ring-2 focus:ring-gray-500
-        ${sizes[size]}
-        ${variants[variant]}
-        ${className}
-      `}
-            {...props}
-        >
-            {children}
-        </button>
-    );
+export function IconButton({ className, variant = 'ghost', size = 'icon', ...props }) {
+  return (
+    <Button
+      className={cn(className)}
+      variant={variant}
+      size={size}
+      {...props}
+    />
+  );
 }
