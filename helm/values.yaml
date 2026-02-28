@@ -22,6 +22,12 @@ adminUi:
     type: LoadBalancer # Expose this service outside the cluster
     port: 80
 
+# Configuration for the indexing-service (Kafka consumer)
+indexingService:
+  name: indexing-service
+  image: "your-registry/imposbro-indexing-service:latest" # <-- IMPORTANT: Replace with your Docker image name
+  replicaCount: 1
+
 # Configuration for backend services (Kafka, Typesense, Redis)
 # For a production setup, these should come from external Helm charts (as dependencies)
 # or be managed services from your cloud provider.

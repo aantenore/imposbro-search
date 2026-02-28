@@ -84,8 +84,11 @@ def fetch_cluster_configuration(query_api_url: str) -> Dict[str, typesense.Clien
                 time.sleep(10)
                 continue
 
-            # Create Typesense clients for each cluster
+            # Create Typesense clients for each cluster.
+            # Skip the virtual "default" entry (internal HA cluster) returned by the admin API.
             for cluster_name, cluster_info in cluster_data.items():
+                if cluster_name == "default":
+                    continue
                 if cluster_name not in federation_clients:
                     try:
                         federation_clients[cluster_name] = create_typesense_client(

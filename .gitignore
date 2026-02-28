@@ -6,11 +6,22 @@ node_modules
 # Build artifacts
 .next/
 out/
+dist/
+build/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
 
 # Environments
 .env
@@ -18,6 +29,7 @@ __pycache__/
 .venv
 env/
 venv/
+.env.test
 
 # Docker
 docker-compose.override.yml
@@ -25,3 +37,14 @@ docker-compose.override.yml
 # IDE specific
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Typesense node discovery (local dev)
+typesense-nodes
+typesense-nodes-*

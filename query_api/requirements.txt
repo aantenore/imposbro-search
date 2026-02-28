@@ -5,4 +5,3 @@ pydantic-settings
 prometheus-fastapi-instrumentator
 kafka-python-ng
 redis[hiredis]
-asyncio

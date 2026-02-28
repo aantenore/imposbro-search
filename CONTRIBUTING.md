@@ -100,16 +100,21 @@ feat(api): add batch ingestion endpoint
 ### Running Tests
 
 ```bash
-# Backend tests
-cd query_api && python -m pytest
+# From repo root (recommended)
+make test          # Unix/macOS
+npm run test       # Any OS (runs query_api pytest)
 
-# Frontend tests
-cd admin_ui && npm test
+# From query_api/
+cd query_api
+pip install -r requirements-dev.txt
+python -m pytest tests -v   # TESTING=1 is set in conftest
 
-# Full integration test
+# Full stack (integration)
 docker-compose up --build
 # Then run API tests against localhost:8000
 ```
+
+The Admin UI proxies `/api/*` to the Query API via `app/api/[[...path]]/route.js`; set `INTERNAL_QUERY_API_URL` (e.g. in `.env`) to the backend URL.
 
 ### Manual Testing Checklist
 
@@ -126,6 +131,7 @@ docker-compose up --build
 - Update `README.md` for user-facing changes
 - Add JSDoc/docstrings for new code
 - Update API documentation in code comments
+- Follow patterns in **[docs/PATTERNS_AND_PRACTICES.md](docs/PATTERNS_AND_PRACTICES.md)** (DI, validation, security, error handling)
 
 ## 🐛 Reporting Issues
 

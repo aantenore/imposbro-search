@@ -282,6 +282,9 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DEFAULT_DATA_CLUSTER_NODES` | Default federated cluster nodes |
 | `DEFAULT_DATA_CLUSTER_API_KEY` | API key for default cluster |
 | `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
+| `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
+
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security.
 
 ---
 
@@ -346,11 +349,11 @@ typesense-1:8107:8108,typesense-2:8107:8108,typesense-3:8107:8108,...
 
 ### Step 3: Update the `.env` File
 
-Finally, tell the `query_api` about the new nodes by updating the `TYPESENSE_NODES` environment variable.
+Finally, tell the `query_api` about the new nodes by updating the `INTERNAL_STATE_NODES` environment variable.
 
 ```env
 # In the '.env' file:
-TYPESENSE_NODES=typesense-1,typesense-2,typesense-3,typesense-4,typesense-5
+INTERNAL_STATE_NODES=typesense-1,typesense-2,typesense-3,typesense-4,typesense-5
 ```
 
 After these changes, restart the entire stack with `docker-compose up --build`. The `query_api` will automatically connect to all five nodes, and the Typesense cluster will re-balance itself. No application code changes are required.
@@ -389,10 +392,10 @@ docker push your-registry-user/imposbro-indexing-service:latest
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Update `values.yaml`:** Open `helm/imposbro-search/values.yaml` and update the `image` repository values for `queryApi`, `adminUi`, and `indexingService` to match the image names you just pushed.
+1.  **Update `values.yaml`:** Open `helm/values.yaml` and update the `image` repository values for `queryApi`, `adminUi`, and `indexingService` to match the image names you just pushed.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
-    helm install imposbro-release ./helm/imposbro-search
+    helm install imposbro-release ./helm
     ```
 3.  **Check Status:** To check the status of your deployment, run:
     ```bash
@@ -440,6 +443,26 @@ Kubernetes makes it easy to scale your stateless application services.
 * [ ] Grafana dashboards for business metrics (queries/sec, latency percentiles)
 
 ---
+
+## 🧪 Running tests from the repo root
+
+```bash
+# Option 1: Make (Unix/macOS)
+make test
+
+# Option 2: npm (any OS)
+npm run test
+```
+
+Both run the Query API pytest suite (no Kafka/Redis/Typesense required). See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
+
+---
+
+## 📐 Patterns & documentation
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to run tests, code style, and PR process.
+- **[docs/PATTERNS_AND_PRACTICES.md](docs/PATTERNS_AND_PRACTICES.md)** – Architectural patterns, dependency injection, security (API key masking, path validation, CORS), error handling, and checklist for new changes.
+- **[PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md)** – Project analysis, improvements log, and roadmap.
 
 ## 🤝 Contributing
 

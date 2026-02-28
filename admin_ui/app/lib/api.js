@@ -40,7 +40,15 @@ async function request(endpoint, options = {}) {
 
     try {
         const response = await fetch(url, config);
-        const data = await response.json();
+        const contentType = response.headers.get('Content-Type') || '';
+        let data;
+        try {
+            data = contentType.includes('application/json')
+                ? await response.json()
+                : { detail: await response.text() || `HTTP ${response.status}` };
+        } catch (_) {
+            data = { detail: `HTTP ${response.status}` };
+        }
 
         if (!response.ok) {
             throw new ApiError(

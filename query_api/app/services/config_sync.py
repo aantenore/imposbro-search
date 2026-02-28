@@ -190,3 +190,12 @@ class SyncConfigNotifier:
             logger.debug(f"Published config change notification: {change_type}")
         except Exception as e:
             logger.error(f"Failed to publish config change: {e}")
+
+    def close(self) -> None:
+        """Close the Redis connection. Call on application shutdown."""
+        if self._sync_client:
+            try:
+                self._sync_client.close()
+            except Exception as e:
+                logger.debug(f"Error closing SyncConfigNotifier Redis client: {e}")
+            self._sync_client = None

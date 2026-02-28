@@ -7,10 +7,12 @@ Implements industry-standard scatter-gather search with correct deep pagination.
 
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, Query, Depends, Response
+from fastapi import APIRouter, HTTPException, Query, Depends, Response, Path, Body
 from typing import Dict, Any, Optional, List
 from prometheus_client import Counter
 
+from constants import NAME_PATTERN
+from deps import get_federation_service, get_kafka_service
 from models import IngestResponse
 from services import FederationService, KafkaService
 
@@ -28,24 +30,14 @@ MAX_DEEP_PAGINATION_DOCS = 10000  # Maximum documents to fetch for deep paginati
 DEEP_PAGINATION_WARNING_PAGE = 10  # Warn user when page exceeds this
 
 
-def get_federation_service() -> FederationService:
-    """Dependency injection placeholder - set at startup."""
-    raise NotImplementedError("Federation service not initialized")
-
-
-def get_kafka_service() -> KafkaService:
-    """Dependency injection placeholder - set at startup."""
-    raise NotImplementedError("Kafka service not initialized")
-
-
 @router.post(
     "/ingest/{collection_name}",
     response_model=IngestResponse,
     summary="Ingest a document",
 )
 def ingest_document(
-    collection_name: str,
-    document: Dict[str, Any],
+    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
+    document: Dict[str, Any] = Body(...),
     federation: FederationService = Depends(get_federation_service),
     kafka: KafkaService = Depends(get_kafka_service),
 ) -> IngestResponse:
@@ -67,13 +59,17 @@ def ingest_document(
         raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
 
     # Determine target cluster based on routing rules
-    _, target_cluster_name = federation.get_client_for_document(
+    client, target_cluster_name = federation.get_client_for_document(
         collection_name, document
     )
 
-    if not target_cluster_name:
+    if not target_cluster_name or not client:
         raise HTTPException(
-            status_code=500, detail="Could not determine target cluster for document."
+            status_code=503,
+            detail=(
+                "No target cluster available for document. "
+                "Ensure at least one data cluster is registered and routing is configured."
+            ),
         )
 
     try:
@@ -93,10 +89,13 @@ def ingest_document(
         raise HTTPException(status_code=500, detail=f"Kafka producer error: {str(e)}")
 
 
-@router.get("/search/{collection_name}", summary="Federated search")
+@router.get(
+    "/search/{collection_name}",
+    summary="Federated search",
+)
 async def search(
     response: Response,
-    collection_name: str,
+    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     q: str = Query(..., min_length=1, description="Search query"),
     query_by: str = Query(..., description="Comma-separated fields to search"),
     filter_by: Optional[str] = Query(None, description="Filter expression"),
