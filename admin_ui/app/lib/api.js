@@ -117,6 +117,16 @@ export const api = {
         }),
     },
 
+    // ===== Stats & Health =====
+    stats: {
+        /** Dashboard metrics summary */
+        get: () => request('/admin/stats'),
+    },
+    health: {
+        /** Service health (status, redis, kafka, clusters) */
+        get: () => request('/health'),
+    },
+
     // ===== Routing =====
     routing: {
         /**

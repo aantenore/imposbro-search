@@ -9,17 +9,26 @@ via Redis Pub/Sub for multi-instance synchronization.
 import asyncio
 import logging
 import typesense
-from fastapi import APIRouter, HTTPException, Depends, Path
+from fastapi import APIRouter, HTTPException, Depends, Path, Query
 from typing import Dict, Any
 
 from constants import NAME_PATTERN
-from deps import get_federation_service, get_state_manager, get_config_notifier
+from deps import (
+    get_federation_service,
+    get_state_manager,
+    get_config_notifier,
+    require_admin_api_key,
+)
 from models import Cluster, CollectionSchema, RoutingRules, OperationResponse
 from services import FederationService, StateManager, SyncConfigNotifier
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/admin", tags=["Administration"])
+router = APIRouter(
+    prefix="/admin",
+    tags=["Administration"],
+    dependencies=[Depends(require_admin_api_key)],
+)
 
 
 def _notify_config_change(notifier: SyncConfigNotifier, change_type: str):
@@ -40,6 +49,23 @@ def _mask_api_key(api_key: str, visible: int = 4) -> str:
 
 
 # ----- Cluster Management -----
+
+
+@router.get("/stats", summary="Metrics summary for dashboard")
+def get_admin_stats(
+    federation: FederationService = Depends(get_federation_service),
+) -> Dict[str, Any]:
+    """
+    Return a JSON summary of key metrics for the Admin UI dashboard.
+    For full Prometheus metrics use GET /metrics.
+    """
+    clusters = len(federation.clients) if federation else 0
+    collections = len(federation.routing_rules) if federation else 0
+    return {
+        "clusters": clusters,
+        "collections": collections,
+        "metrics_url": "/metrics",
+    }
 
 
 @router.get("/federation/clusters", summary="List all registered clusters")
@@ -234,6 +260,88 @@ async def delete_collection(
     _notify_config_change(notifier, f"collection_deleted:{collection_name}")
 
     return OperationResponse(message=f"Collection '{collection_name}' deleted.")
+
+
+# ----- Collection Aliases (zero-downtime reindexing) -----
+
+
+@router.put(
+    "/aliases/{alias_name}",
+    summary="Create or update collection alias",
+)
+async def upsert_alias(
+    alias_name: str = Path(..., pattern=NAME_PATTERN, description="Alias name"),
+    collection_name: str = Query(..., description="Target collection name"),
+    cluster_name: str = Query("default", description="Cluster where the alias is created"),
+    federation: FederationService = Depends(get_federation_service),
+) -> OperationResponse:
+    """
+    Create or update an alias pointing to a collection (Typesense alias).
+    Use for zero-downtime reindexing: point alias to new collection after reindex.
+    """
+    client = federation.get_client_for_cluster(cluster_name)
+    if not client:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Cluster '{cluster_name}' not found or not available.",
+        )
+    try:
+        await asyncio.to_thread(
+            client.aliases[alias_name].upsert,
+            {"collection_name": collection_name},
+        )
+        return OperationResponse(
+            message=f"Alias '{alias_name}' -> '{collection_name}' on cluster '{cluster_name}'."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/aliases",
+    summary="List aliases on a cluster",
+)
+def list_aliases(
+    cluster_name: str = Query("default", description="Cluster to list aliases from"),
+    federation: FederationService = Depends(get_federation_service),
+) -> Dict[str, Any]:
+    """List all collection aliases on the given cluster."""
+    client = federation.get_client_for_cluster(cluster_name)
+    if not client:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Cluster '{cluster_name}' not found or not available.",
+        )
+    try:
+        aliases = client.aliases.retrieve()
+        return {"cluster": cluster_name, "aliases": aliases}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete(
+    "/aliases/{alias_name}",
+    summary="Delete collection alias",
+)
+async def delete_alias(
+    alias_name: str = Path(..., pattern=NAME_PATTERN),
+    cluster_name: str = Query("default", description="Cluster where the alias lives"),
+    federation: FederationService = Depends(get_federation_service),
+) -> OperationResponse:
+    """Remove an alias from the cluster."""
+    client = federation.get_client_for_cluster(cluster_name)
+    if not client:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Cluster '{cluster_name}' not found or not available.",
+        )
+    try:
+        await asyncio.to_thread(client.aliases[alias_name].delete)
+        return OperationResponse(message=f"Alias '{alias_name}' deleted.")
+    except typesense.exceptions.ObjectNotFound:
+        raise HTTPException(status_code=404, detail=f"Alias '{alias_name}' not found.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ----- Routing Rules Management -----

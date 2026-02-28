@@ -58,12 +58,10 @@ def ingest_document(
     if not doc_id:
         raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
 
-    # Determine target cluster based on routing rules
-    client, target_cluster_name = federation.get_client_for_document(
-        collection_name, document
-    )
+    # Get all targets (single or fan-out to multiple clusters)
+    targets = federation.get_targets_for_document(collection_name, document)
 
-    if not target_cluster_name or not client:
+    if not targets:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -73,16 +71,17 @@ def ingest_document(
         )
 
     try:
-        kafka.publish_document(
-            collection_name=collection_name,
-            document=document,
-            target_cluster=target_cluster_name,
-        )
-
+        for _client, target_cluster_name in targets:
+            kafka.publish_document(
+                collection_name=collection_name,
+                document=document,
+                target_cluster=target_cluster_name,
+            )
+        routed_to = ",".join(name for _, name in targets)
         documents_ingested.labels(collection=collection_name).inc()
 
         return IngestResponse(
-            status="ok", document_id=str(doc_id), routed_to=target_cluster_name
+            status="ok", document_id=str(doc_id), routed_to=routed_to
         )
     except Exception as e:
         logger.error(f"Failed to publish document to Kafka: {e}")
@@ -100,8 +99,10 @@ async def search(
     query_by: str = Query(..., description="Comma-separated fields to search"),
     filter_by: Optional[str] = Query(None, description="Filter expression"),
     sort_by: Optional[str] = Query(None, description="Sort expression"),
-    page: int = Query(1, ge=1, description="Page number"),
+    page: int = Query(1, ge=1, description="Page number (ignored if offset is set)"),
     per_page: int = Query(10, ge=1, le=250, description="Results per page"),
+    offset: Optional[int] = Query(None, ge=0, description="Cursor-style offset (use with limit for deep pagination)"),
+    limit: Optional[int] = Query(None, ge=1, le=250, description="Page size when using offset"),
     federation: FederationService = Depends(get_federation_service),
 ) -> Dict[str, Any]:
     """
@@ -138,9 +139,20 @@ async def search(
             detail=f"Collection '{collection_name}' not found on any registered cluster.",
         )
 
-    # Deep pagination: Calculate how many docs we need from each cluster
-    # To get page N correctly, we need to fetch pages 1 through N from each cluster
-    total_needed = page * per_page
+    # Cursor-style: use offset/limit when provided; otherwise page/per_page
+    use_offset = offset is not None and limit is not None
+    if use_offset:
+        start_idx = offset
+        page_size = limit
+        total_needed = offset + limit
+        effective_page = (offset // limit) + 1
+    else:
+        start_idx = (page - 1) * per_page
+        page_size = per_page
+        total_needed = page * per_page
+        effective_page = page
+
+    # Deep pagination: fetch enough from each cluster to cover requested range
 
     # Cap to prevent memory issues
     if total_needed > MAX_DEEP_PAGINATION_DOCS:
@@ -208,21 +220,23 @@ async def search(
         unique_hits_map.values(), key=lambda x: x.get("text_match", float("inf"))
     )
 
-    # Slice: Return only the requested page
-    start_idx = (page - 1) * per_page
-    end_idx = start_idx + per_page
+    # Slice: Return only the requested page or offset window
+    end_idx = start_idx + page_size
     page_hits = sorted_hits[start_idx:end_idx]
-
-    # Calculate if there are more results
     has_more = end_idx < len(sorted_hits)
+    next_offset = offset + limit if (use_offset and has_more) else None
 
-    return {
+    out = {
         "found": total_found,
-        "page": page,
-        "per_page": per_page,
+        "page": effective_page,
+        "per_page": page_size,
         "hits": page_hits,
-        "out_of": len(sorted_hits),  # Deduplicated count
+        "out_of": len(sorted_hits),
         "clusters_queried": len(clients),
         "clusters_responded": successful_clusters,
         "has_more": has_more,
     }
+    if use_offset:
+        out["offset"] = offset
+        out["next_offset"] = next_offset
+    return out

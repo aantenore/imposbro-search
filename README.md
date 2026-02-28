@@ -283,8 +283,9 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DEFAULT_DATA_CLUSTER_API_KEY` | API key for default cluster |
 | `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
+| `ADMIN_API_KEY` | Optional; if set, all `/admin/*` requests require header `X-API-Key` or `Authorization: Bearer` |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. For production Kubernetes, use the Helm Secret template (`config.useSecret: true`) for credentials.
 
 ---
 
@@ -432,15 +433,21 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] **Correct federated pagination** with deep pagination pattern
 * [x] **Smart Producer architecture** eliminating routing logic duplication
 
-### 🚧 In Progress / Future
+### ✅ Roadmap completed (v4)
 
-* [ ] Add functional and integration test suites (pytest, Cypress)
-* [ ] Implement collection aliases for zero-downtime re-indexing
-* [ ] Add real-time metrics dashboard in Admin UI (WebSocket updates)
-* [ ] Implement cursor-based pagination for very deep result sets
-* [ ] Add authentication/authorization layer (OAuth2/OIDC)
+* [x] Integration test suite (pytest marker `integration`, run with `INTEGRATION=1`)
+* [x] Collection aliases API for zero-downtime re-indexing (`PUT/GET/DELETE /admin/aliases`)
+* [x] Real-time metrics on Admin UI dashboard (polling `/admin/stats` and `/health`)
+* [x] Cursor-style pagination (`offset`/`limit` and `next_offset` on search)
+* [x] Admin API key authentication (optional `ADMIN_API_KEY`, `X-API-Key` / Bearer)
+* [x] Helm Secrets for production (optional `config.useSecret`, Secret template)
+* [x] Document fan-out (routing rule `clusters` for multi-cluster replication)
+* [x] Grafana dashboard panels (documents by collection, error rate)
+
+### 🚧 Future
+
 * [ ] Horizontal scaling documentation and best practices
-* [ ] Grafana dashboards for business metrics (queries/sec, latency percentiles)
+* [ ] OAuth2/OIDC for public API (optional)
 
 ---
 
