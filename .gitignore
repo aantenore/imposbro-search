@@ -26,6 +26,7 @@ htmlcov/
 # Environments
 .env
 .env*.local
+.env.*.local
 .venv
 env/
 venv/
@@ -44,6 +45,12 @@ docker-compose.override.yml
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+.cache/
 
 # Typesense node discovery (local dev)
 typesense-nodes
