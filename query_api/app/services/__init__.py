@@ -9,6 +9,11 @@ from .state_manager import StateLoadError, StateManager
 from .federation import FederationService
 from .kafka_producer import KafkaService
 from .config_sync import ConfigSyncService, SyncConfigNotifier
+from .rate_limiter import (
+    FixedWindowRateLimiter,
+    RateLimitBackendError,
+    RateLimitConfigError,
+)
 
 __all__ = [
     "StateManager",
@@ -17,4 +22,7 @@ __all__ = [
     "KafkaService",
     "ConfigSyncService",
     "SyncConfigNotifier",
+    "FixedWindowRateLimiter",
+    "RateLimitBackendError",
+    "RateLimitConfigError",
 ]

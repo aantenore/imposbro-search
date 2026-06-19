@@ -82,6 +82,25 @@ Validate required external service and secret configuration.
 {{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_DATA) "false") (not .Values.config.DATA_API_KEY) (not .Values.config.SCOPED_API_KEYS) (not $oidcEnabled) -}}
 {{- fail "config.DATA_API_KEY, config.SCOPED_API_KEYS, or config.OIDC_ENABLED=true is required when ALLOW_UNAUTHENTICATED_DATA is false" -}}
 {{- end -}}
+{{- $rateLimitEnabled := eq (toString .Values.config.RATE_LIMIT_ENABLED) "true" -}}
+{{- if $rateLimitEnabled -}}
+{{- $rateLimitBackend := lower (toString .Values.config.RATE_LIMIT_BACKEND) -}}
+{{- if and (ne $rateLimitBackend "redis") (ne $rateLimitBackend "memory") -}}
+{{- fail "config.RATE_LIMIT_BACKEND must be redis or memory when RATE_LIMIT_ENABLED is true" -}}
+{{- end -}}
+{{- if lt (int .Values.config.RATE_LIMIT_WINDOW_SECONDS) 1 -}}
+{{- fail "config.RATE_LIMIT_WINDOW_SECONDS must be >= 1 when RATE_LIMIT_ENABLED is true" -}}
+{{- end -}}
+{{- if lt (int .Values.config.RATE_LIMIT_SEARCH_REQUESTS) 1 -}}
+{{- fail "config.RATE_LIMIT_SEARCH_REQUESTS must be >= 1 when RATE_LIMIT_ENABLED is true" -}}
+{{- end -}}
+{{- if lt (int .Values.config.RATE_LIMIT_INGEST_REQUESTS) 1 -}}
+{{- fail "config.RATE_LIMIT_INGEST_REQUESTS must be >= 1 when RATE_LIMIT_ENABLED is true" -}}
+{{- end -}}
+{{- if and (eq $rateLimitBackend "memory") (or .Values.queryApi.autoscaling.enabled (gt (int .Values.queryApi.replicaCount) 1)) -}}
+{{- fail "config.RATE_LIMIT_BACKEND=memory is only supported for a single Query API replica; use redis for replicated deployments" -}}
+{{- end -}}
+{{- end -}}
 {{- if $oidcEnabled -}}
 {{- $_ := required "config.OIDC_ISSUER is required when OIDC_ENABLED is true" .Values.config.OIDC_ISSUER -}}
 {{- $_ := required "config.OIDC_AUDIENCE is required when OIDC_ENABLED is true" .Values.config.OIDC_AUDIENCE -}}

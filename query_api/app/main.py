@@ -39,6 +39,7 @@ from services import (
     KafkaService,
     ConfigSyncService,
     SyncConfigNotifier,
+    FixedWindowRateLimiter,
 )
 from routers import admin_router, search_router
 
@@ -54,6 +55,7 @@ state_manager: Optional[StateManager] = None
 kafka_service: Optional[KafkaService] = None
 config_sync_service: Optional[ConfigSyncService] = None
 config_notifier: Optional[SyncConfigNotifier] = None
+rate_limiter_service: Optional[FixedWindowRateLimiter] = None
 
 
 def create_state_client() -> typesense.Client:
@@ -152,7 +154,7 @@ async def reload_configuration():
 @asynccontextmanager
 async def lifespan_test(app: FastAPI):
     """Minimal lifespan for testing: injects mocks so no external services are required."""
-    global federation_service, state_manager, kafka_service, config_sync_service, config_notifier
+    global federation_service, state_manager, kafka_service, config_sync_service, config_notifier, rate_limiter_service
 
     mock_federation = MagicMock()
     mock_federation.clients = {"default-data-cluster": MagicMock()}
@@ -171,11 +173,13 @@ async def lifespan_test(app: FastAPI):
     kafka_service = MagicMock()
     config_sync_service = MagicMock()
     config_notifier = MagicMock()
+    rate_limiter_service = FixedWindowRateLimiter(settings.REDIS_URL)
 
     app.state.federation_service = federation_service
     app.state.state_manager = state_manager
     app.state.kafka_service = kafka_service
     app.state.config_notifier = config_notifier
+    app.state.rate_limiter = rate_limiter_service
 
     yield
 
@@ -188,7 +192,7 @@ async def lifespan(app: FastAPI):
     Initializes all services on startup and cleans up on shutdown.
     Includes Redis Pub/Sub for multi-instance configuration sync.
     """
-    global federation_service, state_manager, kafka_service, config_sync_service, config_notifier
+    global federation_service, state_manager, kafka_service, config_sync_service, config_notifier, rate_limiter_service
 
     logger.info("=" * 60)
     logger.info("%s %s Starting...", APP_NAME, VERSION)
@@ -275,11 +279,13 @@ async def lifespan(app: FastAPI):
         settings.REDIS_URL,
         source_id=config_sync_source_id,
     )
+    rate_limiter_service = FixedWindowRateLimiter(settings.REDIS_URL)
 
     app.state.federation_service = federation_service
     app.state.state_manager = state_manager
     app.state.kafka_service = kafka_service
     app.state.config_notifier = config_notifier
+    app.state.rate_limiter = rate_limiter_service
 
     logger.info("=" * 60)
     logger.info("IMPOSBRO Search API Ready!")
@@ -295,6 +301,8 @@ async def lifespan(app: FastAPI):
         await config_sync_service.stop()
     if config_notifier:
         config_notifier.close()
+    if rate_limiter_service:
+        rate_limiter_service.close()
     if kafka_service:
         kafka_service.close()
     logger.info("Shutdown complete.")
