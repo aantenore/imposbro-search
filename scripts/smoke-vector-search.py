@@ -12,10 +12,12 @@ from smoke_common import (
     auth_headers,
     create_vector_collection,
     delete_collection,
+    delete_document,
     ingest_vector_documents,
     load_dotenv,
     vector_ids,
     wait_for_ready,
+    wait_for_missing_id,
     wait_for_vector_result,
 )
 
@@ -117,6 +119,34 @@ def main() -> int:
                 f"partial={proxy_result.get('partial')}",
                 f"ids={proxy_ids[:5]}",
             )
+
+        status, deleted = delete_document(
+            query_api_url,
+            collection,
+            "far",
+            ingest_headers,
+        )
+        print(
+            "delete:",
+            status,
+            f"document_id={deleted.get('document_id')}",
+            f"routed_to={deleted.get('routed_to')}",
+        )
+        post_delete = wait_for_missing_id(
+            query_api_url,
+            collection,
+            VECTOR_SEARCH_PAYLOAD,
+            search_headers,
+            args.timeout_seconds,
+            missing_id="far",
+            expected_first_id="near",
+            partial=False,
+        )
+        print(
+            "post-delete-search:",
+            f"found={post_delete.get('found')}",
+            f"ids={vector_ids(post_delete)[:5]}",
+        )
 
         print("smoke-ok:", collection)
         return 0

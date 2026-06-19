@@ -254,6 +254,13 @@ Docker Compose binds published ports to `127.0.0.1` by default through `HOST_BIN
     ```
     Vector collections can be created with a `float[]` field and `num_dim`, optionally including Typesense `embed` configuration for auto-embedding fields.
 
+8.  **Delete by document ID:** Deletions are queued through the same Kafka
+    data plane and applied asynchronously by the indexing service.
+    ```bash
+    curl -X DELETE "http://localhost:8000/documents/products/product-123" \
+      -H "X-API-Key: $DATA_API_KEY"
+    ```
+
 ---
 
 ## 📖 API Documentation
@@ -265,8 +272,15 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` or `ingest`/`data` scoped key unless local dev bypass is enabled) |
+| `/documents/{collection}/{document_id}` | DELETE | Delete a document asynchronously across every candidate data cluster (protected by `DATA_API_KEY` or `ingest`/`data` scoped key unless local dev bypass is enabled) |
 | `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` or `search`/`data` scoped key unless local dev bypass is enabled) |
 | `/search/{collection}` | POST | Federated search with JSON body for semantic, vector, or hybrid Typesense parameters (same auth as GET search) |
+
+Document delete requests are idempotent. The Query API publishes one delete event
+for every cluster that may contain the collection, and the indexing worker treats
+missing documents as successful no-ops. When tenant policy is active for OIDC
+callers, delete events carry a server-side `id && tenant` filter so a tenant
+token cannot delete another tenant's document by guessing its ID.
 
 Search responses include `clusters_queried`, `clusters_responded`, `failed_clusters`, and `partial`.
 If at least one cluster responds, partial failures return `200` with `partial: true`; if every target cluster fails, the API returns `503`.
@@ -329,9 +343,9 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `COMPOSE_SUBNET` | Local Docker Compose subnet used for stable Typesense Raft peer IPs |
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
-| `REQUEST_ID_HEADER` | Header echoed by Query API responses and propagated into Kafka ingest messages for support diagnostics; default `X-Request-ID` |
+| `REQUEST_ID_HEADER` | Header echoed by Query API responses and propagated into Kafka data-plane messages for support diagnostics; default `X-Request-ID` |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
-| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search`, `ingest`, `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
+| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search`, `ingest` (document writes/deletes), `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
 | `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
@@ -344,13 +358,13 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `ADMIN_UI_OIDC_SCOPES` | Space-separated scopes requested by the Admin UI login flow; defaults to `openid profile email imposbro:admin imposbro:data` |
 | `ADMIN_UI_OIDC_REDIRECT_URI` | Optional callback URL override; defaults to the request origin plus `/api/auth/callback` |
 | `ADMIN_UI_SESSION_TTL_SECONDS` | Max Admin UI session lifetime; also capped by the provider token `expires_in` |
-| `DATA_API_KEY` | Coarse legacy data-plane API key; grants both `/ingest/*` and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
+| `DATA_API_KEY` | Coarse legacy data-plane API key; grants `/ingest/*`, `/documents/*`, and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
-| `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
-| `RATE_LIMIT_ENABLED` | Enables fixed-window rate limiting for `/search/*` and `/ingest/*`; default `false` for backwards-compatible upgrades |
+| `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest/delete; defaults to `DATA_API_KEY` when omitted |
+| `RATE_LIMIT_ENABLED` | Enables fixed-window rate limiting for `/search/*`, `/ingest/*`, and document delete requests; default `false` for backwards-compatible upgrades |
 | `RATE_LIMIT_BACKEND` | Rate-limit counter backend: `redis` for multi-replica deployments, `memory` only for single-process local/test runs |
 | `RATE_LIMIT_WINDOW_SECONDS` | Fixed-window duration in seconds |
-| `RATE_LIMIT_SEARCH_REQUESTS` / `RATE_LIMIT_INGEST_REQUESTS` | Per-identity request budgets per window for search and ingest |
+| `RATE_LIMIT_SEARCH_REQUESTS` / `RATE_LIMIT_INGEST_REQUESTS` | Per-identity request budgets per window for search and write-side data mutations (ingest/delete) |
 | `RATE_LIMIT_FAIL_CLOSED` | When `true`, return 503 if the rate-limit backend is unavailable; default fail-open keeps traffic flowing during Redis incidents |
 | `RATE_LIMIT_REDIS_PREFIX` | Redis key prefix for rate-limit counters |
 | `OIDC_ENABLED` | Enables OIDC/JWT Bearer-token auth after API-key checks fail; requires issuer, audience, algorithms, and either JWKS URL or static public key |
@@ -359,29 +373,29 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `OIDC_SCOPE_CLAIMS` | Comma-separated claim paths inspected for scopes/roles/groups (default `scope,scp,roles,groups,realm_access.roles`) |
 | `OIDC_SCOPE_MAPPING` | Optional JSON map from internal scopes (`admin`, `admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`, `search`, `ingest`, `data`) to JWT claim values |
 | `OIDC_SUBJECT_CLAIM` | Claim used to derive the hashed audit actor, default `sub` |
-| `AUTHZ_COLLECTION_POLICIES` | Optional JSON tenant policy per collection/pattern; can inject search filters and validate/inject ingest tenant fields |
+| `AUTHZ_COLLECTION_POLICIES` | Optional JSON tenant policy per collection/pattern; can inject search filters, validate/inject ingest tenant fields, and constrain document deletes |
 | `AUTHZ_API_KEY_TENANT_BYPASS` | Lets legacy API-key clients bypass tenant policy by default; set `false` when all clients use OIDC tenant claims |
 | `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Document IDs in the delete path allow alphanumeric characters, hyphen, underscore, and dot. Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_documents_deleted_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
 
 Rate limiting is optional and config-driven. When `RATE_LIMIT_ENABLED=true`,
-`/search/*` and `/ingest/*` are limited separately by authenticated actor
-(hashed API-key actor or OIDC actor) and collection. In unauthenticated local
-development, the fallback identity is the client IP. Use `RATE_LIMIT_BACKEND=redis`
-for any replicated Query API deployment so all pods share counters. Query API
-exports `query_api_rate_limit_checks_total` and
-`query_api_rate_limit_backend_errors_total` so Prometheus/Grafana can track
-allowed requests, blocked requests, and backend failures without exposing actors,
-API keys, IPs, or raw queries in metric labels.
+`/search/*` and write-side data mutations (`/ingest/*` and `/documents/*`) are
+limited separately by authenticated actor (hashed API-key actor or OIDC actor)
+and collection. In unauthenticated local development, the fallback identity is
+the client IP. Use `RATE_LIMIT_BACKEND=redis` for any replicated Query API
+deployment so all pods share counters. Query API exports
+`query_api_rate_limit_checks_total` and `query_api_rate_limit_backend_errors_total`
+so Prometheus/Grafana can track allowed requests, blocked requests, and backend
+failures without exposing actors, API keys, IPs, or raw queries in metric labels.
 
 Request correlation is always enabled. Query API accepts the configured
 `REQUEST_ID_HEADER`, sanitizes unsafe values, echoes the final value on every
 response, and includes it as `request_id` in Kafka ingest messages. The indexing
-service logs that value during indexing failures and successes, but metrics do
-not label by request id to avoid high-cardinality Prometheus series.
+service logs that value during indexing/delete failures and successes, but
+metrics do not label by request id to avoid high-cardinality Prometheus series.
 
 Example collection-scoped API key:
 
@@ -423,7 +437,7 @@ Example tenant policy:
 }
 ```
 
-`required` injects a server-side tenant filter into searches and rejects cross-tenant ingest. `inject` also writes a missing tenant field during ingest when the token has exactly one tenant.
+`required` injects a server-side tenant filter into searches, constrains deletes, and rejects cross-tenant ingest. `inject` also writes a missing tenant field during ingest when the token has exactly one tenant.
 
 ### Control-plane backup and restore
 
@@ -644,14 +658,15 @@ indexingService:
 * [x] Admin UI schema reconciliation workflow with per-cluster report
 * [x] Helm release validation for immutable images, required external services, required secrets, and trusted Admin UI proxy key injection
 * [x] Admin UI fan-out routing editor, search pagination, advanced search tuning fields, cluster health details, and audit filters
-* [x] OIDC/JWT bearer-token auth with configurable scope mapping, hashed OIDC audit actors, and optional tenant policy for search/ingest
+* [x] OIDC/JWT bearer-token auth with configurable scope mapping, hashed OIDC audit actors, and optional tenant policy for search/ingest/delete
 * [x] Horizontal scaling runbook and multi-instance Docker rolling smoke with Kafka lag budget
 * [x] Persisted collection aliases in control-plane backup/restore snapshots
 * [x] Helm HPA/KEDA autoscaling controls for Query API, Admin UI, and Kafka indexing workers
 * [x] Collection-scoped data-plane RBAC for API keys and OIDC claims
 * [x] Admin UI OIDC Authorization Code + PKCE login/session flow
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
-* [x] Configurable data-plane rate limiting for search and ingest with Redis-backed multi-replica counters
+* [x] Configurable data-plane rate limiting for search, ingest, and delete with Redis-backed multi-replica counters
+* [x] Async data-plane document deletion with tenant-safe filtered delete support
 * [x] Rate-limit Prometheus metrics, Grafana panels, and PrometheusRule alerts for blocked traffic and backend failures
 * [x] Kubernetes ingest/search benchmark harness with JSON/Markdown output and configurable SLO thresholds
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
@@ -681,7 +696,7 @@ npm run test
 # Full local release gate (tests, lint, UI build, Compose config, Helm render)
 make ci
 
-# Runtime smoke: Docker stack + vector collection + Kafka ingest + federated search + Admin UI proxy
+# Runtime smoke: Docker stack + vector collection + Kafka ingest/delete + federated search + Admin UI proxy
 make smoke-docker
 
 # Partial outage smoke: stop the secondary data cluster and verify degraded readiness + partial search
@@ -716,7 +731,7 @@ make smoke-scale
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
 
-`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm chart validation scenarios. Make targets use `.env` when present and fall back to `.env.example` for reproducible config validation in clean checkouts. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, and the Admin UI proxy. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
+`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm chart validation scenarios. Make targets use `.env` when present and fall back to `.env.example` for reproducible config validation in clean checkouts. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, async document deletion, and the Admin UI proxy. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
 
 ---
 

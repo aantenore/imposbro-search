@@ -73,6 +73,24 @@ def test_scoped_search_key_cannot_ingest(client, monkeypatch):
     assert ingest.status_code == 401
 
 
+def test_scoped_search_key_cannot_delete_documents(client, monkeypatch):
+    """Delete is a write-side data-plane operation and rejects search-only keys."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "reader", "key": "search-secret", "scopes": ["search"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+
+    r = client.delete(
+        "/documents/products/doc-1",
+        headers={"X-API-Key": "search-secret"},
+    )
+
+    assert r.status_code == 401
+
+
 def test_scoped_ingest_key_cannot_search(client, monkeypatch):
     """An ingest-scoped key can ingest but cannot query search endpoints."""
     from settings import settings
@@ -174,6 +192,36 @@ def test_collection_scoped_ingest_key_only_grants_matching_collection(client, mo
         "/ingest/products_2026",
         headers={"X-API-Key": "orders-secret"},
         json={"id": "doc-2", "name": "Product"},
+    )
+
+    assert matching.status_code == 200
+    assert denied.status_code == 401
+
+
+def test_collection_scoped_ingest_key_can_delete_matching_collection(client, monkeypatch):
+    """Collection-scoped ingest keys grant document lifecycle writes for that collection."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {
+            "name": "orders-writer",
+            "key": "orders-secret",
+            "scopes": ["ingest:orders_*"],
+        }
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+        return_value=[("default-data-cluster", MagicMock())]
+    )
+
+    matching = client.delete(
+        "/documents/orders_2026/doc-1",
+        headers={"X-API-Key": "orders-secret"},
+    )
+    denied = client.delete(
+        "/documents/products_2026/doc-1",
+        headers={"X-API-Key": "orders-secret"},
     )
 
     assert matching.status_code == 200

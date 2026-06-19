@@ -123,7 +123,7 @@ test('proxies catch-all route params to the backend path', async () => {
   }
 });
 
-test('injects data-plane key for search and ingest paths only when caller has no credentials', async () => {
+test('injects data-plane key for data paths when caller has no credentials', async () => {
   const originalFetch = globalThis.fetch;
   const proxied = [];
 
@@ -159,11 +159,22 @@ test('injects data-plane key for search and ingest paths only when caller has no
       { params: Promise.resolve({ path: ['ingest', 'products'] }) }
     );
 
+    await routeModule.DELETE(
+      {
+        method: 'DELETE',
+        nextUrl: new URL('http://admin.local/api/documents/products/doc-1'),
+        headers: new Headers(),
+      },
+      { params: Promise.resolve({ path: ['documents', 'products', 'doc-1'] }) }
+    );
+
     assert.equal(proxied[0].url, 'http://backend.internal/search/products?q=codex&query_by=name');
     assert.equal(proxied[0].headers['x-api-key'], 'data-secret');
     assert.equal(proxied[1].url, 'http://backend.internal/ingest/products');
     assert.equal(proxied[1].headers.authorization, 'Bearer caller-token');
     assert.equal(proxied[1].headers['x-api-key'], undefined);
+    assert.equal(proxied[2].url, 'http://backend.internal/documents/products/doc-1');
+    assert.equal(proxied[2].headers['x-api-key'], 'data-secret');
   } finally {
     globalThis.fetch = originalFetch;
   }

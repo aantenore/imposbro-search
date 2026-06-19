@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Trash2,
   UploadCloud,
 } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -105,9 +106,12 @@ export default function WorkspacePage() {
   const [isLoadingCollections, setIsLoadingCollections] = useState(true);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [isIngesting, setIsIngesting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [documentJson, setDocumentJson] = useState('{}');
   const [ingestResult, setIngestResult] = useState(null);
+  const [deleteDocumentId, setDeleteDocumentId] = useState('');
+  const [deleteResult, setDeleteResult] = useState(null);
   const [searchParams, setSearchParams] = useState({
     q: '',
     query_by: '',
@@ -165,6 +169,8 @@ export default function WorkspacePage() {
     let cancelled = false;
     setIsLoadingSchema(true);
     setIngestResult(null);
+    setDeleteResult(null);
+    setDeleteDocumentId('');
     setSearchResult(null);
     api.collections.get(selectedCollection)
       .then((data) => {
@@ -239,11 +245,37 @@ export default function WorkspacePage() {
     try {
       const result = await api.search.ingest(selectedCollection, document);
       setIngestResult(result);
+      setDeleteDocumentId(result.document_id);
       showSuccess(`Document ${result.document_id} routed to ${result.routed_to}.`);
     } catch (err) {
       showError(err.message);
     } finally {
       setIsIngesting(false);
+    }
+  };
+
+  const handleDeleteDocument = async (event) => {
+    event.preventDefault();
+    if (!selectedCollection) {
+      showError('Select a collection before deleting a document.');
+      return;
+    }
+
+    const documentId = deleteDocumentId.trim();
+    if (!documentId) {
+      showError('Document ID is required.');
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const result = await api.search.deleteDocument(selectedCollection, documentId);
+      setDeleteResult(result);
+      showSuccess(`Document ${result.document_id} queued for deletion.`);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -331,7 +363,7 @@ export default function WorkspacePage() {
     <div>
       <PageHeader
         title="Search Workspace"
-        description="Ingest JSON documents and run federated searches against existing collections."
+        description="Ingest, delete, and search documents in existing collections."
         action={
           <Button
             type="button"
@@ -438,6 +470,37 @@ export default function WorkspacePage() {
                     <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-300">
                       <CheckCircle2 className="mr-2 inline h-4 w-4" />
                       {ingestResult.document_id} routed to {ingestResult.routed_to}
+                    </div>
+                  )}
+                </form>
+                <form
+                  onSubmit={handleDeleteDocument}
+                  className="mt-5 space-y-3 border-t border-border pt-4"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <Input
+                      label="Document ID"
+                      value={deleteDocumentId}
+                      onChange={(event) => {
+                        setDeleteDocumentId(event.target.value);
+                        setDeleteResult(null);
+                      }}
+                      placeholder="product-123"
+                    />
+                    <Button
+                      type="submit"
+                      variant="destructive"
+                      leftIcon={<Trash2 size={16} />}
+                      loading={isDeleting}
+                      disabled={!selectedCollection || isLoadingSchema}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                  {deleteResult && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+                      <Trash2 className="mr-2 inline h-4 w-4" />
+                      {deleteResult.document_id} queued on {deleteResult.routed_to}
                     </div>
                   )}
                 </form>
