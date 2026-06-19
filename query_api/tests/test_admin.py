@@ -480,3 +480,37 @@ def test_reconcile_collections_returns_cluster_report(client):
     data = r.json()
     assert data["collections_desired"] == 1
     assert data["clusters"]["cluster-a"]["created"] == ["products"]
+
+
+def test_set_routing_rules_omits_null_fanout_field(client):
+    """Single-cluster rules must not be serialized with clusters=None."""
+    client.app.state.federation_service.collection_schemas = {
+        "products": {"name": "products", "fields": []}
+    }
+
+    r = client.post(
+        "/admin/routing-rules",
+        json={
+            "collection": "products",
+            "rules": [
+                {
+                    "field": "region",
+                    "value": "eu",
+                    "cluster": "default-data-cluster",
+                }
+            ],
+            "default_cluster": "default",
+        },
+    )
+
+    assert r.status_code == 201
+    rules = client.app.state.federation_service.set_routing_rules.call_args.kwargs[
+        "rules"
+    ]
+    assert rules == [
+        {
+            "field": "region",
+            "value": "eu",
+            "cluster": "default-data-cluster",
+        }
+    ]

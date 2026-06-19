@@ -845,7 +845,7 @@ def set_routing_rules(
             )
 
     try:
-        rules_list = [r.model_dump() for r in rules_config.rules]
+        rules_list = [r.model_dump(exclude_none=True) for r in rules_config.rules]
         federation.set_routing_rules(
             collection=collection_name,
             rules=rules_list,

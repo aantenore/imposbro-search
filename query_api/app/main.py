@@ -19,6 +19,7 @@ Version: 4.0.0
 
 import logging
 import os
+import socket
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -238,14 +239,24 @@ async def lifespan(app: FastAPI):
     )
     _ = kafka_service.producer
 
+    config_sync_source_id = (
+        settings.CONFIG_SYNC_SOURCE_ID
+        or f"{socket.gethostname()}:{os.getpid()}"
+    )
+
     # Initialize Redis Pub/Sub for config sync across instances
     config_sync_service = ConfigSyncService(
-        redis_url=settings.REDIS_URL, on_config_change=reload_configuration
+        redis_url=settings.REDIS_URL,
+        on_config_change=reload_configuration,
+        source_id=config_sync_source_id,
     )
     await config_sync_service.start()
 
     # Create synchronous notifier for use in route handlers
-    config_notifier = SyncConfigNotifier(settings.REDIS_URL)
+    config_notifier = SyncConfigNotifier(
+        settings.REDIS_URL,
+        source_id=config_sync_source_id,
+    )
 
     app.state.federation_service = federation_service
     app.state.state_manager = state_manager

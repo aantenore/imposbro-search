@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     KAFKA_TOPIC_PREFIX: str
     REDIS_URL: str
 
+    # Optional source id for Redis config sync. When omitted, the app uses
+    # hostname:pid so replicas ignore only their own notifications.
+    CONFIG_SYNC_SOURCE_ID: str = ""
+
     # Internal State Cluster
     INTERNAL_STATE_NODES: str
     INTERNAL_STATE_API_KEY: str

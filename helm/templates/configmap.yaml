@@ -12,6 +12,7 @@ data:
   INDEXING_METRICS_ENABLED: {{ .Values.config.INDEXING_METRICS_ENABLED | quote }}
   INDEXING_METRICS_PORT: {{ .Values.config.INDEXING_METRICS_PORT | quote }}
   REDIS_URL: {{ .Values.config.REDIS_URL | quote }}
+  CONFIG_SYNC_SOURCE_ID: {{ .Values.config.CONFIG_SYNC_SOURCE_ID | quote }}
   INTERNAL_STATE_NODES: {{ .Values.config.INTERNAL_STATE_NODES | quote }}
   DEFAULT_DATA_CLUSTER_NODES: {{ .Values.config.DEFAULT_DATA_CLUSTER_NODES | quote }}
   DEFAULT_DATA2_CLUSTER_NODES: {{ .Values.config.DEFAULT_DATA2_CLUSTER_NODES | quote }}
