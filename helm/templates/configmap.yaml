@@ -18,3 +18,4 @@ data:
   INTERNAL_QUERY_API_URL: {{ .Values.config.INTERNAL_QUERY_API_URL | quote }}
   CORS_ORIGINS: {{ .Values.config.CORS_ORIGINS | quote }}
   ALLOW_UNAUTHENTICATED_ADMIN: {{ .Values.config.ALLOW_UNAUTHENTICATED_ADMIN | quote }}
+  ALLOW_UNAUTHENTICATED_DATA: {{ .Values.config.ALLOW_UNAUTHENTICATED_DATA | quote }}
