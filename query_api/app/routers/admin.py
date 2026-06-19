@@ -396,9 +396,7 @@ async def create_collection(
     The schema is applied to all registered clusters simultaneously.
     All API instances will be notified of this change.
     """
-    schema_dict = schema.model_dump()
-    if schema_dict.get("default_sorting_field") is None:
-        del schema_dict["default_sorting_field"]
+    schema_dict = schema.model_dump(exclude_none=True)
 
     async def create_on_cluster(client: typesense.Client, name: str) -> None:
         try:
@@ -434,7 +432,7 @@ async def create_collection(
         resource_type="collection",
         resource_id=schema.name,
         details={
-            "fields": [field.model_dump() for field in schema.fields],
+            "fields": [field.model_dump(exclude_none=True) for field in schema.fields],
             "default_sorting_field": schema.default_sorting_field,
             "cluster_count": len(federation.clients),
         },

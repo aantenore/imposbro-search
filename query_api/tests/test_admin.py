@@ -198,6 +198,76 @@ def test_get_collection_schema_prefers_stored_desired_schema(client):
     ]
 
 
+def test_create_collection_preserves_vector_field_metadata(client):
+    """Collection schemas keep Typesense vector metadata for hybrid/vector search."""
+    r = client.post(
+        "/admin/collections",
+        json={
+            "name": "semantic_products",
+            "fields": [
+                {"name": "title", "type": "string", "facet": False},
+                {
+                    "name": "embedding",
+                    "type": "float[]",
+                    "facet": False,
+                    "num_dim": 3,
+                    "embed": {
+                        "from": ["title"],
+                        "model_config": {"model_name": "ts/all-MiniLM-L12-v2"},
+                    },
+                },
+            ],
+        },
+    )
+
+    assert r.status_code == 201
+    schema = client.app.state.federation_service.collection_schemas[
+        "semantic_products"
+    ]
+    assert schema["fields"][1]["num_dim"] == 3
+    assert schema["fields"][1]["embed"]["from"] == ["title"]
+    created_schema = (
+        client.app.state.federation_service.clients[
+            "default-data-cluster"
+        ].collections.create.call_args.args[0]
+    )
+    assert created_schema["fields"][1]["num_dim"] == 3
+    assert created_schema["fields"][1]["embed"]["model_config"]["model_name"] == (
+        "ts/all-MiniLM-L12-v2"
+    )
+
+
+def test_create_collection_omits_null_optional_field_metadata(client):
+    """Optional field metadata is not serialized as null for Typesense schemas."""
+    r = client.post(
+        "/admin/collections",
+        json={
+            "name": "manual_vectors",
+            "fields": [
+                {"name": "title", "type": "string", "facet": False},
+                {
+                    "name": "embedding",
+                    "type": "float[]",
+                    "facet": False,
+                    "num_dim": 3,
+                },
+            ],
+        },
+    )
+
+    assert r.status_code == 201
+    created_schema = (
+        client.app.state.federation_service.clients[
+            "default-data-cluster"
+        ].collections.create.call_args.args[0]
+    )
+    assert "default_sorting_field" not in created_schema
+    assert "num_dim" not in created_schema["fields"][0]
+    assert "embed" not in created_schema["fields"][0]
+    assert created_schema["fields"][1]["num_dim"] == 3
+    assert "embed" not in created_schema["fields"][1]
+
+
 def test_reconcile_collections_returns_cluster_report(client):
     """POST /admin/collections/reconcile exposes the schema reconciliation report."""
     client.app.state.federation_service.collection_schemas = {
