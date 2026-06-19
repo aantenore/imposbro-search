@@ -96,8 +96,31 @@ Validate required external service and secret configuration.
 {{- fail "config.OIDC_ALGORITHMS must use asymmetric algorithms; HS* is not allowed" -}}
 {{- end -}}
 {{- end -}}
-{{- if and (or .Values.config.ADMIN_API_KEY .Values.config.DATA_API_KEY .Values.config.INTERNAL_QUERY_API_ADMIN_API_KEY .Values.config.INTERNAL_QUERY_API_DATA_API_KEY) (not .Values.config.ADMIN_UI_PROXY_TRUSTED_HEADER) -}}
+{{- $adminUiOidcEnabled := eq (toString .Values.config.ADMIN_UI_OIDC_ENABLED) "true" -}}
+{{- if and (not $adminUiOidcEnabled) (or .Values.config.ADMIN_API_KEY .Values.config.DATA_API_KEY .Values.config.INTERNAL_QUERY_API_ADMIN_API_KEY .Values.config.INTERNAL_QUERY_API_DATA_API_KEY) (not .Values.config.ADMIN_UI_PROXY_TRUSTED_HEADER) -}}
 {{- fail "config.ADMIN_UI_PROXY_TRUSTED_HEADER is required when the Admin UI proxy injects server-side API keys" -}}
+{{- end -}}
+{{- if $adminUiOidcEnabled -}}
+{{- if not $oidcEnabled -}}
+{{- fail "config.OIDC_ENABLED=true is required when ADMIN_UI_OIDC_ENABLED is true so the Query API can validate Admin UI bearer sessions" -}}
+{{- end -}}
+{{- $_ := required "config.ADMIN_UI_OIDC_CLIENT_ID is required when ADMIN_UI_OIDC_ENABLED is true" .Values.config.ADMIN_UI_OIDC_CLIENT_ID -}}
+{{- $_ := required "config.ADMIN_UI_SESSION_SECRET is required when ADMIN_UI_OIDC_ENABLED is true" .Values.config.ADMIN_UI_SESSION_SECRET -}}
+{{- if lt (len (toString .Values.config.ADMIN_UI_SESSION_SECRET)) 32 -}}
+{{- fail "config.ADMIN_UI_SESSION_SECRET must be at least 32 characters when ADMIN_UI_OIDC_ENABLED is true" -}}
+{{- end -}}
+{{- if and (not .Values.config.ADMIN_UI_OIDC_ISSUER) (not (and .Values.config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT .Values.config.ADMIN_UI_OIDC_TOKEN_ENDPOINT)) -}}
+{{- fail "config.ADMIN_UI_OIDC_ISSUER or both explicit Admin UI OIDC endpoints are required when ADMIN_UI_OIDC_ENABLED is true" -}}
+{{- end -}}
+{{- if and .Values.config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT (not .Values.config.ADMIN_UI_OIDC_TOKEN_ENDPOINT) -}}
+{{- fail "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT is required when ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT is set" -}}
+{{- end -}}
+{{- if and .Values.config.ADMIN_UI_OIDC_TOKEN_ENDPOINT (not .Values.config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT) -}}
+{{- fail "config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT is required when ADMIN_UI_OIDC_TOKEN_ENDPOINT is set" -}}
+{{- end -}}
+{{- if not (regexMatch "(^|\\s)openid(\\s|$)" (toString .Values.config.ADMIN_UI_OIDC_SCOPES)) -}}
+{{- fail "config.ADMIN_UI_OIDC_SCOPES must include openid when ADMIN_UI_OIDC_ENABLED is true" -}}
+{{- end -}}
 {{- end -}}
 {{- if and .Values.indexingService.autoscaling.enabled .Values.indexingService.keda.enabled -}}
 {{- fail "indexingService.autoscaling.enabled and indexingService.keda.enabled cannot both be true" -}}

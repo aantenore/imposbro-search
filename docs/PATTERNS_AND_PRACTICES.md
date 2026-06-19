@@ -75,6 +75,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 - Requests to `/api/*` are handled by the Route Handler `app/api/[[...path]]/route.js`, which forwards to `INTERNAL_QUERY_API_URL`. This allows the Admin UI to run on a different host/port (e.g. Docker) without CORS or exposing the backend URL to the browser.
 - In production, when the proxy injects server-side API keys, require a trusted upstream identity header (`ADMIN_UI_PROXY_TRUSTED_HEADER`, optionally matched with `ADMIN_UI_PROXY_TRUSTED_VALUE`) from an authenticated ingress/gateway. Do not expose the Admin UI directly with injectable server-side credentials.
+- When `ADMIN_UI_OIDC_ENABLED=true`, browser login uses OIDC Authorization Code + PKCE through `/api/auth/login` and `/api/auth/callback`. Store tokens only in sealed HttpOnly cookies, keep `return_to` relative to prevent open redirects, and keep Query API `OIDC_ENABLED=true` so it validates the proxied bearer token.
 
 ### 2.3 Notifications
 

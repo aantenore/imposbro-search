@@ -33,13 +33,14 @@ export class ApiError extends Error {
  */
 async function request(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
+    const { redirectOnAuth = true, ...fetchOptions } = options;
 
     const config = {
+        ...fetchOptions,
         headers: {
             'Content-Type': 'application/json',
-            ...options.headers,
+            ...fetchOptions.headers,
         },
-        ...options,
     };
 
     try {
@@ -55,6 +56,14 @@ async function request(endpoint, options = {}) {
         }
 
         if (!response.ok) {
+            if (
+                response.status === 401 &&
+                redirectOnAuth &&
+                data.login_url &&
+                typeof window !== 'undefined'
+            ) {
+                window.location.assign(data.login_url);
+            }
             throw new ApiError(
                 data.detail || data.message || 'An error occurred',
                 response.status,
@@ -75,6 +84,14 @@ async function request(endpoint, options = {}) {
  * API client with methods for all endpoints
  */
 export const api = {
+    // ===== Admin UI auth session =====
+    auth: {
+        /**
+         * Check whether Admin UI OIDC is enabled and if the browser has a session.
+         */
+        session: () => request('/auth/session', { redirectOnAuth: false }),
+    },
+
     // ===== Clusters =====
     clusters: {
         /**

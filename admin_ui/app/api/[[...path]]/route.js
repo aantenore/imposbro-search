@@ -3,11 +3,11 @@
  * Ensures the Admin UI works when backend runs on a different host/port (e.g. Docker).
  */
 
-const BACKEND_URL = process.env.INTERNAL_QUERY_API_URL || 'http://localhost:8000';
-const ADMIN_API_KEY = process.env.INTERNAL_QUERY_API_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
-const DATA_API_KEY = process.env.INTERNAL_QUERY_API_DATA_API_KEY || process.env.DATA_API_KEY || '';
-const TRUSTED_HEADER = process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '';
-const TRUSTED_VALUE = process.env.ADMIN_UI_PROXY_TRUSTED_VALUE || '';
+import {
+  buildLoginUrl,
+  isAdminOidcEnabled,
+  readAdminSession,
+} from '../../lib/adminAuth.js';
 
 export async function GET(request, { params }) {
   return proxyRequest(request, params);
@@ -33,8 +33,15 @@ async function proxyRequest(request, params = {}) {
   const resolvedParams = await params;
   const pathParam = resolvedParams?.path;
   const path = Array.isArray(pathParam) ? pathParam.join('/') : (pathParam || '');
+  if (path.startsWith('auth/')) {
+    return Response.json({ detail: 'Admin UI auth route not found.' }, { status: 404 });
+  }
+
   const search = request.nextUrl.search || '';
-  const url = `${BACKEND_URL.replace(/\/$/, '')}/${path}${search}`;
+  const backendUrl = process.env.INTERNAL_QUERY_API_URL || 'http://localhost:8000';
+  const adminApiKey = process.env.INTERNAL_QUERY_API_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
+  const dataApiKey = process.env.INTERNAL_QUERY_API_DATA_API_KEY || process.env.DATA_API_KEY || '';
+  const url = `${backendUrl.replace(/\/$/, '')}/${path}${search}`;
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {
@@ -49,12 +56,43 @@ async function proxyRequest(request, params = {}) {
 
   const needsAdminKey = path.startsWith('admin/');
   const needsDataKey = path.startsWith('search/') || path.startsWith('ingest/');
-  const callerProvidedCredentials = headers.has('x-api-key') || headers.has('authorization');
-  const canInjectCredentials = canInjectServerCredentials(request);
+  let callerProvidedCredentials = headers.has('x-api-key') || headers.has('authorization');
+  const trustedIdentity = hasTrustedUpstreamIdentity(request);
+  const canInjectCredentials = canInjectServerCredentials(request, trustedIdentity);
+
+  if (!callerProvidedCredentials) {
+    try {
+      const session = await readAdminSession(request);
+      if (session?.accessToken) {
+        headers.set('Authorization', `Bearer ${session.accessToken}`);
+        callerProvidedCredentials = true;
+      }
+    } catch (err) {
+      return Response.json(
+        { detail: err.message || 'Admin UI OIDC session is misconfigured.' },
+        { status: err.status || 500 }
+      );
+    }
+  }
 
   if (
     !callerProvidedCredentials &&
-    ((ADMIN_API_KEY && needsAdminKey) || (DATA_API_KEY && needsDataKey)) &&
+    isAdminOidcEnabled() &&
+    (needsAdminKey || needsDataKey) &&
+    !trustedIdentity
+  ) {
+    return Response.json(
+      {
+        detail: 'Admin UI login required.',
+        login_url: buildLoginUrl(request),
+      },
+      { status: 401 }
+    );
+  }
+
+  if (
+    !callerProvidedCredentials &&
+    ((adminApiKey && needsAdminKey) || (dataApiKey && needsDataKey)) &&
     !canInjectCredentials
   ) {
     return Response.json(
@@ -63,15 +101,15 @@ async function proxyRequest(request, params = {}) {
     );
   }
 
-  if (ADMIN_API_KEY && needsAdminKey && !callerProvidedCredentials) {
-    headers.set('X-API-Key', ADMIN_API_KEY);
+  if (adminApiKey && needsAdminKey && !callerProvidedCredentials) {
+    headers.set('X-API-Key', adminApiKey);
   }
   if (
-    DATA_API_KEY &&
+    dataApiKey &&
     needsDataKey &&
     !callerProvidedCredentials
   ) {
-    headers.set('X-API-Key', DATA_API_KEY);
+    headers.set('X-API-Key', dataApiKey);
   }
 
   let body = null;
@@ -113,11 +151,21 @@ async function proxyRequest(request, params = {}) {
   }
 }
 
-function canInjectServerCredentials(request) {
-  if (!TRUSTED_HEADER) {
+function hasTrustedUpstreamIdentity(request) {
+  const trustedHeader = process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '';
+  const trustedValue = process.env.ADMIN_UI_PROXY_TRUSTED_VALUE || '';
+  if (!trustedHeader) {
+    return false;
+  }
+  const actual = request.headers.get(trustedHeader);
+  if (!actual) return false;
+  return trustedValue ? actual === trustedValue : true;
+}
+
+function canInjectServerCredentials(request, trustedIdentity = hasTrustedUpstreamIdentity(request)) {
+  const trustedHeader = process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '';
+  if (!trustedHeader) {
     return process.env.NODE_ENV !== 'production';
   }
-  const actual = request.headers.get(TRUSTED_HEADER);
-  if (!actual) return false;
-  return TRUSTED_VALUE ? actual === TRUSTED_VALUE : true;
+  return trustedIdentity;
 }
