@@ -237,8 +237,9 @@ async def _perform_federated_search(
         total_needed = request.page * request.per_page
         effective_page = request.page
 
-    if total_needed > MAX_DEEP_PAGINATION_DOCS:
-        total_needed = MAX_DEEP_PAGINATION_DOCS
+    fetch_needed = total_needed + 1
+    if fetch_needed > MAX_DEEP_PAGINATION_DOCS:
+        fetch_needed = MAX_DEEP_PAGINATION_DOCS
         response.headers["X-Pagination-Warning"] = (
             f"Deep pagination capped at {MAX_DEEP_PAGINATION_DOCS} documents. "
             "Results may be incomplete for very deep pages."
@@ -246,11 +247,11 @@ async def _perform_federated_search(
 
     if request.page > DEEP_PAGINATION_WARNING_PAGE:
         response.headers["X-Pagination-Info"] = (
-            f"Deep pagination (page {request.page}) requires fetching {total_needed} docs "
+            f"Deep pagination (page {request.page}) requires fetching {fetch_needed} docs "
             f"from each of {len(named_clients)} clusters. Consider using filters to narrow results."
         )
 
-    search_params = _build_search_params(request, total_needed)
+    search_params = _build_search_params(request, fetch_needed)
 
     async def search_cluster(
         cluster_name: str, client
@@ -282,7 +283,8 @@ async def _perform_federated_search(
     for cluster_name, result, _error in results_list:
         if result is not None:
             all_hits.extend(result.get("hits", []))
-            total_found += result.get("found", 0)
+            cluster_found = int(result.get("found", 0) or 0)
+            total_found += cluster_found
             successful_clusters += 1
         else:
             failed_clusters.append(cluster_name)
@@ -297,10 +299,12 @@ async def _perform_federated_search(
         )
 
     unique_hits_map: Dict[str, Dict] = {}
+    seen_hit_count_by_id: Dict[str, int] = {}
     for hit in all_hits:
         doc_id = hit.get("document", {}).get("id")
         if not doc_id:
             continue
+        seen_hit_count_by_id[doc_id] = seen_hit_count_by_id.get(doc_id, 0) + 1
         existing_hit = unique_hits_map.get(doc_id)
         if existing_hit is None or _compare_hits(hit, existing_hit, sort_fields) < 0:
             unique_hits_map[doc_id] = hit
@@ -312,15 +316,22 @@ async def _perform_federated_search(
 
     end_idx = start_idx + page_size
     page_hits = sorted_hits[start_idx:end_idx]
-    has_more = end_idx < len(sorted_hits)
+    duplicates_seen = any(count > 1 for count in seen_hit_count_by_id.values())
+    has_more = end_idx < len(sorted_hits) or (
+        not duplicates_seen and total_found > len(sorted_hits)
+    )
     next_offset = request.offset + request.limit if (use_offset and has_more) else None
+    deduplicated_found = len(sorted_hits)
+    found = deduplicated_found if duplicates_seen else total_found
 
     out = {
-        "found": total_found,
+        "found": found,
         "page": effective_page,
         "per_page": page_size,
         "hits": page_hits,
         "out_of": len(sorted_hits),
+        "raw_found": total_found,
+        "deduplicated_found": deduplicated_found,
         "clusters_queried": len(named_clients),
         "clusters_responded": successful_clusters,
         "failed_clusters": failed_clusters,

@@ -30,7 +30,8 @@ affinity: {}
 # Configuration for the query-api service
 queryApi:
   name: query-api
-  image: "your-registry/imposbro-query-api:latest" # <-- IMPORTANT: Replace with your Docker image name
+  # Required: set to an immutable image reference, never a mutable :latest tag.
+  image: ""
   replicaCount: 1
   port: 8000
   service:
@@ -69,7 +70,8 @@ queryApi:
 # Configuration for the admin-ui service
 adminUi:
   name: admin-ui
-  image: "your-registry/imposbro-admin-ui:latest" # <-- IMPORTANT: Replace with your Docker image name
+  # Required: set to an immutable image reference, never a mutable :latest tag.
+  image: ""
   replicaCount: 1
   port: 3000
   service:
@@ -102,7 +104,8 @@ adminUi:
 # Configuration for the indexing-service (Kafka consumer)
 indexingService:
   name: indexing-service
-  image: "your-registry/imposbro-indexing-service:latest" # <-- IMPORTANT: Replace with your Docker image name
+  # Required: set to an immutable image reference, never a mutable :latest tag.
+  image: ""
   replicaCount: 1
   metrics:
     enabled: true
@@ -140,22 +143,23 @@ redis:
   name: redis
   port: 6379
 
-# Centralized configuration for environment variables
-# Non-sensitive values go to ConfigMap; sensitive ones to Secret when useSecret is true.
+# Centralized configuration for environment variables.
+# This chart deploys the IMPOSBRO applications only. Kafka, Redis, and
+# Typesense must be deployed separately and provided here explicitly.
 config:
-  useSecret: false  # Set to true and provide secret.* values (e.g. via --set) to use a Secret for credentials
-  KAFKA_BROKER_URL: "kafka:9092"
+  useSecret: false  # Must be true unless you customize external secret injection.
+  KAFKA_BROKER_URL: ""
   KAFKA_TOPIC_PREFIX: "imposbro_search_sharded"
   KAFKA_METADATA_MAX_AGE_MS: "5000"
   INDEXING_MAX_PROCESSING_ATTEMPTS: "3"
   INDEXING_METRICS_ENABLED: "true"
   INDEXING_METRICS_PORT: "9108"
-  REDIS_URL: "redis://redis:6379"
+  REDIS_URL: ""
   CONFIG_SYNC_SOURCE_ID: "" # Optional; defaults to hostname:pid so replicas ignore only their own Redis notifications
-  INTERNAL_STATE_NODES: "typesense-state-1,typesense-state-2,typesense-state-3"
-  DEFAULT_DATA_CLUSTER_NODES: "typesense-data-1,typesense-data-2,typesense-data-3"
+  INTERNAL_STATE_NODES: ""
+  DEFAULT_DATA_CLUSTER_NODES: ""
   DEFAULT_DATA2_CLUSTER_NODES: ""
-  INTERNAL_QUERY_API_URL: "http://query-api:80"
+  INTERNAL_QUERY_API_URL: ""
   CORS_ORIGINS: ""
   ALLOW_UNAUTHENTICATED_ADMIN: "false"
   ALLOW_UNAUTHENTICATED_DATA: "false"
@@ -168,3 +172,7 @@ config:
   INTERNAL_QUERY_API_ADMIN_API_KEY: ""
   INTERNAL_QUERY_API_DATA_API_KEY: ""
   SCOPED_API_KEYS: ""
+  # Required when the Admin UI proxy injects server-side API keys in production.
+  # Configure your authenticated ingress/gateway to set this header.
+  ADMIN_UI_PROXY_TRUSTED_HEADER: ""
+  ADMIN_UI_PROXY_TRUSTED_VALUE: ""

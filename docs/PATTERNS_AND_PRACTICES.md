@@ -50,8 +50,10 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 - **Config sync source id**: Query API instances publish Redis config-sync notifications with a source id and ignore their own messages. This prevents a writer from immediately reloading a stale state-store read while still allowing other replicas to converge. Override `CONFIG_SYNC_SOURCE_ID` only when a stable process identity is required.
 - **Schema reconciliation**: `FederationService.collection_schemas` is the desired schema state. Creating a collection records the schema, registering a new cluster backfills those schemas, and `POST /admin/collections/reconcile` idempotently recreates missing schemas after operational recovery.
 - **Control-plane backup/restore**: `GET /admin/state/export` masks cluster API keys by default; restore-ready exports require `include_secrets=true` and must be stored as secrets. `POST /admin/state/import` is dry-run by default and only mutates runtime/persisted state with `?apply=true`.
+- **Control-plane mutation safety**: Admin mutations that change runtime federation state must snapshot the in-memory state before mutating and roll it back if `StateManager.save_state()` fails. Do not leave one Query API replica running config that was not persisted.
 - **Smart Producer**: The Query API decides the target cluster for each document and puts it in the Kafka message; the indexing service only executes that decision. Routing logic lives in one place.
 - **Global search merge**: Gateway-side merge must use the same comparator for sorting and deduplication. Complex shard-local sorts should be rejected until the gateway can merge them exactly. Vector-only results should merge on `_vector_distance:asc` when `text_match` is absent.
+- **Search pagination**: Fetch one extra candidate beyond the requested `offset + limit` / `page * per_page` window so `has_more` and `next_offset` are based on an actual extra merged hit rather than a full page guess. When fan-out duplicates are observed, report deduplicated counts rather than inflated raw cluster totals.
 - **Advanced search payloads**: Keep `GET /search/{collection}` for simple queries and use `POST /search/{collection}` for semantic/vector/hybrid params so long `vector_query` payloads are not forced into URLs.
 - **Runtime smoke**: Use `make smoke-docker` after changes that affect Docker wiring, collection schemas, Kafka ingest, search merge, vector search, or the Admin UI proxy. Use `make smoke-docker-outage` after changes that affect readiness, cluster failure handling, or partial federated results. Use `make smoke-docker-load` after changes that affect Kafka throughput, indexing convergence, or search pagination/sorting under more than a couple of documents. Use `make smoke-docker-state` after changes that affect control-plane export/import, desired schema reconciliation, or disaster-recovery workflows. Use `make smoke-docker-alias` after changes that affect aliases or zero-downtime reindexing workflows. Use `make smoke-vector` / `make smoke-outage` / `make smoke-load` / `make smoke-state` / `make smoke-alias` when the stack is already running.
 
@@ -68,6 +70,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 ### 2.2 Proxy
 
 - Requests to `/api/*` are handled by the Route Handler `app/api/[[...path]]/route.js`, which forwards to `INTERNAL_QUERY_API_URL`. This allows the Admin UI to run on a different host/port (e.g. Docker) without CORS or exposing the backend URL to the browser.
+- In production, when the proxy injects server-side API keys, require a trusted upstream identity header (`ADMIN_UI_PROXY_TRUSTED_HEADER`, optionally matched with `ADMIN_UI_PROXY_TRUSTED_VALUE`) from an authenticated ingress/gateway. Do not expose the Admin UI directly with injectable server-side credentials.
 
 ### 2.3 Notifications
 
@@ -93,32 +96,40 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 ---
 
-## 4. General
+## 4. Delivery
 
-### 4.1 Versioning
+- **Helm fail-fast**: The chart deploys only IMPOSBRO application workloads. Kafka, Redis, and Typesense must be supplied explicitly through values. Keep Helm validation strict: reject placeholder images, mutable `:latest` tags, missing external service endpoints, missing required API keys, and missing trusted Admin UI proxy identity headers when server-side key injection is enabled.
+- **Compose exposure**: Docker Compose is a local development stack. Bind published ports to `127.0.0.1` by default and keep unauthenticated bypasses local-only.
+- **Remote gates**: Pull requests and pushes to `main` must run unit/API/UI/lint/build/Compose/Helm checks. Runtime Docker smoke belongs in the manual/scheduled workflow because it validates the real Kafka/Typesense path and takes longer than the normal PR gate.
+
+---
+
+## 5. General
+
+### 5.1 Versioning
 
 - API version is in `query_api/app/constants.py` (`VERSION`). Used in FastAPI app, root and health responses, and logs. Bump in one place for releases.
 
-### 4.2 Health checks
+### 5.2 Health checks
 
 - `GET /`: Minimal liveness (service name, version, status).
 - `GET /health`: Detailed dependency health with cluster count, Redis, Kafka, and per-data-cluster readiness. It returns JSON even when degraded.
 - `GET /ready`: Readiness probe for orchestrators. Returns HTTP 503 until all required dependencies and data clusters are ready.
 
-### 4.3 Kubernetes deployment
+### 5.3 Kubernetes deployment
 
 - Helm defaults run workloads with a service account that does not mount an API token unless explicitly enabled.
 - Query API probes use `/ready` for startup/readiness and `/` for liveness; Admin UI probes `/`.
 - Workload resources, replica counts, probes, security context, pod labels/annotations, node selectors, affinity, and tolerations are values-driven.
 - Worker processes should not get fake HTTP probes. Add `indexingService.livenessProbe` only when a real process-level healthcheck is available.
 
-### 4.4 Metrics
+### 5.4 Metrics
 
 - Prometheus metrics are exposed via `prometheus_fastapi_instrumentator`. Custom counters (e.g. `documents_ingested_total`) are defined in the router that performs the action.
 - The indexing worker exposes Prometheus metrics on `INDEXING_METRICS_PORT` when `INDEXING_METRICS_ENABLED=true`. Worker metrics include config fetches, loaded clusters, successful indexes, retries, and DLQ publications.
 - Keep metric labels low-cardinality. Use collection, target cluster, source topic, and error type; never label metrics with document IDs, raw queries, API keys, or user-controlled free text.
 
-### 4.5 Documentation
+### 5.5 Documentation
 
 - README: User-facing setup, configuration, and deployment.
 - CONTRIBUTING: How to run tests, code style, PR process.
@@ -127,7 +138,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 ---
 
-## 5. Checklist for new changes
+## 6. Checklist for new changes
 
 - [ ] New config → add to `settings.py` and `.env.example` with a short comment.
 - [ ] New path params → validate with `Path(..., pattern=NAME_PATTERN)` if they are names/identifiers.

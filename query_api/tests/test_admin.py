@@ -379,6 +379,46 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
     assert "raw-secret" not in str(audit_kwargs)
 
 
+def test_routing_update_rolls_back_runtime_state_when_persist_fails(client):
+    """A failed control-plane save must not leave only this replica mutated."""
+    from services.federation import FederationService
+
+    federation = FederationService()
+    federation.clients = {
+        "cluster-a": MagicMock(),
+        "cluster-b": MagicMock(),
+    }
+    federation.collection_schemas = {
+        "products": {"name": "products", "fields": []}
+    }
+    federation.routing_rules = {
+        "products": {"rules": [], "default_cluster": "cluster-a"}
+    }
+    client.app.state.federation_service = federation
+    client.app.state.state_manager.save_state.return_value = False
+
+    r = client.post(
+        "/admin/routing-rules",
+        json={
+            "collection": "products",
+            "rules": [
+                {
+                    "field": "region",
+                    "value": "eu",
+                    "cluster": "cluster-b",
+                }
+            ],
+            "default_cluster": "cluster-b",
+        },
+    )
+
+    assert r.status_code == 500
+    assert "rolled back" in r.json().get("detail", "")
+    assert federation.routing_rules == {
+        "products": {"rules": [], "default_cluster": "cluster-a"}
+    }
+
+
 def test_get_collection_schema_prefers_stored_desired_schema(client):
     """Schema reads use control-plane desired state when available."""
     client.app.state.federation_service.collection_schemas = {

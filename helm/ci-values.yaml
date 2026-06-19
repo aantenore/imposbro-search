@@ -1,0 +1,22 @@
+# Values used only to validate Helm rendering in CI/local release gates.
+queryApi:
+  image: registry.example.com/imposbro-query-api:1.0.0
+
+adminUi:
+  image: registry.example.com/imposbro-admin-ui:1.0.0
+
+indexingService:
+  image: registry.example.com/imposbro-indexing-service:1.0.0
+
+config:
+  useSecret: true
+  KAFKA_BROKER_URL: kafka:9092
+  REDIS_URL: redis://redis:6379
+  INTERNAL_STATE_NODES: typesense-state-1,typesense-state-2,typesense-state-3
+  DEFAULT_DATA_CLUSTER_NODES: typesense-data-1,typesense-data-2,typesense-data-3
+  INTERNAL_QUERY_API_URL: http://query-api:80
+  INTERNAL_STATE_API_KEY: test-state-key
+  DEFAULT_DATA_CLUSTER_API_KEY: test-data-key
+  ADMIN_API_KEY: test-admin-key
+  DATA_API_KEY: test-data-key
+  ADMIN_UI_PROXY_TRUSTED_HEADER: x-authenticated-user

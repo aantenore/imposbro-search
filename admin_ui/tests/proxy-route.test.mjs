@@ -92,3 +92,72 @@ test('injects data-plane key for search and ingest paths only when caller has no
     globalThis.fetch = originalFetch;
   }
 });
+
+test('production proxy requires trusted upstream identity before injecting server keys', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = {
+    INTERNAL_QUERY_API_URL: process.env.INTERNAL_QUERY_API_URL,
+    INTERNAL_QUERY_API_ADMIN_API_KEY: process.env.INTERNAL_QUERY_API_ADMIN_API_KEY,
+    ADMIN_UI_PROXY_TRUSTED_HEADER: process.env.ADMIN_UI_PROXY_TRUSTED_HEADER,
+    ADMIN_UI_PROXY_TRUSTED_VALUE: process.env.ADMIN_UI_PROXY_TRUSTED_VALUE,
+    NODE_ENV: process.env.NODE_ENV,
+  };
+  const proxied = [];
+
+  process.env.INTERNAL_QUERY_API_URL = 'http://backend.internal';
+  process.env.INTERNAL_QUERY_API_ADMIN_API_KEY = 'admin-secret';
+  process.env.ADMIN_UI_PROXY_TRUSTED_HEADER = 'x-authenticated-user';
+  process.env.ADMIN_UI_PROXY_TRUSTED_VALUE = 'operator';
+  process.env.NODE_ENV = 'production';
+
+  const productionRouteModule = await import(
+    `../app/api/[[...path]]/route.js?trusted=${Date.now()}`
+  );
+
+  globalThis.fetch = async (url, options) => {
+    proxied.push({
+      url,
+      headers: Object.fromEntries(options.headers.entries()),
+    });
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const denied = await productionRouteModule.GET(
+      {
+        method: 'GET',
+        nextUrl: new URL('http://admin.local/api/admin/stats'),
+        headers: new Headers(),
+      },
+      { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+    );
+    assert.equal(denied.status, 401);
+    assert.equal(proxied.length, 0);
+
+    const allowed = await productionRouteModule.GET(
+      {
+        method: 'GET',
+        nextUrl: new URL('http://admin.local/api/admin/stats'),
+        headers: new Headers({ 'x-authenticated-user': 'operator' }),
+      },
+      { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+    );
+
+    assert.equal(allowed.status, 200);
+    assert.equal(proxied[0].url, 'http://backend.internal/admin/stats');
+    assert.equal(proxied[0].headers['x-api-key'], 'admin-secret');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});

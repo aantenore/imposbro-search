@@ -48,6 +48,25 @@ class FakeTypesenseClient:
         self.collections = FakeCollections(self.documents)
 
 
+class PaginatedDocuments:
+    def __init__(self, hits):
+        self.hits = hits
+        self.params = None
+
+    def search(self, params):
+        self.params = params
+        per_page = int(params.get("per_page", 10))
+        return {
+            "found": len(self.hits),
+            "hits": self.hits[:per_page],
+        }
+
+
+class PaginatedTypesenseClient:
+    def __init__(self, hits):
+        self.documents = PaginatedDocuments(hits)
+        self.collections = FakeCollections(self.documents)
+
 def test_search_collection_not_found_returns_404(client):
     """GET /search/{collection} when no clusters have the collection returns 404."""
     # In test lifespan, get_clients_for_search returns [] so any collection yields 404
@@ -172,9 +191,34 @@ def test_search_deduplicates_using_global_sort(client):
     r = client.get("/search/products?q=test&query_by=name&sort_by=price:asc")
 
     assert r.status_code == 200
-    hits = r.json()["hits"]
+    data = r.json()
+    hits = data["hits"]
     assert len(hits) == 1
     assert hits[0]["document"]["price"] == 5
+    assert data["found"] == 1
+    assert data["raw_found"] == 2
+    assert data["deduplicated_found"] == 1
+
+
+def test_offset_search_fetches_extra_hit_for_next_offset(client):
+    """Cursor pagination must ask shards for one extra hit to detect has_more."""
+    hits = [
+        {"document": {"id": "doc-1", "name": "First"}, "text_match": 100},
+        {"document": {"id": "doc-2", "name": "Second"}, "text_match": 90},
+    ]
+    cluster = PaginatedTypesenseClient(hits)
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-a", cluster),
+    ]
+
+    r = client.get("/search/products?q=test&query_by=name&offset=0&limit=1")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert [hit["document"]["id"] for hit in data["hits"]] == ["doc-1"]
+    assert data["has_more"] is True
+    assert data["next_offset"] == 1
+    assert cluster.documents.params["per_page"] == 2
 
 
 def test_search_partial_failure_is_visible(client):

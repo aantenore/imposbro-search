@@ -32,7 +32,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Values.queryApi.name }}
-          image: "{{ .Values.queryApi.image }}"
+          image: "{{ include "imposbro-search.requiredImage" (dict "name" "queryApi.image" "value" .Values.queryApi.image) }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

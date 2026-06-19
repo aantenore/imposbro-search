@@ -123,18 +123,21 @@ class FederationService:
         if name in self.clients:
             raise ValueError(f"Cluster '{name}' is already registered.")
 
+        statuses = self.node_statuses(host, str(port), api_key)
+        failed = [node for node in statuses if node.get("status") != "ok"]
+        if not statuses or failed:
+            raise ValueError(
+                f"Cluster '{name}' is not reachable on all configured node(s): {failed or statuses}"
+            )
+
         config = {
-            "nodes": [{"host": host, "port": port, "protocol": "http"}],
-            "api_key": api_key,
-            "connection_timeout_seconds": 5,
-        }
-        self.clients[name] = typesense.Client(config)
-        self.clusters_config[name] = {
             "name": name,
             "host": host,
             "port": port,
             "api_key": api_key,
         }
+        self.clients[name] = self.create_client(config)
+        self.clusters_config[name] = config
         logger.info(f"Cluster '{name}' registered successfully.")
 
     def unregister_cluster(self, name: str) -> None:

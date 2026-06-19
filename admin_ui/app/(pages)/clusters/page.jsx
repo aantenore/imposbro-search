@@ -10,6 +10,7 @@ import Button, { IconButton } from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import StatusBadge from '../../components/ui/StatusBadge';
 
 /**
  * Clusters Page
@@ -28,13 +29,18 @@ export default function ClustersPage() {
     const [clusterToDelete, setClusterToDelete] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [health, setHealth] = useState(null);
     const { notification, showSuccess, showError } = useNotification();
 
     const fetchClusters = useCallback(async () => {
         try {
             setIsLoading(true);
-            const data = await api.clusters.list();
+            const [data, healthData] = await Promise.all([
+                api.clusters.list(),
+                api.health.get().catch(() => null),
+            ]);
             setClusters(Object.values(data) || []);
+            setHealth(healthData);
         } catch (err) {
             showError(err.message);
         } finally {
@@ -118,11 +124,23 @@ export default function ClustersPage() {
                                     key={cluster.name}
                                     className="flex items-center justify-between p-4 transition-colors hover:bg-muted/50"
                                 >
-                                    <div>
+                                    <div className="min-w-0">
                                         <p className="font-semibold text-foreground">{cluster.name}</p>
                                         <p className="text-xs font-mono text-muted-foreground">
                                             {cluster.host}:{cluster.port}
                                         </p>
+                                        {cluster.name !== 'default' && (
+                                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                <StatusBadge
+                                                    variant={health?.data_clusters?.[cluster.name] === 'ok' ? 'success' : 'warning'}
+                                                >
+                                                    {health?.data_clusters?.[cluster.name] || 'unknown'}
+                                                </StatusBadge>
+                                                <span className="text-xs text-muted-foreground">
+                                                    {(health?.data_cluster_nodes?.[cluster.name] || []).length} node(s)
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                     {cluster.name !== 'default' && (
                                         <IconButton

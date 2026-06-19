@@ -6,6 +6,8 @@
 const BACKEND_URL = process.env.INTERNAL_QUERY_API_URL || 'http://localhost:8000';
 const ADMIN_API_KEY = process.env.INTERNAL_QUERY_API_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
 const DATA_API_KEY = process.env.INTERNAL_QUERY_API_DATA_API_KEY || process.env.DATA_API_KEY || '';
+const TRUSTED_HEADER = process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '';
+const TRUSTED_VALUE = process.env.ADMIN_UI_PROXY_TRUSTED_VALUE || '';
 
 export async function GET(request, { params }) {
   return proxyRequest(request, params);
@@ -45,14 +47,29 @@ async function proxyRequest(request, params = {}) {
     }
   });
 
-  if (ADMIN_API_KEY && path.startsWith('admin/') && !headers.has('x-api-key') && !headers.has('authorization')) {
+  const needsAdminKey = path.startsWith('admin/');
+  const needsDataKey = path.startsWith('search/') || path.startsWith('ingest/');
+  const callerProvidedCredentials = headers.has('x-api-key') || headers.has('authorization');
+  const canInjectCredentials = canInjectServerCredentials(request);
+
+  if (
+    !callerProvidedCredentials &&
+    ((ADMIN_API_KEY && needsAdminKey) || (DATA_API_KEY && needsDataKey)) &&
+    !canInjectCredentials
+  ) {
+    return Response.json(
+      { detail: 'Admin UI proxy credential injection requires a trusted upstream identity.' },
+      { status: 401 }
+    );
+  }
+
+  if (ADMIN_API_KEY && needsAdminKey && !callerProvidedCredentials) {
     headers.set('X-API-Key', ADMIN_API_KEY);
   }
   if (
     DATA_API_KEY &&
-    (path.startsWith('search/') || path.startsWith('ingest/')) &&
-    !headers.has('x-api-key') &&
-    !headers.has('authorization')
+    needsDataKey &&
+    !callerProvidedCredentials
   ) {
     headers.set('X-API-Key', DATA_API_KEY);
   }
@@ -94,4 +111,13 @@ async function proxyRequest(request, params = {}) {
       { status: 502 }
     );
   }
+}
+
+function canInjectServerCredentials(request) {
+  if (!TRUSTED_HEADER) {
+    return process.env.NODE_ENV !== 'production';
+  }
+  const actual = request.headers.get(TRUSTED_HEADER);
+  if (!actual) return false;
+  return TRUSTED_VALUE ? actual === TRUSTED_VALUE : true;
 }
