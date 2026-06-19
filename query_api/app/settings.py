@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Empty string = CORS middleware not added (same-origin only)
     CORS_ORIGINS: str = ""
 
+    # Header used for support diagnostics across HTTP requests and Kafka ingest
+    # messages. Gateways may override this to match their tracing convention.
+    REQUEST_ID_HEADER: str = Field(default="X-Request-ID", min_length=1, max_length=64)
+
     # Optional API key for Admin API. If set, all /admin/* requests must include
     # header X-API-Key: <value> or Authorization: Bearer <value>
     ADMIN_API_KEY: str = ""
@@ -70,6 +74,14 @@ class Settings(BaseSettings):
         if backend not in {"redis", "memory"}:
             raise ValueError("RATE_LIMIT_BACKEND must be either 'redis' or 'memory'")
         return backend
+
+    @field_validator("REQUEST_ID_HEADER")
+    @classmethod
+    def validate_request_id_header(cls, value: str) -> str:
+        header = value.strip()
+        if not header or any(ch in header for ch in "\r\n:"):
+            raise ValueError("REQUEST_ID_HEADER must be a valid HTTP header name")
+        return header
 
     # Optional OIDC/JWT bearer-token authentication for enterprise gateways.
     # Tokens are accepted in Authorization: Bearer after API-key checks fail.

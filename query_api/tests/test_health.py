@@ -23,6 +23,28 @@ def test_root_returns_200(client):
     assert "version" in data
 
 
+def test_request_id_header_is_generated(client):
+    r = client.get("/")
+
+    assert r.status_code == 200
+    assert len(r.headers["x-request-id"]) == 32
+
+
+def test_request_id_header_preserves_valid_inbound_value(client):
+    r = client.get("/", headers={"X-Request-ID": "trace-123"})
+
+    assert r.status_code == 200
+    assert r.headers["x-request-id"] == "trace-123"
+
+
+def test_request_id_header_replaces_invalid_inbound_value(client):
+    r = client.get("/", headers={"X-Request-ID": "invalid value"})
+
+    assert r.status_code == 200
+    assert r.headers["x-request-id"] != "invalid value"
+    assert len(r.headers["x-request-id"]) == 32
+
+
 def test_health_returns_200(client, monkeypatch):
     import main
 

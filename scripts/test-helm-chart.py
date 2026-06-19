@@ -122,6 +122,7 @@ def main() -> None:
     require_contains(manifest, 'ingressClassName: "nginx"')
     require_contains(manifest, "api.imposbro.example.com")
     require_contains(manifest, "admin.imposbro.example.com")
+    require_contains(manifest, "REQUEST_ID_HEADER")
     require_contains(manifest, "RATE_LIMIT_ENABLED")
     require_contains(manifest, "ImposbroQueryApiRateLimitBlocked")
     require_contains(manifest, "query_api_rate_limit_backend_errors_total")
@@ -151,6 +152,13 @@ def main() -> None:
         "adminUi.ingress.hosts must contain at least one host",
         "--set-json",
         "adminUi.ingress.hosts=[]",
+    )
+
+    print("==> Helm guardrail: request-id header is required")
+    expect_failure(
+        "config.REQUEST_ID_HEADER is required",
+        "--set",
+        "config.REQUEST_ID_HEADER=",
     )
 
     print("==> Helm guardrail: indexing HPA and KEDA are mutually exclusive")

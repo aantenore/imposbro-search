@@ -329,6 +329,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `COMPOSE_SUBNET` | Local Docker Compose subnet used for stable Typesense Raft peer IPs |
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
+| `REQUEST_ID_HEADER` | Header echoed by Query API responses and propagated into Kafka ingest messages for support diagnostics; default `X-Request-ID` |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
 | `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search`, `ingest`, `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
@@ -375,6 +376,12 @@ exports `query_api_rate_limit_checks_total` and
 `query_api_rate_limit_backend_errors_total` so Prometheus/Grafana can track
 allowed requests, blocked requests, and backend failures without exposing actors,
 API keys, IPs, or raw queries in metric labels.
+
+Request correlation is always enabled. Query API accepts the configured
+`REQUEST_ID_HEADER`, sanitizes unsafe values, echoes the final value on every
+response, and includes it as `request_id` in Kafka ingest messages. The indexing
+service logs that value during indexing failures and successes, but metrics do
+not label by request id to avoid high-cardinality Prometheus series.
 
 Example collection-scoped API key:
 
@@ -556,7 +563,7 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, and `ADMIN_UI_SESSION_SECRET`.
+1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, and `ADMIN_UI_SESSION_SECRET`.
     The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
     Enable `queryApi.ingress.enabled=true` and/or `adminUi.ingress.enabled=true` when the cluster ingress controller should own TLS and routing. Keep Admin UI behind an authenticated ingress/gateway whenever the proxy injects server-side keys.
     Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.

@@ -45,6 +45,10 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 - Use the module logger: `logger = logging.getLogger(__name__)`.
 - Prefer `logger.info("message: %s", value)` over f-strings for structured logging.
 - Do not log credentials or full API keys.
+- Query API owns request correlation. It sanitizes `REQUEST_ID_HEADER` (default
+  `X-Request-ID`), echoes it on responses, and forwards it to Kafka ingest
+  messages as `request_id`. Consumers may log request ids for diagnostics, but
+  must not use them as Prometheus labels.
 
 ### 1.6 State and consistency
 

@@ -156,6 +156,7 @@ The market does validate the problem, but it also narrows the room for different
 - ~~**Cursor-based pagination**~~: **Done.** Search accepts optional `offset` and `limit` for cursor-style deep pagination; response includes `next_offset` when applicable.
 - ~~**Admin UI dashboard**~~: **Done.** Dashboard fetches `/admin/stats` and `/health` every 15s; shows status, clusters, collections, Redis/Kafka.
 - ~~**Hybrid/vector search gateway**~~: **Done.** JSON search endpoint supports long vector/hybrid params and cross-cluster merge can order vector-only results by `_vector_distance`.
+- ~~**Support diagnostics**~~: **Done.** Query API echoes a sanitized request-correlation header and propagates it through Kafka ingest messages so indexing logs can be tied back to the originating HTTP request without adding high-cardinality metric labels.
 
 ### Low priority
 
