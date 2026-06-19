@@ -16,7 +16,7 @@ import signal
 import logging
 import sys
 from typing import Dict, Optional
-from kafka import KafkaConsumer
+from kafka import KafkaConsumer, KafkaProducer
 from kafka.structs import OffsetAndMetadata, TopicPartition
 import time
 
@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 # Graceful shutdown flag
 shutdown_requested = False
 DEFAULT_METADATA_MAX_AGE_MS = 5000
+DEFAULT_MAX_PROCESSING_ATTEMPTS = 3
+DLQ_TOPIC_SUFFIX = "_dlq"
+
+
+class MissingTargetClusterError(RuntimeError):
+    """Raised when a message targets a cluster the consumer has not loaded."""
 
 
 def signal_handler(signum, frame):
@@ -50,6 +56,16 @@ def get_int_env(name: str, default: int) -> int:
     except ValueError:
         logger.warning("Invalid %s=%r. Falling back to %s.", name, raw_value, default)
         return default
+
+
+def create_dlq_producer(kafka_broker_url: str) -> KafkaProducer:
+    """Create a producer for quarantining poison messages."""
+    return KafkaProducer(
+        bootstrap_servers=kafka_broker_url,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        acks="all",
+        retries=3,
+    )
 
 
 def create_kafka_consumer(kafka_broker_url: str, topic_prefix: str) -> KafkaConsumer:
@@ -76,7 +92,7 @@ def create_kafka_consumer(kafka_broker_url: str, topic_prefix: str) -> KafkaCons
     return consumer
 
 
-def run_consumer(typesense_clients: Dict) -> None:
+def run_consumer(typesense_clients: Dict, refresh_clients=None) -> None:
     """
     Main consumer loop for indexing documents from Kafka.
 
@@ -104,11 +120,16 @@ def run_consumer(typesense_clients: Dict) -> None:
         return
 
     consumer: Optional[KafkaConsumer] = None
+    dlq_producer: Optional[KafkaProducer] = None
+    max_processing_attempts = get_int_env(
+        "INDEXING_MAX_PROCESSING_ATTEMPTS", DEFAULT_MAX_PROCESSING_ATTEMPTS
+    )
 
     # Connect to Kafka with retry logic
     while not shutdown_requested:
         try:
             consumer = create_kafka_consumer(kafka_broker_url, topic_prefix)
+            dlq_producer = create_dlq_producer(kafka_broker_url)
             break
         except Exception as e:
             logger.warning(f"Failed to connect to Kafka: {e}. Retrying in 5 seconds...")
@@ -132,7 +153,15 @@ def run_consumer(typesense_clients: Dict) -> None:
                         break
 
                     try:
-                        process_message(message.value, typesense_clients)
+                        process_message_with_retries(
+                            message.value,
+                            typesense_clients,
+                            refresh_clients=refresh_clients,
+                            dlq_producer=dlq_producer,
+                            source_topic=message.topic,
+                            topic_prefix=topic_prefix,
+                            max_attempts=max_processing_attempts,
+                        )
                         consumer.commit(
                             {
                                 TopicPartition(message.topic, message.partition): OffsetAndMetadata(
@@ -156,8 +185,86 @@ def run_consumer(typesense_clients: Dict) -> None:
     if consumer:
         logger.info("Closing Kafka consumer...")
         consumer.close()
+    if dlq_producer:
+        logger.info("Closing Kafka DLQ producer...")
+        dlq_producer.close()
 
     logger.info("Indexing service shutdown complete.")
+
+
+def process_message_with_retries(
+    message: Dict,
+    typesense_clients: Dict,
+    *,
+    refresh_clients=None,
+    dlq_producer=None,
+    source_topic: str,
+    topic_prefix: str,
+    max_attempts: int,
+) -> None:
+    """Process a message with bounded retries, config refresh, and DLQ quarantine."""
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max(1, max_attempts) + 1):
+        try:
+            process_message(message, typesense_clients)
+            return
+        except MissingTargetClusterError as exc:
+            last_error = exc
+            if refresh_clients:
+                logger.warning("%s Refreshing cluster configuration...", exc)
+                refreshed_clients = refresh_clients()
+                typesense_clients.clear()
+                typesense_clients.update(refreshed_clients)
+                continue
+            break
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Indexing attempt %s/%s failed: %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+            if attempt < max_attempts:
+                time.sleep(1)
+
+    if dlq_producer and last_error:
+        publish_to_dlq(
+            dlq_producer,
+            topic_prefix=topic_prefix,
+            source_topic=source_topic,
+            message=message,
+            error=last_error,
+        )
+        return
+    if last_error:
+        raise last_error
+
+
+def publish_to_dlq(
+    dlq_producer,
+    *,
+    topic_prefix: str,
+    source_topic: str,
+    message: Dict,
+    error: Exception,
+) -> None:
+    """Publish a failed indexing message to a dead-letter topic."""
+    dlq_topic = f"{topic_prefix}{DLQ_TOPIC_SUFFIX}"
+    payload = {
+        "source_topic": source_topic,
+        "error": type(error).__name__,
+        "error_message": str(error),
+        "message": message,
+    }
+    dlq_producer.send(dlq_topic, value=payload)
+    dlq_producer.flush()
+    logger.error(
+        "Published failed message from %s to DLQ %s: %s",
+        source_topic,
+        dlq_topic,
+        error,
+    )
 
 
 def process_message(message: Dict, typesense_clients: Dict) -> None:
@@ -193,7 +300,7 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
     client = typesense_clients.get(target_cluster)
 
     if not client:
-        raise RuntimeError(
+        raise MissingTargetClusterError(
             f"No client found for cluster '{target_cluster}'. "
             f"Document {doc_id} cannot be indexed. "
             f"Available clusters: {list(typesense_clients.keys())}"

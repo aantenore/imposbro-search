@@ -5,6 +5,7 @@
 
 const BACKEND_URL = process.env.INTERNAL_QUERY_API_URL || 'http://localhost:8000';
 const ADMIN_API_KEY = process.env.INTERNAL_QUERY_API_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
+const DATA_API_KEY = process.env.INTERNAL_QUERY_API_DATA_API_KEY || process.env.DATA_API_KEY || '';
 
 export async function GET(request, { params }) {
   return proxyRequest(request, params);
@@ -26,8 +27,9 @@ export async function DELETE(request, { params }) {
   return proxyRequest(request, params);
 }
 
-async function proxyRequest(request, { params }) {
-  const pathParam = params?.path;
+async function proxyRequest(request, params = {}) {
+  const resolvedParams = await params;
+  const pathParam = resolvedParams?.path;
   const path = Array.isArray(pathParam) ? pathParam.join('/') : (pathParam || '');
   const search = request.nextUrl.search || '';
   const url = `${BACKEND_URL.replace(/\/$/, '')}/${path}${search}`;
@@ -45,6 +47,14 @@ async function proxyRequest(request, { params }) {
 
   if (ADMIN_API_KEY && path.startsWith('admin/') && !headers.has('x-api-key') && !headers.has('authorization')) {
     headers.set('X-API-Key', ADMIN_API_KEY);
+  }
+  if (
+    DATA_API_KEY &&
+    (path.startsWith('search/') || path.startsWith('ingest/')) &&
+    !headers.has('x-api-key') &&
+    !headers.has('authorization')
+  ) {
+    headers.set('X-API-Key', DATA_API_KEY);
   }
 
   let body = null;

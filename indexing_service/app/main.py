@@ -148,7 +148,10 @@ def main():
     # Import and run the consumer
     from consumer import run_consumer
 
-    run_consumer(federation_clients)
+    run_consumer(
+        federation_clients,
+        refresh_clients=lambda: fetch_cluster_configuration(query_api_url),
+    )
 
 
 if __name__ == "__main__":

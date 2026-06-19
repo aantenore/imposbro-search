@@ -14,6 +14,8 @@ from .schemas import (
     IngestResponse,
     SearchResponse,
     OperationResponse,
+    AuditLogEntry,
+    AuditLogResponse,
 )
 
 __all__ = [
@@ -25,4 +27,6 @@ __all__ = [
     "IngestResponse",
     "SearchResponse",
     "OperationResponse",
+    "AuditLogEntry",
+    "AuditLogResponse",
 ]

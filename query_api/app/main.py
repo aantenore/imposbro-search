@@ -33,6 +33,7 @@ from constants import APP_NAME, VERSION
 from settings import settings
 from services import (
     StateManager,
+    StateLoadError,
     FederationService,
     KafkaService,
     ConfigSyncService,
@@ -116,7 +117,11 @@ async def reload_configuration():
         return
 
     logger.info("Reloading configuration from state store...")
-    clusters_config, routing_rules = state_manager.load_state()
+    try:
+        clusters_config, routing_rules = state_manager.load_state()
+    except StateLoadError as exc:
+        logger.error("Failed to reload configuration from state store: %s", exc)
+        return
 
     if clusters_config is not None and routing_rules is not None:
         federation_service.reload_from_state(clusters_config, routing_rules)
