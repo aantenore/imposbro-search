@@ -126,8 +126,14 @@ services:
       - kafka
       - redis
       - typesense-state-1
+      - typesense-state-2
+      - typesense-state-3
       - typesense-data-1
-      - typesense-data2-1 # <-- ADDED dependency
+      - typesense-data-2
+      - typesense-data-3
+      - typesense-data2-1
+      - typesense-data2-2
+      - typesense-data2-3
     env_file: .env
 
   indexing_service:
