@@ -55,7 +55,11 @@ async function proxyRequest(request, params = {}) {
   });
 
   const needsAdminKey = path.startsWith('admin/');
-  const needsDataKey = path.startsWith('search/') || path.startsWith('ingest/');
+  const needsDataKey = (
+    path.startsWith('search/') ||
+    path.startsWith('ingest/') ||
+    path.startsWith('documents/')
+  );
   let callerProvidedCredentials = headers.has('x-api-key') || headers.has('authorization');
   const trustedIdentity = hasTrustedUpstreamIdentity(request);
   const canInjectCredentials = canInjectServerCredentials(request, trustedIdentity);

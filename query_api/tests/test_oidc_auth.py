@@ -294,6 +294,41 @@ def test_oidc_tenant_policy_adds_search_filter(client, monkeypatch):
     )
 
 
+def test_oidc_tenant_policy_adds_delete_filter(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    from settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "AUTHZ_COLLECTION_POLICIES",
+        json.dumps({
+            "collections": {
+                "products": {
+                    "mode": "required",
+                    "tenant_field": "tenant_id",
+                    "tenant_claim": "tenant_id",
+                }
+            }
+        }),
+    )
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-a", MagicMock())
+    ]
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.delete(
+        "/documents/products/doc-1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    published = client.app.state.kafka_service.publish_delete_document.call_args.kwargs
+    assert published["filter_by"] == "(id:=doc-1) && tenant_id:=tenant-a"
+
+
 def test_oidc_tenant_policy_injects_missing_ingest_tenant(client, monkeypatch):
     _configure_oidc(monkeypatch)
     from settings import settings

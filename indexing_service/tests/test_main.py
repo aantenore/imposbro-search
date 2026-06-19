@@ -11,6 +11,7 @@ if str(_app_dir) not in sys.path:
 import main
 import consumer
 import metrics
+import typesense
 
 
 class FakeResponse:
@@ -138,9 +139,33 @@ def test_topic_subscription_pattern_excludes_dlq_topic():
 class FakeDocumentOperations:
     def __init__(self):
         self.upserted = []
+        self.deleted_ids = []
+        self.delete_filters = []
+        self.delete_result = {"num_deleted": 1}
+        self.raise_not_found = False
 
     def upsert(self, document):
         self.upserted.append(document)
+
+    def __getitem__(self, document_id):
+        return FakeDocumentReference(self, document_id)
+
+    def delete(self, params):
+        self.delete_filters.append(params)
+        if self.raise_not_found:
+            raise typesense.exceptions.ObjectNotFound("not found")
+        return self.delete_result
+
+
+class FakeDocumentReference:
+    def __init__(self, documents, document_id):
+        self.documents = documents
+        self.document_id = document_id
+
+    def delete(self):
+        if self.documents.raise_not_found:
+            raise typesense.exceptions.ObjectNotFound("not found")
+        self.documents.deleted_ids.append(self.document_id)
 
 
 class FakeCollection:
@@ -212,6 +237,90 @@ def test_process_message_without_target_cluster_uses_default_data_cluster():
     )
 
     assert client.documents.upserted == [{"id": "doc-1", "name": "Product"}]
+
+
+def test_process_message_deletes_document_by_id():
+    client = FakeTypesenseClient()
+    labels = {
+        "collection": "products",
+        "target_cluster": "cluster-a",
+        "result": "deleted",
+    }
+    before = sample_value("indexing_documents_deleted_total", labels)
+
+    consumer.process_message(
+        {
+            "action": "delete",
+            "collection": "products",
+            "target_cluster": "cluster-a",
+            "document_id": "doc-1",
+        },
+        {"cluster-a": client},
+    )
+
+    assert client.documents.deleted_ids == ["doc-1"]
+    assert sample_value("indexing_documents_deleted_total", labels) == before + 1
+
+
+def test_process_message_deletes_by_filter_for_tenant_safe_event():
+    client = FakeTypesenseClient()
+
+    consumer.process_message(
+        {
+            "action": "delete",
+            "collection": "products",
+            "target_cluster": "cluster-a",
+            "document_id": "doc-1",
+            "filter_by": "(id:=doc-1) && tenant_id:=tenant-a",
+        },
+        {"cluster-a": client},
+    )
+
+    assert client.documents.deleted_ids == []
+    assert client.documents.delete_filters == [
+        {"filter_by": "(id:=doc-1) && tenant_id:=tenant-a"}
+    ]
+
+
+def test_process_message_treats_missing_delete_as_idempotent_noop():
+    client = FakeTypesenseClient()
+    client.documents.raise_not_found = True
+    labels = {
+        "collection": "products",
+        "target_cluster": "cluster-a",
+        "result": "not_found",
+    }
+    before = sample_value("indexing_documents_deleted_total", labels)
+
+    consumer.process_message(
+        {
+            "action": "delete",
+            "collection": "products",
+            "target_cluster": "cluster-a",
+            "document_id": "doc-1",
+        },
+        {"cluster-a": client},
+    )
+
+    assert client.documents.deleted_ids == []
+    assert sample_value("indexing_documents_deleted_total", labels) == before + 1
+
+
+def test_process_message_rejects_unknown_action():
+    try:
+        consumer.process_message(
+            {
+                "action": "archive",
+                "collection": "products",
+                "target_cluster": "cluster-a",
+                "document": {"id": "doc-1", "name": "Product"},
+            },
+            {"cluster-a": FakeTypesenseClient()},
+        )
+    except ValueError as exc:
+        assert "Unsupported indexing action 'archive'" in str(exc)
+    else:
+        raise AssertionError("Expected unknown action to fail processing")
 
 
 def test_process_message_raises_when_target_cluster_is_missing():

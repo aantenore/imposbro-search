@@ -273,6 +273,14 @@ export const api = {
             method: 'POST',
             body: JSON.stringify(document),
         }),
+
+        /**
+         * Delete a document by id
+         */
+        deleteDocument: (collection, documentId) => request(
+            `/documents/${encodeSegment(collection)}/${encodeSegment(documentId)}`,
+            { method: 'DELETE' }
+        ),
     },
 };
 

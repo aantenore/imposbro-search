@@ -26,6 +26,11 @@ INDEXED_DOCUMENTS = Counter(
     "Total documents successfully indexed by the worker.",
     ["collection", "target_cluster"],
 )
+DELETED_DOCUMENTS = Counter(
+    "indexing_documents_deleted_total",
+    "Total document delete events processed by the worker.",
+    ["collection", "target_cluster", "result"],
+)
 PROCESSING_RETRIES = Counter(
     "indexing_processing_retries_total",
     "Total failed processing attempts before success or DLQ.",

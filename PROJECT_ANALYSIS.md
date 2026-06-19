@@ -71,15 +71,15 @@ The market does validate the problem, but it also narrows the room for different
 9. **Dependency/security**: Admin UI upgraded to Next.js 16.2.9 and ESLint 9; production audit gate has no high/critical findings.
 10. **Delivery gates**: root `npm test` runs API and indexing tests; Admin UI has explicit lint/build/audit commands. A GitHub Actions workflow is recommended next, but was not committed because the current OAuth token cannot create workflow files without the `workflow` scope.
 11. **Runtime hardening**: Python and Admin UI Docker images run as numeric non-root users, aligning with Kubernetes `runAsNonRoot` policies.
-12. **Data-plane auth and auditability**: `/ingest/*` and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
+12. **Data-plane auth and auditability**: `/ingest/*`, `/documents/*`, and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
 13. **Schema reconciliation**: desired collection schemas are persisted in control-plane state; new clusters are backfilled automatically, and operators can trigger an idempotent `/admin/collections/reconcile`.
 14. **Worker observability and DLQ safety**: indexing service exposes configurable Prometheus metrics for cluster config fetches, loaded clusters, successful indexing, retries, and DLQ publications; the Kafka subscription pattern excludes the DLQ topic so poison messages are not recursively consumed.
-15. **Admin search workspace**: Admin UI now includes a `/workspace` view for create-schema, ingest, and search workflows against the configured Query API proxy.
+15. **Admin search workspace**: Admin UI now includes a `/workspace` view for create-schema, ingest, delete, and search workflows against the configured Query API proxy.
 16. **Typesense readiness hardening**: `/ready` now verifies every declared node in every data cluster and reports `data_cluster_nodes`; Compose pins Typesense node IPs so Raft peer state survives `docker compose down/up` with volumes.
 17. **Runtime validation**: Docker smoke covered create collection, Kafka ingest, federated search with both clusters responding, and a down/up restart with persisted volumes.
 18. **Hybrid/vector search path**: `/search/{collection}` now supports a JSON body for semantic/vector/hybrid Typesense params, including `vector_query`, embedding retry controls, and global merge by `_vector_distance`.
-19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, `*`, or collection-pattern data-plane access such as `search:products_*` while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
-20. **Repeatable runtime smoke**: `make smoke-docker` builds/starts the stack, creates a vector collection, ingests through Kafka, verifies federated vector ordering and the Admin UI proxy, then tears the stack down.
+19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, `*`, or collection-pattern data-plane access such as `search:products_*` / `ingest:orders_*` while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
+20. **Repeatable runtime smoke**: `make smoke-docker` builds/starts the stack, creates a vector collection, ingests through Kafka, verifies federated vector ordering, queues an async document delete, verifies the deleted document disappears from search, checks the Admin UI proxy, then tears the stack down.
 21. **Partial outage smoke**: `make smoke-docker-outage` stops the secondary data cluster and verifies `/ready` degrades while federated search still returns healthy-cluster hits with `partial: true` and explicit `failed_clusters`.
 22. **Control-plane backup/restore**: Admin API can export state snapshots with masked secrets by default, create restore-ready exports with explicit secret opt-in, dry-run imports, and apply audited state restores for clusters, routing, schemas, and aliases.
 23. **Kafka/indexing load smoke**: `make smoke-docker-load` concurrently ingests configurable document batches through Kafka, waits for indexing convergence, and verifies sorted federated search results.
@@ -98,16 +98,17 @@ The market does validate the problem, but it also narrows the room for different
 36. **Replica placement**: Helm now supports per-workload topology spread constraints so replicated Query API, Admin UI, and indexing pods can be distributed across nodes or zones.
 37. **Ingress exposure**: Helm now renders opt-in Ingress resources for Query API and Admin UI with configurable class, annotations, TLS, hosts, paths, and service routing while keeping services `ClusterIP` by default.
 38. **Release hardening**: Admin mutations roll runtime state back when persistence fails, cluster registration probes all declared nodes, search pagination fetches one extra hit for `next_offset`, fan-out search exposes deduplicated counts, legacy worker messages resolve `default` to a real cluster, Compose binds dev ports to localhost, Helm fails on placeholder/mutable images or missing service/secret values, and local Docker smoke targets cover runtime paths.
-39. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
-40. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search filters and validate or inject ingest tenant fields.
+39. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes ingest/delete, offset pagination, and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
+40. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search/delete filters and validate or inject ingest tenant fields.
 41. **Alias state portability**: Collection alias bindings are persisted in control-plane state, included in backup/restore snapshots, restored through import apply, and covered by DR smoke.
 42. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
 43. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
-44. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/data access to collection glob patterns, with server-side enforcement in the Query API.
+44. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/delete/data access to collection glob patterns, with server-side enforcement in the Query API.
 45. **Release gate reproducibility**: `make helm` now runs a Python chart validation suite that checks rendered resource counts, Query API/Admin UI Ingress permutations, and negative fail-fast guardrails; Compose Make targets use `.env` when present and `.env.example` as a clean-checkout fallback.
 46. **Local benchmark evidence**: `make benchmark-docker` starts the Docker stack, runs the deployment-agnostic ingest/search benchmark with conservative defaults, writes JSON and Markdown artifacts under `artifacts/`, and tears the stack down for repeatable local scale evidence.
-47. **Data-plane abuse control**: Query API can now enforce optional fixed-window search and ingest rate limits by authenticated actor and collection, using Redis counters for multi-replica deployments and memory counters for local/test runs.
+47. **Data-plane abuse control**: Query API can now enforce optional fixed-window search and write-side data mutation rate limits by authenticated actor and collection, using Redis counters for multi-replica deployments and memory counters for local/test runs.
 48. **Rate-limit observability**: Query API now exports low-cardinality Prometheus metrics for allowed/blocked rate-limit decisions and backend failures; Helm renders alert rules and Grafana shows rate-limit blocks/errors.
+49. **Data lifecycle delete**: Query API now exposes `DELETE /documents/{collection}/{document_id}` as an async data-plane mutation. It fans out delete events to every candidate data cluster, propagates request ids, enforces ingest/data scoped authorization, uses tenant-safe filtered deletes for OIDC tenant policies, and the worker treats missing documents as idempotent no-ops with `indexing_documents_deleted_total` metrics.
 
 ### Fixes
 
@@ -156,7 +157,8 @@ The market does validate the problem, but it also narrows the room for different
 - ~~**Cursor-based pagination**~~: **Done.** Search accepts optional `offset` and `limit` for cursor-style deep pagination; response includes `next_offset` when applicable.
 - ~~**Admin UI dashboard**~~: **Done.** Dashboard fetches `/admin/stats` and `/health` every 15s; shows status, clusters, collections, Redis/Kafka.
 - ~~**Hybrid/vector search gateway**~~: **Done.** JSON search endpoint supports long vector/hybrid params and cross-cluster merge can order vector-only results by `_vector_distance`.
-- ~~**Support diagnostics**~~: **Done.** Query API echoes a sanitized request-correlation header and propagates it through Kafka ingest messages so indexing logs can be tied back to the originating HTTP request without adding high-cardinality metric labels.
+- ~~**Support diagnostics**~~: **Done.** Query API echoes a sanitized request-correlation header and propagates it through Kafka data-plane messages so indexing logs can be tied back to the originating HTTP request without adding high-cardinality metric labels.
+- ~~**Data lifecycle delete**~~: **Done.** Document delete is available as an asynchronous data-plane write and covered by unit plus Docker smoke tests.
 
 ### Low priority
 
@@ -164,8 +166,8 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
-- **Traffic abuse protection**: Optional actor-scoped data-plane rate limits now protect search and ingest paths with Prometheus/Grafana visibility; production operators still need environment-specific budgets and gateway/WAF policy for public exposure.
+- **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, tenant-safe document deletion, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
+- **Traffic abuse protection**: Optional actor-scoped data-plane rate limits now protect search and write-side data mutation paths with Prometheus/Grafana visibility; production operators still need environment-specific budgets and gateway/WAF policy for public exposure.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, JSON/Markdown benchmark artifacts, Helm autoscaling manifests, and a repeatable Kubernetes benchmark harness; the next credibility step is publishing results from a production-sized Kubernetes run.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, production topology, NetworkPolicy, benchmark execution, and disaster-recovery drills now have operator runbooks. A published production-sized benchmark result is still needed before claiming broad enterprise scale proof.

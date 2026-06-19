@@ -219,6 +219,20 @@ def delete_collection(query_api_url: str, collection: str, admin_headers) -> Non
     )
 
 
+def delete_document(
+    query_api_url: str,
+    collection: str,
+    document_id: str,
+    ingest_headers,
+):
+    return request(
+        "DELETE",
+        f"{query_api_url}/documents/{collection}/{document_id}",
+        headers=ingest_headers,
+        timeout=30,
+    )
+
+
 def ingest_vector_documents(query_api_url: str, collection: str, ingest_headers):
     results = []
     for doc in VECTOR_DOCS:
@@ -256,7 +270,11 @@ def wait_for_search_count(
             )
             hits = result.get("hits", [])
             ids = [hit.get("document", {}).get("id") for hit in hits]
-            last_result = {"status": status, "found": result.get("found"), "ids": ids}
+            last_result = {
+                "status": status,
+                "found": result.get("found"),
+                "ids": ids,
+            }
             partial_matches = result.get("partial") is partial
             if (
                 status == 200
@@ -269,3 +287,45 @@ def wait_for_search_count(
             last_result = exc
         time.sleep(1)
     raise RuntimeError(f"Search count did not converge: {last_result!r}")
+
+
+def wait_for_missing_id(
+    query_api_url: str,
+    collection: str,
+    payload,
+    headers,
+    timeout_seconds: int,
+    *,
+    missing_id: str,
+    expected_first_id: str,
+    partial=False,
+):
+    deadline = time.monotonic() + timeout_seconds
+    last_result = None
+    while time.monotonic() < deadline:
+        try:
+            status, result = request(
+                "POST",
+                f"{query_api_url}/search/{collection}",
+                payload,
+                headers,
+                timeout=30,
+            )
+            ids = hit_ids(result)
+            last_result = {
+                "status": status,
+                "found": result.get("found"),
+                "ids": ids,
+            }
+            partial_matches = result.get("partial") is partial
+            if (
+                status == 200
+                and ids[:1] == [expected_first_id]
+                and missing_id not in ids
+                and partial_matches
+            ):
+                return result
+        except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
+            last_result = exc
+        time.sleep(1)
+    raise RuntimeError(f"Deleted document remained searchable: {last_result!r}")

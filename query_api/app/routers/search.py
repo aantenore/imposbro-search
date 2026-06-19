@@ -8,20 +8,24 @@ Implements industry-standard scatter-gather search with correct deep pagination.
 import asyncio
 import logging
 from functools import cmp_to_key
-from fastapi import APIRouter, HTTPException, Query, Depends, Response, Path, Body, Request
-from typing import Dict, Any, Optional, List, Tuple
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 from prometheus_client import Counter
 
-from auth import authorize_ingest_document, authorize_search_request
-from constants import NAME_PATTERN
+from auth import (
+    authorize_delete_filter,
+    authorize_ingest_document,
+    authorize_search_request,
+)
+from constants import DOCUMENT_ID_PATTERN, NAME_PATTERN
 from deps import (
     get_federation_service,
     get_kafka_service,
     require_ingest_collection_api_key,
     require_search_collection_api_key,
 )
-from models import IngestResponse, SearchRequest
+from models import DeleteDocumentResponse, IngestResponse, SearchRequest
 from observability import get_request_id
 from services import FederationService, KafkaService
 
@@ -34,6 +38,11 @@ router = APIRouter(
 # Metrics
 documents_ingested = Counter(
     "documents_ingested_total", "Total number of documents ingested.", ["collection"]
+)
+documents_deleted = Counter(
+    "documents_deleted_total",
+    "Total number of document delete requests accepted.",
+    ["collection"],
 )
 
 # Configuration for deep pagination
@@ -354,7 +363,11 @@ async def _perform_federated_search(
 )
 def ingest_document(
     request: Request,
-    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
+    collection_name: str = Path(
+        ...,
+        pattern=NAME_PATTERN,
+        description="Collection name",
+    ),
     document: Dict[str, Any] = Body(...),
     federation: FederationService = Depends(get_federation_service),
     kafka: KafkaService = Depends(get_kafka_service),
@@ -407,6 +420,70 @@ def ingest_document(
         logger.error(
             "Failed to publish document to Kafka request_id=%s: %s",
             get_request_id(request),
+            e,
+        )
+        raise HTTPException(status_code=500, detail=f"Kafka producer error: {str(e)}")
+
+
+@router.delete(
+    "/documents/{collection_name}/{document_id}",
+    response_model=DeleteDocumentResponse,
+    summary="Delete a document asynchronously",
+    dependencies=[Depends(require_ingest_collection_api_key)],
+)
+def delete_document(
+    request: Request,
+    collection_name: str = Path(
+        ...,
+        pattern=NAME_PATTERN,
+        description="Collection name",
+    ),
+    document_id: str = Path(
+        ...,
+        pattern=DOCUMENT_ID_PATTERN,
+        description="Document id to delete",
+    ),
+    federation: FederationService = Depends(get_federation_service),
+    kafka: KafkaService = Depends(get_kafka_service),
+) -> DeleteDocumentResponse:
+    """
+    Queue a document deletion across every cluster that may contain the collection.
+
+    Deletion is asynchronous and idempotent. The indexing worker treats missing
+    documents as successful no-ops so clients can safely retry requests.
+    """
+    targets = federation.get_named_clients_for_search(collection_name)
+    if not targets:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No target cluster available for document deletion. "
+                "Ensure at least one data cluster is registered and routing is configured."
+            ),
+        )
+
+    request_id = get_request_id(request)
+    filter_by = authorize_delete_filter(request, collection_name, document_id)
+    try:
+        for target_cluster_name, _client in targets:
+            kafka.publish_delete_document(
+                collection_name=collection_name,
+                document_id=document_id,
+                target_cluster=target_cluster_name,
+                request_id=request_id,
+                filter_by=filter_by,
+            )
+        routed_to = ",".join(name for name, _ in targets)
+        documents_deleted.labels(collection=collection_name).inc()
+        return DeleteDocumentResponse(
+            status="ok",
+            document_id=document_id,
+            routed_to=routed_to,
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to publish document delete to Kafka request_id=%s: %s",
+            request_id,
             e,
         )
         raise HTTPException(status_code=500, detail=f"Kafka producer error: {str(e)}")

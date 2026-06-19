@@ -20,6 +20,7 @@ from typing import Dict, Optional
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.structs import OffsetAndMetadata, TopicPartition
 import time
+import typesense
 
 import metrics
 
@@ -317,15 +318,29 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
         message: The message payload containing document and routing info
         typesense_clients: Available Typesense clients
     """
+    action = str(message.get("action") or "upsert").strip().lower()
     collection_name = message.get("collection")
     document = message.get("document")
+    document_id = str(message.get("document_id") or "")
     target_cluster = message.get("target_cluster")
     request_id = str(message.get("request_id") or "-")
 
     # Validate message structure
-    if not collection_name or not document:
+    if not collection_name:
         raise ValueError(
-            f"Invalid message format (missing collection or document) request_id={request_id}"
+            f"Invalid message format (missing collection) request_id={request_id}"
+        )
+    if action == "upsert" and not document:
+        raise ValueError(
+            f"Invalid upsert message format (missing document) request_id={request_id}"
+        )
+    if action == "delete" and not document_id:
+        raise ValueError(
+            f"Invalid delete message format (missing document_id) request_id={request_id}"
+        )
+    if action not in {"upsert", "delete"}:
+        raise ValueError(
+            f"Unsupported indexing action '{action}' request_id={request_id}"
         )
 
     if not target_cluster:
@@ -336,7 +351,7 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
         )
     target_cluster = resolve_target_cluster(target_cluster, typesense_clients)
 
-    doc_id = document.get("id", "unknown")
+    doc_id = document.get("id", "unknown") if document else document_id
 
     # Get the client for the target cluster (as determined by Producer)
     client = typesense_clients.get(target_cluster)
@@ -348,6 +363,17 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
             f"Available clusters: {list(typesense_clients.keys())} "
             f"request_id={request_id}"
         )
+
+    if action == "delete":
+        delete_document(
+            client,
+            collection_name=collection_name,
+            document_id=document_id,
+            target_cluster=target_cluster,
+            request_id=request_id,
+            filter_by=message.get("filter_by"),
+        )
+        return
 
     # Upsert the document
     try:
@@ -373,3 +399,51 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
             e,
         )
         raise
+
+
+def delete_document(
+    client,
+    *,
+    collection_name: str,
+    document_id: str,
+    target_cluster: str,
+    request_id: str,
+    filter_by: Optional[str] = None,
+) -> None:
+    """Delete a document by id or tenant-safe filter, treating misses as no-ops."""
+    result_label = "deleted"
+    try:
+        if filter_by:
+            result = client.collections[collection_name].documents.delete(
+                {"filter_by": filter_by}
+            )
+            deleted_count = int((result or {}).get("num_deleted", 0))
+            result_label = "deleted" if deleted_count > 0 else "not_found"
+        else:
+            client.collections[collection_name].documents[document_id].delete()
+    except typesense.exceptions.ObjectNotFound:
+        result_label = "not_found"
+    except Exception as e:
+        logger.error(
+            "Failed to delete document %s from %s@%s request_id=%s: %s",
+            document_id,
+            collection_name,
+            target_cluster,
+            request_id,
+            e,
+        )
+        raise
+
+    metrics.DELETED_DOCUMENTS.labels(
+        collection=collection_name,
+        target_cluster=target_cluster,
+        result=result_label,
+    ).inc()
+    logger.info(
+        "Processed delete for document %s from '%s' on cluster '%s' result=%s request_id=%s",
+        document_id,
+        collection_name,
+        target_cluster,
+        result_label,
+        request_id,
+    )
