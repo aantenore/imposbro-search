@@ -105,6 +105,7 @@ The market does validate the problem, but it also narrows the room for different
 43. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
 44. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/data access to collection glob patterns, with server-side enforcement in the Query API.
 45. **Release gate reproducibility**: `make helm` now runs a Python chart validation suite that checks rendered resource counts, Query API/Admin UI Ingress permutations, and negative fail-fast guardrails; Compose Make targets use `.env` when present and `.env.example` as a clean-checkout fallback.
+46. **Local benchmark evidence**: `make benchmark-docker` starts the Docker stack, runs the deployment-agnostic ingest/search benchmark with conservative defaults, writes a JSON artifact under `artifacts/`, and tears the stack down for repeatable local scale evidence.
 
 ### Fixes
 
@@ -161,7 +162,7 @@ The market does validate the problem, but it also narrows the room for different
 ### Remaining Product Risks
 
 - **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
-- **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, Helm autoscaling manifests, and a repeatable Kubernetes benchmark harness; the next credibility step is publishing results from a production-sized Kubernetes run.
+- **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, benchmark artifacts, Helm autoscaling manifests, and a repeatable Kubernetes benchmark harness; the next credibility step is publishing results from a production-sized Kubernetes run.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, production topology, NetworkPolicy, benchmark execution, and disaster-recovery drills now have operator runbooks. A published production-sized benchmark result is still needed before claiming broad enterprise scale proof.
 

@@ -51,6 +51,25 @@ BENCHMARK_OUTPUT_JSON=artifacts/benchmark-baseline.json \
 make benchmark-k8s
 ```
 
+For a local repeatable benchmark against Docker Compose, use:
+
+```bash
+make benchmark-docker
+```
+
+The Docker target starts the stack, runs the same harness with conservative
+defaults, writes `artifacts/benchmark-docker.json`, and tears the stack down.
+Tune it without editing the Makefile:
+
+```bash
+BENCHMARK_DOCKER_DOCUMENTS=2000 \
+BENCHMARK_DOCKER_INGEST_CONCURRENCY=32 \
+BENCHMARK_DOCKER_SEARCH_REQUESTS=250 \
+BENCHMARK_DOCKER_SEARCH_CONCURRENCY=16 \
+BENCHMARK_DOCKER_OUTPUT_JSON=artifacts/benchmark-docker-2k.json \
+make benchmark-docker
+```
+
 The harness prints:
 
 - ingest successes, errors, throughput, and request latency p95;
