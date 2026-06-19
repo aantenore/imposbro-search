@@ -76,16 +76,24 @@ def create_state_client() -> typesense.Client:
 def wait_for_typesense() -> typesense.Client:
     """
     Wait for Typesense cluster to be ready and return the client.
-    Uses GET /collections to verify the server responds (works across Typesense versions).
+    Uses GET /collections on every configured node to avoid accepting a partially
+    initialized Raft cluster as ready.
     """
     while True:
         try:
             logger.info("Checking Typesense cluster readiness...")
-            client = create_state_client()
-            # List collections: server must respond; 200 or empty list means ready
-            client.collections.retrieve()
+            node_statuses = FederationService.node_statuses(
+                settings.INTERNAL_STATE_NODES,
+                "8108",
+                settings.INTERNAL_STATE_API_KEY,
+            )
+            failed_nodes = [
+                node for node in node_statuses if node.get("status") != "ok"
+            ]
+            if failed_nodes:
+                raise typesense.exceptions.ServiceUnavailable(str(failed_nodes))
             logger.info("Typesense cluster is ready.")
-            return client
+            return create_state_client()
         except (
             typesense.exceptions.ServiceUnavailable,
             typesense.exceptions.Timeout,
@@ -348,13 +356,54 @@ def _check_typesense_client_ok(client) -> bool:
         return False
 
 
-def _check_data_clusters() -> dict:
-    """Return per-data-cluster readiness without raising."""
-    statuses = {}
+def _single_client_node_status(name: str, client) -> list[dict]:
+    """Fallback node status for tests or legacy clients without stored node config."""
+    return [
+        {
+            "host": name,
+            "status": "ok" if _check_typesense_client_ok(client) else "error",
+        }
+    ]
+
+
+def _check_data_cluster_nodes() -> dict:
+    """Return per-node readiness grouped by data cluster without raising."""
+    node_statuses = {}
     if not federation_service or not hasattr(federation_service, "clients"):
-        return statuses
-    for name, client in federation_service.clients.items():
-        statuses[name] = "ok" if _check_typesense_client_ok(client) else "error"
+        return node_statuses
+
+    clients = getattr(federation_service, "clients", {})
+    clusters_config = getattr(federation_service, "clusters_config", {}) or {}
+    cluster_node_statuses = getattr(
+        federation_service, "cluster_node_statuses", None
+    )
+
+    for name, client in clients.items():
+        if callable(cluster_node_statuses) and name in clusters_config:
+            try:
+                node_statuses[name] = cluster_node_statuses(name)
+            except Exception as exc:
+                node_statuses[name] = [
+                    {
+                        "host": name,
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                ]
+        else:
+            node_statuses[name] = _single_client_node_status(name, client)
+    return node_statuses
+
+
+def _check_data_clusters(data_cluster_nodes: dict) -> dict:
+    """Return aggregate per-data-cluster readiness from node-level statuses."""
+    statuses = {}
+    for name, nodes in data_cluster_nodes.items():
+        statuses[name] = (
+            "ok"
+            if nodes and all(node.get("status") == "ok" for node in nodes)
+            else "error"
+        )
     return statuses
 
 
@@ -383,8 +432,10 @@ def _build_health_payload() -> dict:
         clusters = 0
         collections = 0
     try:
-        data_clusters = _check_data_clusters()
+        data_cluster_nodes = _check_data_cluster_nodes()
+        data_clusters = _check_data_clusters(data_cluster_nodes)
     except Exception:
+        data_cluster_nodes = {}
         data_clusters = {}
 
     data_clusters_ready = bool(data_clusters) and all(
@@ -403,6 +454,7 @@ def _build_health_payload() -> dict:
         "redis": "ok" if redis_ok else "error",
         "kafka": "ok" if kafka_ok else "error",
         "data_clusters": data_clusters,
+        "data_cluster_nodes": data_cluster_nodes,
     }
 
 

@@ -295,7 +295,11 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `INTERNAL_STATE_API_KEY` | API key for internal cluster |
 | `DEFAULT_DATA_CLUSTER_NODES` | Default federated cluster nodes |
 | `DEFAULT_DATA_CLUSTER_API_KEY` | API key for default cluster |
+| `DEFAULT_DATA2_CLUSTER_NODES` | Optional second federated cluster nodes |
+| `DEFAULT_DATA2_CLUSTER_API_KEY` | API key for optional second cluster |
 | `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
+| `COMPOSE_SUBNET` | Local Docker Compose subnet used for stable Typesense Raft peer IPs |
+| `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
