@@ -149,10 +149,20 @@ monitoring:
       release: prometheus
 ```
 
-The default rules cover Query API 5xx rate, Query API p95 latency, indexing DLQ
-messages, indexing retry bursts, and indexing workers with no loaded data
-clusters. Tune thresholds per environment; production alert thresholds should
-be stricter than local Docker smoke expectations.
+The default rules cover Query API 5xx rate, Query API p95 latency, rate-limit
+blocks, rate-limit backend errors, indexing DLQ messages, indexing retry bursts,
+and indexing workers with no loaded data clusters. Tune thresholds per
+environment; production alert thresholds should be stricter than local Docker
+smoke expectations.
+
+For public or partner-facing data-plane traffic, monitor:
+
+- `query_api_rate_limit_checks_total{result="blocked"}` for clients exceeding
+  search or ingest budgets.
+- `query_api_rate_limit_backend_errors_total` for Redis-backed limiter outages.
+  Decide per environment whether `RATE_LIMIT_FAIL_CLOSED=true` is appropriate.
+  Fail-open preserves traffic during Redis incidents; fail-closed preserves
+  abuse protection at the cost of returning 503 when the limiter is unavailable.
 
 ## Release Verification
 

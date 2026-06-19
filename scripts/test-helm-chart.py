@@ -123,6 +123,8 @@ def main() -> None:
     require_contains(manifest, "api.imposbro.example.com")
     require_contains(manifest, "admin.imposbro.example.com")
     require_contains(manifest, "RATE_LIMIT_ENABLED")
+    require_contains(manifest, "ImposbroQueryApiRateLimitBlocked")
+    require_contains(manifest, "query_api_rate_limit_backend_errors_total")
     print(f"Rendered counts: {counts}")
 
     print("==> Helm render: query-api ingress only")

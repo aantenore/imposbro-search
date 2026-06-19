@@ -107,6 +107,7 @@ The market does validate the problem, but it also narrows the room for different
 45. **Release gate reproducibility**: `make helm` now runs a Python chart validation suite that checks rendered resource counts, Query API/Admin UI Ingress permutations, and negative fail-fast guardrails; Compose Make targets use `.env` when present and `.env.example` as a clean-checkout fallback.
 46. **Local benchmark evidence**: `make benchmark-docker` starts the Docker stack, runs the deployment-agnostic ingest/search benchmark with conservative defaults, writes a JSON artifact under `artifacts/`, and tears the stack down for repeatable local scale evidence.
 47. **Data-plane abuse control**: Query API can now enforce optional fixed-window search and ingest rate limits by authenticated actor and collection, using Redis counters for multi-replica deployments and memory counters for local/test runs.
+48. **Rate-limit observability**: Query API now exports low-cardinality Prometheus metrics for allowed/blocked rate-limit decisions and backend failures; Helm renders alert rules and Grafana shows rate-limit blocks/errors.
 
 ### Fixes
 
@@ -163,7 +164,7 @@ The market does validate the problem, but it also narrows the room for different
 ### Remaining Product Risks
 
 - **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
-- **Traffic abuse protection**: Optional actor-scoped data-plane rate limits now protect search and ingest paths; production operators still need environment-specific budgets and gateway/WAF policy for public exposure.
+- **Traffic abuse protection**: Optional actor-scoped data-plane rate limits now protect search and ingest paths with Prometheus/Grafana visibility; production operators still need environment-specific budgets and gateway/WAF policy for public exposure.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, benchmark artifacts, Helm autoscaling manifests, and a repeatable Kubernetes benchmark harness; the next credibility step is publishing results from a production-sized Kubernetes run.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, production topology, NetworkPolicy, benchmark execution, and disaster-recovery drills now have operator runbooks. A published production-sized benchmark result is still needed before claiming broad enterprise scale proof.

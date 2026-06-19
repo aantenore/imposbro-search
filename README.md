@@ -370,7 +370,11 @@ Rate limiting is optional and config-driven. When `RATE_LIMIT_ENABLED=true`,
 `/search/*` and `/ingest/*` are limited separately by authenticated actor
 (hashed API-key actor or OIDC actor) and collection. In unauthenticated local
 development, the fallback identity is the client IP. Use `RATE_LIMIT_BACKEND=redis`
-for any replicated Query API deployment so all pods share counters.
+for any replicated Query API deployment so all pods share counters. Query API
+exports `query_api_rate_limit_checks_total` and
+`query_api_rate_limit_backend_errors_total` so Prometheus/Grafana can track
+allowed requests, blocked requests, and backend failures without exposing actors,
+API keys, IPs, or raw queries in metric labels.
 
 Example collection-scoped API key:
 
@@ -641,6 +645,7 @@ indexingService:
 * [x] Admin UI OIDC Authorization Code + PKCE login/session flow
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
 * [x] Configurable data-plane rate limiting for search and ingest with Redis-backed multi-replica counters
+* [x] Rate-limit Prometheus metrics, Grafana panels, and PrometheusRule alerts for blocked traffic and backend failures
 * [x] Kubernetes ingest/search benchmark harness with JSON output and configurable SLO thresholds
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
 * [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting

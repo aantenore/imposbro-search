@@ -27,6 +27,16 @@ def test_search_rate_limit_returns_429_after_configured_budget(client, monkeypat
     assert second.headers["x-ratelimit-remaining"] == "0"
     assert int(second.headers["retry-after"]) >= 1
 
+    metrics = client.get("/metrics").text
+    assert (
+        'query_api_rate_limit_checks_total{action="search",collection="products",result="allowed"}'
+        in metrics
+    )
+    assert (
+        'query_api_rate_limit_checks_total{action="search",collection="products",result="blocked"}'
+        in metrics
+    )
+
 
 def test_ingest_rate_limit_returns_429_after_configured_budget(client, monkeypatch):
     """Ingest endpoints are limited independently from search."""
@@ -95,6 +105,10 @@ def test_rate_limit_fail_open_when_backend_unavailable(client, monkeypatch):
     r = client.get("/search/products?q=test&query_by=name")
 
     assert r.status_code == 404
+    assert (
+        'query_api_rate_limit_backend_errors_total{action="search",backend="redis",mode="fail_open"}'
+        in client.get("/metrics").text
+    )
 
 
 def test_rate_limit_can_fail_closed_when_backend_unavailable(client, monkeypatch):
@@ -111,3 +125,7 @@ def test_rate_limit_can_fail_closed_when_backend_unavailable(client, monkeypatch
 
     assert r.status_code == 503
     assert r.json()["detail"] == "Rate-limit backend unavailable"
+    assert (
+        'query_api_rate_limit_backend_errors_total{action="search",backend="redis",mode="fail_closed"}'
+        in client.get("/metrics").text
+    )
