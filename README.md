@@ -541,7 +541,8 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 ### Step 2: Configure and Deploy the Helm Chart
 
 1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, and `ADMIN_UI_SESSION_SECRET`.
-    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
+    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
+    Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
     helm install imposbro-release ./helm -f production-values.yaml
@@ -627,6 +628,7 @@ indexingService:
 * [x] Admin UI OIDC Authorization Code + PKCE login/session flow
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
 * [x] Kubernetes ingest/search benchmark harness with JSON output and configurable SLO thresholds
+* [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
 
 ### 🚧 Future
 
@@ -686,6 +688,7 @@ Both `make test` and `npm run test` run the Query API and indexing service pytes
 ## 📐 Patterns & documentation
 
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to run tests, code style, and PR process.
+- **[docs/RUNBOOK_PRODUCTION.md](docs/RUNBOOK_PRODUCTION.md)** – Production topology, NetworkPolicy, deployment checklist, and disaster-recovery drills.
 - **[docs/RUNBOOK_SCALING.md](docs/RUNBOOK_SCALING.md)** – Horizontal scaling, lag budget, rolling restart, rollback, and incident checks.
 - **[docs/RUNBOOK_BENCHMARKING.md](docs/RUNBOOK_BENCHMARKING.md)** – Kubernetes ingest/search benchmark, JSON artifacts, and release SLO examples.
 - **[docs/PATTERNS_AND_PRACTICES.md](docs/PATTERNS_AND_PRACTICES.md)** – Architectural patterns, dependency injection, security (API key masking, path validation, CORS), error handling, and checklist for new changes.
