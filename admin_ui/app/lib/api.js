@@ -165,6 +165,14 @@ export const api = {
         },
 
         /**
+         * Search a collection with a JSON body (preferred for vector/hybrid params)
+         */
+        queryAdvanced: (collection, params) => request(`/search/${encodeSegment(collection)}`, {
+            method: 'POST',
+            body: JSON.stringify(params),
+        }),
+
+        /**
          * Ingest a document
          */
         ingest: (collection, document) => request(`/ingest/${encodeSegment(collection)}`, {

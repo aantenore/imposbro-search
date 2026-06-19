@@ -37,6 +37,33 @@ test('search query encodes collection names and query parameters', async () => {
   }
 });
 
+test('advanced search posts a JSON body to the encoded collection path', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ hits: [], found: 0 });
+  };
+
+  try {
+    await api.search.queryAdvanced('products live', {
+      q: '*',
+      vector_query: 'embedding:([0.1,0.2], k:10)',
+      exclude_fields: 'embedding',
+    });
+
+    assert.equal(request.url, '/api/search/products%20live');
+    assert.equal(request.options.method, 'POST');
+    assert.equal(
+      request.options.body,
+      '{"q":"*","vector_query":"embedding:([0.1,0.2], k:10)","exclude_fields":"embedding"}'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('ingest posts a JSON document to the encoded collection path', async () => {
   const originalFetch = globalThis.fetch;
   let request;

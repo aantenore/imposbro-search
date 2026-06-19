@@ -32,6 +32,10 @@ function buildSampleDocument(collectionName, fields) {
     else if (field.type === 'int32' || field.type === 'int64') doc[field.name] = 1;
     else if (field.type === 'int32[]') doc[field.name] = [1];
     else if (field.type === 'float') doc[field.name] = 1.0;
+    else if (field.type === 'float[]') {
+      const dimensions = Number(field.num_dim) || 3;
+      doc[field.name] = Array.from({ length: dimensions }, () => 0.1);
+    }
     else if (field.type === 'bool') doc[field.name] = true;
   });
   return doc;
@@ -43,7 +47,7 @@ function stringifyJson(value) {
 
 function getSearchableFields(fields) {
   return fields
-    .filter((field) => ['string', 'string[]'].includes(field.type))
+    .filter((field) => ['string', 'string[]', 'float[]'].includes(field.type))
     .map((field) => field.name)
     .filter(Boolean);
 }
@@ -60,6 +64,9 @@ function ResultDocument({ hit }) {
           <p className="truncate font-semibold text-foreground">{displayId}</p>
           {hit?.text_match !== undefined && (
             <p className="text-xs text-muted-foreground">text match {hit.text_match}</p>
+          )}
+          {hit?.vector_distance !== undefined && (
+            <p className="text-xs text-muted-foreground">vector distance {hit.vector_distance}</p>
           )}
         </div>
         <StatusBadge variant="info">{entries.length} fields</StatusBadge>
@@ -97,6 +104,12 @@ export default function WorkspacePage() {
     query_by: '',
     filter_by: '',
     sort_by: '',
+    vector_query: '',
+    query_by_weights: '',
+    include_fields: '',
+    exclude_fields: '',
+    remote_embedding_timeout_ms: '',
+    remote_embedding_num_tries: '',
     limit: DEFAULT_LIMIT,
   });
   const [searchResult, setSearchResult] = useState(null);
@@ -217,23 +230,34 @@ export default function WorkspacePage() {
       showError('Select a collection before searching.');
       return;
     }
-    if (!searchParams.q.trim() || !searchParams.query_by.trim()) {
-      showError('Search query and query_by are required.');
+    const hasVectorQuery = Boolean(searchParams.vector_query.trim());
+    if (!searchParams.q.trim() || (!searchParams.query_by.trim() && !hasVectorQuery)) {
+      showError('Search query and query_by or vector_query are required.');
       return;
     }
 
     const params = {
       q: searchParams.q.trim(),
-      query_by: searchParams.query_by.trim(),
       offset: 0,
       limit: searchParams.limit || DEFAULT_LIMIT,
     };
+    if (searchParams.query_by.trim()) params.query_by = searchParams.query_by.trim();
     if (searchParams.filter_by.trim()) params.filter_by = searchParams.filter_by.trim();
     if (searchParams.sort_by.trim()) params.sort_by = searchParams.sort_by.trim();
+    if (searchParams.vector_query.trim()) params.vector_query = searchParams.vector_query.trim();
+    if (searchParams.query_by_weights.trim()) params.query_by_weights = searchParams.query_by_weights.trim();
+    if (searchParams.include_fields.trim()) params.include_fields = searchParams.include_fields.trim();
+    if (searchParams.exclude_fields.trim()) params.exclude_fields = searchParams.exclude_fields.trim();
+    if (searchParams.remote_embedding_timeout_ms) {
+      params.remote_embedding_timeout_ms = Number(searchParams.remote_embedding_timeout_ms);
+    }
+    if (searchParams.remote_embedding_num_tries) {
+      params.remote_embedding_num_tries = Number(searchParams.remote_embedding_num_tries);
+    }
 
     setIsSearching(true);
     try {
-      const result = await api.search.query(selectedCollection, params);
+      const result = await api.search.queryAdvanced(selectedCollection, params);
       setSearchResult(result);
       if (result.partial) {
         showInfo(`Search completed with ${result.failed_clusters?.length || 0} failed cluster(s).`);
@@ -400,11 +424,37 @@ export default function WorkspacePage() {
                     />
                     <Input
                       label="sort_by"
-                      placeholder="rank:desc"
+                      placeholder="rank:desc,_vector_distance:asc"
                       value={searchParams.sort_by}
                       onChange={handleSearchParamChange('sort_by')}
                     />
+                    <Input
+                      label="query_by_weights"
+                      placeholder="2,1,0"
+                      value={searchParams.query_by_weights}
+                      onChange={handleSearchParamChange('query_by_weights')}
+                    />
+                    <Input
+                      label="include_fields"
+                      placeholder="id,title,brand"
+                      value={searchParams.include_fields}
+                      onChange={handleSearchParamChange('include_fields')}
+                    />
+                    <Input
+                      label="exclude_fields"
+                      placeholder="embedding"
+                      value={searchParams.exclude_fields}
+                      onChange={handleSearchParamChange('exclude_fields')}
+                    />
                   </div>
+                  <Textarea
+                    label="vector_query"
+                    placeholder="embedding:([0.1,0.2,0.3], k:10, alpha: 0.8)"
+                    className="min-h-24 font-mono text-xs leading-relaxed"
+                    value={searchParams.vector_query}
+                    onChange={handleSearchParamChange('vector_query')}
+                    spellCheck={false}
+                  />
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                     <Input
                       className="sm:max-w-32"
@@ -414,6 +464,22 @@ export default function WorkspacePage() {
                       max="250"
                       value={searchParams.limit}
                       onChange={handleSearchParamChange('limit')}
+                    />
+                    <Input
+                      className="sm:max-w-44"
+                      label="Embed timeout ms"
+                      type="number"
+                      min="1"
+                      value={searchParams.remote_embedding_timeout_ms}
+                      onChange={handleSearchParamChange('remote_embedding_timeout_ms')}
+                    />
+                    <Input
+                      className="sm:max-w-36"
+                      label="Embed tries"
+                      type="number"
+                      min="1"
+                      value={searchParams.remote_embedding_num_tries}
+                      onChange={handleSearchParamChange('remote_embedding_num_tries')}
                     />
                     <Button
                       type="submit"

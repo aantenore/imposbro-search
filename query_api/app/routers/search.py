@@ -10,11 +10,12 @@ import logging
 from functools import cmp_to_key
 from fastapi import APIRouter, HTTPException, Query, Depends, Response, Path, Body
 from typing import Dict, Any, Optional, List, Tuple
+from pydantic import ValidationError
 from prometheus_client import Counter
 
 from constants import NAME_PATTERN
 from deps import get_federation_service, get_kafka_service, require_data_api_key
-from models import IngestResponse
+from models import IngestResponse, SearchRequest
 from services import FederationService, KafkaService
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,32 @@ DEEP_PAGINATION_WARNING_PAGE = 10  # Warn user when page exceeds this
 
 SortField = Tuple[str, str]
 
+OPTIONAL_TYPESENSE_SEARCH_PARAMS = (
+    "query_by",
+    "filter_by",
+    "sort_by",
+    "vector_query",
+    "query_by_weights",
+    "include_fields",
+    "exclude_fields",
+    "highlight_fields",
+    "highlight_full_fields",
+    "highlight_start_tag",
+    "highlight_end_tag",
+    "remote_embedding_timeout_ms",
+    "remote_embedding_num_tries",
+    "limit_hits",
+    "search_cutoff_ms",
+    "max_candidates",
+    "exhaustive_search",
+)
 
-def _parse_sort_fields(sort_by: Optional[str]) -> List[SortField]:
+
+def _parse_sort_fields(
+    sort_by: Optional[str],
+    *,
+    has_vector_query: bool = False,
+) -> List[SortField]:
     """
     Parse the subset of Typesense sort expressions that can be merged globally.
 
@@ -65,9 +90,16 @@ def _parse_sort_fields(sort_by: Optional[str]) -> List[SortField]:
         fields.append((name, direction))
 
     if not fields:
+        if has_vector_query:
+            return [("_text_match", "desc"), ("_vector_distance", "asc")]
         return [("_text_match", "desc")]
 
     has_text_match = any(field in {"_text_match", "text_match"} for field, _ in fields)
+    has_vector_distance = any(
+        field in {"_vector_distance", "vector_distance"} for field, _ in fields
+    )
+    if has_vector_query and not has_vector_distance and len(fields) < 3:
+        fields.append(("_vector_distance", "asc"))
     if not has_text_match and len(fields) < 3:
         fields.append(("_text_match", "desc"))
     return fields
@@ -86,6 +118,8 @@ def _get_document_value(document: Dict[str, Any], path: str) -> Any:
 def _hit_sort_value(hit: Dict[str, Any], field: str) -> Any:
     if field in {"_text_match", "text_match"}:
         return hit.get("text_match")
+    if field in {"_vector_distance", "vector_distance"}:
+        return hit.get("vector_distance")
     return _get_document_value(hit.get("document", {}), field)
 
 
@@ -119,6 +153,180 @@ def _compare_hits(left: Dict[str, Any], right: Dict[str, Any], fields: List[Sort
     left_id = str(left.get("document", {}).get("id", ""))
     right_id = str(right.get("document", {}).get("id", ""))
     return (left_id > right_id) - (left_id < right_id)
+
+
+def _build_search_params(request: SearchRequest, total_needed: int) -> Dict[str, Any]:
+    """Build the allowlisted Typesense search params for one cluster request."""
+    params: Dict[str, Any] = {
+        "q": request.q,
+        "page": 1,  # Always fetch from page 1 so the gateway can merge globally.
+        "per_page": total_needed,
+    }
+    for param_name in OPTIONAL_TYPESENSE_SEARCH_PARAMS:
+        value = getattr(request, param_name)
+        if isinstance(value, str):
+            value = value.strip()
+        if value is not None and value != "":
+            params[param_name] = value
+    return params
+
+
+def _execute_typesense_search(
+    client,
+    collection_name: str,
+    search_params: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Execute one Typesense search.
+
+    Vector queries are sent via Typesense Multi Search so large vectors travel in
+    a POST body instead of a query string between the gateway and data cluster.
+    """
+    if search_params.get("vector_query") and hasattr(client, "multi_search"):
+        result = client.multi_search.perform(
+            {"searches": [{"collection": collection_name, **search_params}]}
+        )
+        results = result.get("results", [])
+        return results[0] if results else {"found": 0, "hits": []}
+    return client.collections[collection_name].documents.search(search_params)
+
+
+async def _perform_federated_search(
+    response: Response,
+    collection_name: str,
+    request: SearchRequest,
+    federation: FederationService,
+) -> Dict[str, Any]:
+    """
+    Perform federated scatter-gather search across all relevant clusters.
+
+    Fetches enough hits from each cluster to merge, deduplicate, and paginate in
+    the gateway. Supports keyword, semantic, and vector/hybrid Typesense params.
+    """
+    named_clients = federation.get_named_clients_for_search(collection_name)
+
+    if not named_clients:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Collection '{collection_name}' not found on any registered cluster.",
+        )
+
+    has_vector_query = bool(request.vector_query and request.vector_query.strip())
+    try:
+        sort_fields = _parse_sort_fields(
+            request.sort_by,
+            has_vector_query=has_vector_query,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Cursor-style: use offset/limit when provided; otherwise page/per_page.
+    use_offset = request.offset is not None and request.limit is not None
+    if use_offset:
+        start_idx = request.offset
+        page_size = request.limit
+        total_needed = request.offset + request.limit
+        effective_page = (request.offset // request.limit) + 1
+    else:
+        start_idx = (request.page - 1) * request.per_page
+        page_size = request.per_page
+        total_needed = request.page * request.per_page
+        effective_page = request.page
+
+    if total_needed > MAX_DEEP_PAGINATION_DOCS:
+        total_needed = MAX_DEEP_PAGINATION_DOCS
+        response.headers["X-Pagination-Warning"] = (
+            f"Deep pagination capped at {MAX_DEEP_PAGINATION_DOCS} documents. "
+            "Results may be incomplete for very deep pages."
+        )
+
+    if request.page > DEEP_PAGINATION_WARNING_PAGE:
+        response.headers["X-Pagination-Info"] = (
+            f"Deep pagination (page {request.page}) requires fetching {total_needed} docs "
+            f"from each of {len(named_clients)} clusters. Consider using filters to narrow results."
+        )
+
+    search_params = _build_search_params(request, total_needed)
+
+    async def search_cluster(
+        cluster_name: str, client
+    ) -> Tuple[str, Optional[Dict], Optional[str]]:
+        """Execute search on a single cluster."""
+        try:
+            result = await asyncio.to_thread(
+                _execute_typesense_search,
+                client,
+                collection_name,
+                search_params,
+            )
+            return cluster_name, result, None
+        except Exception as e:
+            logger.warning("Search failed for cluster %s: %s", cluster_name, e)
+            return cluster_name, None, str(e)
+
+    tasks = [
+        search_cluster(cluster_name, client)
+        for cluster_name, client in named_clients
+    ]
+    results_list = await asyncio.gather(*tasks)
+
+    all_hits: List[Dict] = []
+    total_found = 0
+    successful_clusters = 0
+    failed_clusters: List[str] = []
+
+    for cluster_name, result, _error in results_list:
+        if result is not None:
+            all_hits.extend(result.get("hits", []))
+            total_found += result.get("found", 0)
+            successful_clusters += 1
+        else:
+            failed_clusters.append(cluster_name)
+
+    if successful_clusters == 0:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Search failed on all {len(named_clients)} cluster(s) for "
+                f"collection '{collection_name}'."
+            ),
+        )
+
+    unique_hits_map: Dict[str, Dict] = {}
+    for hit in all_hits:
+        doc_id = hit.get("document", {}).get("id")
+        if not doc_id:
+            continue
+        existing_hit = unique_hits_map.get(doc_id)
+        if existing_hit is None or _compare_hits(hit, existing_hit, sort_fields) < 0:
+            unique_hits_map[doc_id] = hit
+
+    sorted_hits = sorted(
+        unique_hits_map.values(),
+        key=cmp_to_key(lambda left, right: _compare_hits(left, right, sort_fields)),
+    )
+
+    end_idx = start_idx + page_size
+    page_hits = sorted_hits[start_idx:end_idx]
+    has_more = end_idx < len(sorted_hits)
+    next_offset = request.offset + request.limit if (use_offset and has_more) else None
+
+    out = {
+        "found": total_found,
+        "page": effective_page,
+        "per_page": page_size,
+        "hits": page_hits,
+        "out_of": len(sorted_hits),
+        "clusters_queried": len(named_clients),
+        "clusters_responded": successful_clusters,
+        "failed_clusters": failed_clusters,
+        "partial": bool(failed_clusters),
+        "has_more": has_more,
+    }
+    if use_offset:
+        out["offset"] = request.offset
+        out["next_offset"] = next_offset
+    return out
 
 
 @router.post(
@@ -187,9 +395,17 @@ async def search(
     response: Response,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     q: str = Query(..., min_length=1, description="Search query"),
-    query_by: str = Query(..., description="Comma-separated fields to search"),
+    query_by: Optional[str] = Query(None, description="Comma-separated fields to search"),
     filter_by: Optional[str] = Query(None, description="Filter expression"),
     sort_by: Optional[str] = Query(None, description="Sort expression"),
+    vector_query: Optional[str] = Query(None, description="Typesense vector_query"),
+    query_by_weights: Optional[str] = Query(None, description="Typesense query_by_weights"),
+    include_fields: Optional[str] = Query(None, description="Fields to include"),
+    exclude_fields: Optional[str] = Query(None, description="Fields to exclude"),
+    highlight_fields: Optional[str] = Query(None, description="Fields to highlight"),
+    highlight_full_fields: Optional[str] = Query(None, description="Fields to fully highlight"),
+    remote_embedding_timeout_ms: Optional[int] = Query(None, ge=1),
+    remote_embedding_num_tries: Optional[int] = Query(None, ge=1),
     page: int = Query(1, ge=1, description="Page number (ignored if offset is set)"),
     per_page: int = Query(10, ge=1, le=250, description="Results per page"),
     offset: Optional[int] = Query(None, ge=0, description="Cursor-style offset (use with limit for deep pagination)"),
@@ -222,139 +438,55 @@ async def search(
     Returns:
         Merged search results from all clusters
     """
-    named_clients = federation.get_named_clients_for_search(collection_name)
-
-    if not named_clients:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Collection '{collection_name}' not found on any registered cluster.",
-        )
-
     try:
-        sort_fields = _parse_sort_fields(sort_by)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # Cursor-style: use offset/limit when provided; otherwise page/per_page
-    use_offset = offset is not None and limit is not None
-    if use_offset:
-        start_idx = offset
-        page_size = limit
-        total_needed = offset + limit
-        effective_page = (offset // limit) + 1
-    else:
-        start_idx = (page - 1) * per_page
-        page_size = per_page
-        total_needed = page * per_page
-        effective_page = page
-
-    # Deep pagination: fetch enough from each cluster to cover requested range
-
-    # Cap to prevent memory issues
-    if total_needed > MAX_DEEP_PAGINATION_DOCS:
-        total_needed = MAX_DEEP_PAGINATION_DOCS
-        response.headers["X-Pagination-Warning"] = (
-            f"Deep pagination capped at {MAX_DEEP_PAGINATION_DOCS} documents. "
-            "Results may be incomplete for very deep pages."
+        request = SearchRequest(
+            q=q,
+            query_by=query_by,
+            filter_by=filter_by,
+            sort_by=sort_by,
+            vector_query=vector_query,
+            query_by_weights=query_by_weights,
+            include_fields=include_fields,
+            exclude_fields=exclude_fields,
+            highlight_fields=highlight_fields,
+            highlight_full_fields=highlight_full_fields,
+            remote_embedding_timeout_ms=remote_embedding_timeout_ms,
+            remote_embedding_num_tries=remote_embedding_num_tries,
+            page=page,
+            per_page=per_page,
+            offset=offset,
+            limit=limit,
         )
-
-    # Add warning header for deep pagination
-    if page > DEEP_PAGINATION_WARNING_PAGE:
-        response.headers["X-Pagination-Info"] = (
-            f"Deep pagination (page {page}) requires fetching {total_needed} docs "
-            f"from each of {len(named_clients)} clusters. Consider using filters to narrow results."
-        )
-
-    # Build search parameters - fetch all needed docs from each cluster
-    search_params = {
-        "q": q,
-        "query_by": query_by,
-        "page": 1,  # Always fetch from page 1
-        "per_page": total_needed,  # Fetch enough to cover requested page
-    }
-    if filter_by:
-        search_params["filter_by"] = filter_by
-    if sort_by:
-        search_params["sort_by"] = sort_by
-
-    async def search_cluster(
-        cluster_name: str, client
-    ) -> Tuple[str, Optional[Dict], Optional[str]]:
-        """Execute search on a single cluster."""
-        try:
-            result = await asyncio.to_thread(
-                client.collections[collection_name].documents.search, search_params
-            )
-            return cluster_name, result, None
-        except Exception as e:
-            logger.warning("Search failed for cluster %s: %s", cluster_name, e)
-            return cluster_name, None, str(e)
-
-    # Scatter: Execute searches in parallel across all clusters
-    tasks = [
-        search_cluster(cluster_name, client)
-        for cluster_name, client in named_clients
-    ]
-    results_list = await asyncio.gather(*tasks)
-
-    # Gather: Collect all hits from successful responses
-    all_hits: List[Dict] = []
-    total_found = 0
-    successful_clusters = 0
-    failed_clusters: List[str] = []
-
-    for cluster_name, result, _error in results_list:
-        if result is not None:
-            all_hits.extend(result.get("hits", []))
-            total_found += result.get("found", 0)
-            successful_clusters += 1
-        else:
-            failed_clusters.append(cluster_name)
-
-    if successful_clusters == 0:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Search failed on all {len(named_clients)} cluster(s) for "
-                f"collection '{collection_name}'."
-            ),
-        )
-
-    # Merge: Deduplicate by document ID using the same comparator used globally.
-    unique_hits_map: Dict[str, Dict] = {}
-    for hit in all_hits:
-        doc_id = hit.get("document", {}).get("id")
-        if not doc_id:
-            continue
-        existing_hit = unique_hits_map.get(doc_id)
-        if existing_hit is None or _compare_hits(hit, existing_hit, sort_fields) < 0:
-            unique_hits_map[doc_id] = hit
-
-    # Sort: Re-rank all unique hits with Typesense-compatible simple sort fields.
-    sorted_hits = sorted(
-        unique_hits_map.values(),
-        key=cmp_to_key(lambda left, right: _compare_hits(left, right, sort_fields)),
+    except ValidationError as exc:
+        message = exc.errors()[0].get("msg", str(exc)) if exc.errors() else str(exc)
+        raise HTTPException(status_code=400, detail=message)
+    return await _perform_federated_search(
+        response,
+        collection_name,
+        request,
+        federation,
     )
 
-    # Slice: Return only the requested page or offset window
-    end_idx = start_idx + page_size
-    page_hits = sorted_hits[start_idx:end_idx]
-    has_more = end_idx < len(sorted_hits)
-    next_offset = offset + limit if (use_offset and has_more) else None
 
-    out = {
-        "found": total_found,
-        "page": effective_page,
-        "per_page": page_size,
-        "hits": page_hits,
-        "out_of": len(sorted_hits),
-        "clusters_queried": len(named_clients),
-        "clusters_responded": successful_clusters,
-        "failed_clusters": failed_clusters,
-        "partial": bool(failed_clusters),
-        "has_more": has_more,
-    }
-    if use_offset:
-        out["offset"] = offset
-        out["next_offset"] = next_offset
-    return out
+@router.post(
+    "/search/{collection_name}",
+    summary="Federated search with JSON body",
+)
+async def search_with_body(
+    response: Response,
+    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
+    request: SearchRequest = Body(...),
+    federation: FederationService = Depends(get_federation_service),
+) -> Dict[str, Any]:
+    """
+    Perform federated search with a JSON payload.
+
+    Prefer this endpoint for semantic, vector, or hybrid searches where
+    `vector_query` can be too long or too sensitive for URL query strings.
+    """
+    return await _perform_federated_search(
+        response,
+        collection_name,
+        request,
+        federation,
+    )

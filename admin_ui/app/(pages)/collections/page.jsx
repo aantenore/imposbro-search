@@ -7,7 +7,7 @@ import { useNotification, Notification } from '../../hooks/useNotification';
 import { ConfirmationModal } from '../../components/ui';
 import Card from '../../components/ui/Card';
 import Button, { IconButton } from '../../components/ui/Button';
-import Input, { Select, Checkbox } from '../../components/ui/Input';
+import Input, { Select, Checkbox, Textarea } from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import StatusBadge from '../../components/ui/StatusBadge';
 import EmptyState from '../../components/ui/EmptyState';
@@ -20,6 +20,7 @@ const FIELD_TYPES = [
     { value: 'int32', label: 'Integer (32-bit)' },
     { value: 'int64', label: 'Integer (64-bit)' },
     { value: 'float', label: 'Float' },
+    { value: 'float[]', label: 'Float Array / Vector' },
     { value: 'bool', label: 'Boolean' },
     { value: 'string[]', label: 'String Array' },
     { value: 'int32[]', label: 'Integer Array' },
@@ -62,6 +63,14 @@ export default function CollectionsPage() {
         const values = [...newCollection.fields];
         const { name, type, checked, value } = event.target;
         values[index][name] = type === 'checkbox' ? checked : value;
+        if (name === 'type') {
+            if (value === 'float[]') {
+                values[index].facet = false;
+            } else {
+                delete values[index].num_dim;
+                delete values[index].embed_json;
+            }
+        }
         setNewCollection(prev => ({ ...prev, fields: values }));
     };
 
@@ -82,9 +91,28 @@ export default function CollectionsPage() {
     const handleCreate = async (e) => {
         e.preventDefault();
 
+        let fields;
+        try {
+            fields = newCollection.fields
+                .filter(f => f.name.trim())
+                .map(({ embed_json, num_dim, ...field }) => {
+                    const nextField = { ...field };
+                    if (field.type === 'float[]') {
+                        if (num_dim) nextField.num_dim = Number(num_dim);
+                        if (embed_json?.trim()) {
+                            nextField.embed = JSON.parse(embed_json);
+                        }
+                    }
+                    return nextField;
+                });
+        } catch (err) {
+            showError(`Invalid embed JSON: ${err.message}`);
+            return;
+        }
+
         const schema = {
             ...newCollection,
-            fields: newCollection.fields.filter(f => f.name.trim())
+            fields,
         };
 
         if (!schema.name.trim()) {
@@ -93,6 +121,13 @@ export default function CollectionsPage() {
         }
         if (schema.fields.length === 0) {
             showError('At least one field is required.');
+            return;
+        }
+        const invalidVectorField = schema.fields.find(
+            (field) => field.type === 'float[]' && !field.num_dim
+        );
+        if (invalidVectorField) {
+            showError(`Vector field '${invalidVectorField.name}' requires num_dim.`);
             return;
         }
 
@@ -210,36 +245,60 @@ export default function CollectionsPage() {
                             </label>
 
                             {newCollection.fields.map((field, index) => (
-                                <div key={index} className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-3">
-                                    <Input
-                                        className="flex-1"
-                                        placeholder="Field Name"
-                                        name="name"
-                                        value={field.name}
-                                        onChange={(e) => handleFieldChange(index, e)}
-                                    />
-                                    <Select
-                                        className="w-36"
-                                        name="type"
-                                        value={field.type}
-                                        onChange={(e) => handleFieldChange(index, e)}
-                                    >
-                                        {FIELD_TYPES.map(t => (
-                                            <option key={t.value} value={t.value}>{t.label}</option>
-                                        ))}
-                                    </Select>
-                                    <Checkbox
-                                        name="facet"
-                                        checked={field.facet}
-                                        onChange={(e) => handleFieldChange(index, e)}
-                                        label="Facet"
-                                    />
-                                    <IconButton
-                                        variant="danger"
-                                        onClick={() => handleRemoveField(index)}
-                                    >
-                                        <X size={16} />
-                                    </IconButton>
+                                <div key={index} className="mt-2 rounded-lg border border-border bg-muted/30 p-3">
+                                    <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+                                        <Input
+                                            className="flex-1"
+                                            placeholder="Field Name"
+                                            name="name"
+                                            value={field.name}
+                                            onChange={(e) => handleFieldChange(index, e)}
+                                        />
+                                        <Select
+                                            className="xl:w-44"
+                                            name="type"
+                                            value={field.type}
+                                            onChange={(e) => handleFieldChange(index, e)}
+                                        >
+                                            {FIELD_TYPES.map(t => (
+                                                <option key={t.value} value={t.value}>{t.label}</option>
+                                            ))}
+                                        </Select>
+                                        {field.type === 'float[]' && (
+                                            <Input
+                                                className="xl:w-28"
+                                                placeholder="num_dim"
+                                                name="num_dim"
+                                                type="number"
+                                                min="1"
+                                                value={field.num_dim || ''}
+                                                onChange={(e) => handleFieldChange(index, e)}
+                                            />
+                                        )}
+                                        <Checkbox
+                                            name="facet"
+                                            checked={field.facet}
+                                            onChange={(e) => handleFieldChange(index, e)}
+                                            label="Facet"
+                                            disabled={field.type === 'float[]'}
+                                        />
+                                        <IconButton
+                                            variant="danger"
+                                            onClick={() => handleRemoveField(index)}
+                                        >
+                                            <X size={16} />
+                                        </IconButton>
+                                    </div>
+                                    {field.type === 'float[]' && (
+                                        <Textarea
+                                            className="mt-3 min-h-24 font-mono text-xs"
+                                            placeholder='{"from":["title"],"model_config":{"model_name":"ts/all-MiniLM-L12-v2"}}'
+                                            name="embed_json"
+                                            value={field.embed_json || ''}
+                                            onChange={(e) => handleFieldChange(index, e)}
+                                            spellCheck={false}
+                                        />
+                                    )}
                                 </div>
                             ))}
 
