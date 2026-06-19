@@ -3,7 +3,7 @@
 PYTHON ?= python3
 HELM ?= $(shell command -v helm 2>/dev/null || printf "%s/.local/bin/helm" "$$HOME")
 
-.PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-outage smoke-docker smoke-docker-outage ci
+.PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-outage smoke-load smoke-docker smoke-docker-outage smoke-docker-load ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -16,8 +16,10 @@ help:
 	@echo "  make helm           Lint and render Helm chart"
 	@echo "  make smoke-vector   Run vector smoke against an already running stack"
 	@echo "  make smoke-outage   Run partial-outage smoke against an already running stack"
+	@echo "  make smoke-load     Run Kafka/indexing load smoke against an already running stack"
 	@echo "  make smoke-docker   Build/start Docker stack, run vector smoke, then stop it"
 	@echo "  make smoke-docker-outage Build/start Docker stack, run outage smoke, then stop it"
+	@echo "  make smoke-docker-load Build/start Docker stack, run load smoke, then stop it"
 	@echo "  make ci             Run local release gate"
 
 test: test-api test-ui
@@ -47,6 +49,9 @@ smoke-vector:
 smoke-outage:
 	$(PYTHON) scripts/smoke-partial-outage.py
 
+smoke-load:
+	$(PYTHON) scripts/smoke-load.py
+
 smoke-docker:
 	@set -e; \
 	docker compose up -d --build query_api indexing_service admin_ui; \
@@ -58,5 +63,11 @@ smoke-docker-outage:
 	docker compose up -d --build query_api indexing_service admin_ui; \
 	trap 'docker compose down' EXIT; \
 	$(PYTHON) scripts/smoke-partial-outage.py
+
+smoke-docker-load:
+	@set -e; \
+	docker compose up -d --build query_api indexing_service admin_ui; \
+	trap 'docker compose down' EXIT; \
+	$(PYTHON) scripts/smoke-load.py
 
 ci: test lint build-ui compose-config helm
