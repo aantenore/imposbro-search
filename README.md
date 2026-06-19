@@ -24,6 +24,7 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 * **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
 * **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
 * **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, and routing rules from your browser.
+* **Operational Backup/Restore:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows.
 * **Enterprise-Ready:** Includes message ordering via Kafka, monitoring with a full Prometheus + Grafana stack, and a resilient, scalable architecture.
 
 ---
@@ -121,6 +122,7 @@ imposbro-search/
 │           ├── dashboard/
 │           ├── clusters/
 │           ├── collections/
+│           ├── operations/
 │           └── routing/
 │
 ├── indexing_service/             # Kafka consumer service
@@ -212,7 +214,8 @@ docker-compose up --build
 2.  **Register External Clusters:** Go to the **Clusters** page and register two or more external Typesense instances (e.g., `cluster-us`, `cluster-eu`).
 3.  **Create a Collection:** Go to the **Collections** page and create a collection (e.g., `products`).
 4.  **Define Routing Rules:** Go to the **Routing** page to configure how documents are sharded.
-5.  **Ingest Sharded Data:** Use `curl` or any HTTP client to push documents.
+5.  **Back Up Control-Plane State:** Go to the **Operations** page to export a masked snapshot, or a restore-ready snapshot when raw cluster API keys must be included.
+6.  **Ingest Sharded Data:** Use `curl` or any HTTP client to push documents.
 
     ```bash
     # This document might be routed to your 'cluster-us'
@@ -228,7 +231,7 @@ docker-compose up --build
       -d '{"id": "product-456", "name": "European Widget", "region": "EU"}'
     ```
 
-6.  **Run a Federated Search:** This single query will hit all relevant external clusters and merge the results.
+7.  **Run a Federated Search:** This single query will hit all relevant external clusters and merge the results.
     ```bash
     curl -H "X-API-Key: $DATA_API_KEY" \
       "http://localhost:8000/search/products?q=widget&query_by=name"
@@ -360,6 +363,7 @@ curl -X POST "http://localhost:8000/admin/state/import?apply=true" \
 ```
 
 Exports without `include_secrets=true` are safe for inspection but intentionally cannot be applied because cluster API keys are masked.
+The Admin UI **Operations** page exposes the same flow with download, file upload, dry-run validation, and an explicit apply confirmation.
 
 ---
 
@@ -519,6 +523,7 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] Helm Secrets for production (optional `config.useSecret`, Secret template)
 * [x] Document fan-out (routing rule `clusters` for multi-cluster replication)
 * [x] Grafana dashboard panels (documents by collection, error rate, indexing retries, DLQ)
+* [x] Admin UI Operations workflow for masked export, restore-ready export, dry-run import, and apply confirmation
 
 ### 🚧 Future
 

@@ -51,7 +51,7 @@ The market does validate the problem, but it also narrows the room for different
 - **Real federated architecture**: Not a thin wrapper around Typesense—document-level sharding, field-based routing, scatter-gather search, and correct deep pagination across multiple clusters.
 - **Smart Producer**: The Query API decides the target cluster and puts it in the Kafka message; the indexing service executes without recomputing routing. No logic duplication and consistent behaviour.
 - **HA state**: Configuration (clusters, routing) lives in an internal Typesense cluster (Raft), with sync across instances via Redis Pub/Sub. Suited for multi-instance deployment.
-- **Modern, separated stack**: FastAPI, Next.js 14 App Router, Kafka, Redis, Prometheus/Grafana, Helm. Good base for extensions (auth, more clusters, custom metrics).
+- **Modern, separated stack**: FastAPI, Next.js App Router, Kafka, Redis, Prometheus/Grafana, Helm. Good base for extensions (auth, more clusters, custom metrics).
 - **Operational**: docker-compose for development, Helm for Kubernetes, health checks with Redis/Kafka status, Prometheus metrics.
 
 ---
@@ -83,6 +83,7 @@ The market does validate the problem, but it also narrows the room for different
 21. **Partial outage smoke**: `make smoke-docker-outage` stops the secondary data cluster and verifies `/ready` degrades while federated search still returns healthy-cluster hits with `partial: true` and explicit `failed_clusters`.
 22. **Control-plane backup/restore**: Admin API can export state snapshots with masked secrets by default, create restore-ready exports with explicit secret opt-in, dry-run imports, and apply audited state restores.
 23. **Kafka/indexing load smoke**: `make smoke-docker-load` concurrently ingests configurable document batches through Kafka, waits for indexing convergence, and verifies sorted federated search results.
+24. **Admin operations workflow**: Admin UI now exposes backup/restore as an operator workflow with masked export, restore-ready export confirmation, JSON download, file upload, dry-run validation, stale-validation protection, and explicit apply confirmation.
 
 ### Fixes
 
