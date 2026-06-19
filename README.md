@@ -23,7 +23,7 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 * **Resilient Scatter-Gather Search:** Queries are automatically sent to all relevant external clusters, with results merged and re-ranked. The system gracefully handles partial failures if a shard is unavailable.
 * **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
 * **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
-* **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, schema reconciliation, routing rules, operations, and audit visibility from your browser.
+* **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, aliases, schema reconciliation, routing rules, operations, and audit visibility from your browser.
 * **Operational Backup/Restore & Audit:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows. Operators can inspect recent sanitized admin audit events from the Operations page.
 * **Enterprise-Ready:** Includes message ordering via Kafka, monitoring with a full Prometheus + Grafana stack, and a resilient, scalable architecture.
 
@@ -281,6 +281,9 @@ Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_m
 | `/admin/collections/reconcile` | POST | Create any missing desired collection schemas on registered clusters |
 | `/admin/collections/{name}` | GET | Get collection schema |
 | `/admin/collections/{name}` | DELETE | Delete a collection |
+| `/admin/aliases` | GET | List collection aliases on a cluster |
+| `/admin/aliases/{alias}` | PUT | Create or update a collection alias for zero-downtime reindexing |
+| `/admin/aliases/{alias}` | DELETE | Delete a collection alias |
 | `/admin/routing-rules` | POST | Set routing rules for a collection |
 | `/admin/routing-rules/{collection}` | DELETE | Delete routing rules |
 | `/admin/routing-map` | GET | Get complete routing configuration |
@@ -517,7 +520,7 @@ Kubernetes makes it easy to scale your stateless application services.
 ### ✅ Roadmap completed (v4)
 
 * [x] Integration test suite (pytest marker `integration`, run with `INTEGRATION=1`)
-* [x] Collection aliases API for zero-downtime re-indexing (`PUT/GET/DELETE /admin/aliases`)
+* [x] Collection aliases API and Admin UI workflow for zero-downtime re-indexing (`PUT/GET/DELETE /admin/aliases`)
 * [x] Real-time metrics on Admin UI dashboard (polling `/admin/stats` and `/health`)
 * [x] Cursor-style pagination (`offset`/`limit` and `next_offset` on search)
 * [x] Admin API key authentication (optional `ADMIN_API_KEY`, `X-API-Key` / Bearer)

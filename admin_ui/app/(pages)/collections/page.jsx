@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Database, ServerCog } from 'lucide-react';
+import { Plus, X, Trash2, Database, ServerCog, Link2, RefreshCw, Tags } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
 import { ConfirmationModal } from '../../components/ui';
@@ -81,6 +81,15 @@ function ReconcileReport({ result }) {
     );
 }
 
+function normalizeAliases(payload) {
+    const aliases = payload?.aliases?.aliases || payload?.aliases || [];
+    return Array.isArray(aliases) ? aliases : [];
+}
+
+function getAliasName(alias) {
+    return alias.name || alias.alias_name || alias.id || '';
+}
+
 /**
  * Collections Page
  * 
@@ -98,6 +107,13 @@ export default function CollectionsPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isReconciling, setIsReconciling] = useState(false);
     const [reconcileResult, setReconcileResult] = useState(null);
+    const [selectedAliasCluster, setSelectedAliasCluster] = useState('');
+    const [aliases, setAliases] = useState([]);
+    const [aliasName, setAliasName] = useState('');
+    const [aliasTargetCollection, setAliasTargetCollection] = useState('');
+    const [aliasToDelete, setAliasToDelete] = useState(null);
+    const [isLoadingAliases, setIsLoadingAliases] = useState(false);
+    const [isSavingAlias, setIsSavingAlias] = useState(false);
     const { notification, showSuccess, showError } = useNotification();
 
     const fetchRoutingMap = useCallback(async () => {
@@ -105,6 +121,10 @@ export default function CollectionsPage() {
             setIsLoading(true);
             const data = await api.routing.getMap();
             setRoutingMap(data);
+            const clusters = data.clusters || [];
+            setSelectedAliasCluster((previous) => (
+                previous && clusters.includes(previous) ? previous : clusters[0] || ''
+            ));
         } catch (err) {
             showError(err.message);
         } finally {
@@ -115,6 +135,27 @@ export default function CollectionsPage() {
     useEffect(() => {
         fetchRoutingMap();
     }, [fetchRoutingMap]);
+
+    const fetchAliases = useCallback(async (clusterName = selectedAliasCluster) => {
+        if (!clusterName) {
+            setAliases([]);
+            return;
+        }
+        setIsLoadingAliases(true);
+        try {
+            const data = await api.aliases.list({ clusterName });
+            setAliases(normalizeAliases(data));
+        } catch (err) {
+            setAliases([]);
+            showError(err.message);
+        } finally {
+            setIsLoadingAliases(false);
+        }
+    }, [selectedAliasCluster, showError]);
+
+    useEffect(() => {
+        fetchAliases();
+    }, [fetchAliases]);
 
     const handleFieldChange = (index, event) => {
         const values = [...newCollection.fields];
@@ -234,7 +275,49 @@ export default function CollectionsPage() {
         }
     };
 
+    const handleUpsertAlias = async (event) => {
+        event.preventDefault();
+        if (!selectedAliasCluster || !aliasName.trim() || !aliasTargetCollection) {
+            showError('Select a cluster, alias name, and target collection.');
+            return;
+        }
+
+        setIsSavingAlias(true);
+        try {
+            await api.aliases.upsert({
+                aliasName: aliasName.trim(),
+                collectionName: aliasTargetCollection,
+                clusterName: selectedAliasCluster,
+            });
+            showSuccess(`Alias '${aliasName.trim()}' now points to '${aliasTargetCollection}'.`);
+            setAliasName('');
+            fetchAliases(selectedAliasCluster);
+        } catch (err) {
+            showError(err.message);
+        } finally {
+            setIsSavingAlias(false);
+        }
+    };
+
+    const handleDeleteAliasConfirm = async () => {
+        if (!aliasToDelete) return;
+
+        try {
+            await api.aliases.delete({
+                aliasName: aliasToDelete.name,
+                clusterName: aliasToDelete.cluster,
+            });
+            showSuccess(`Alias '${aliasToDelete.name}' deleted.`);
+            fetchAliases(aliasToDelete.cluster);
+        } catch (err) {
+            showError(err.message);
+        } finally {
+            setAliasToDelete(null);
+        }
+    };
+
     const collections = Object.entries(routingMap.collections);
+    const collectionNames = collections.map(([name]) => name);
 
     return (
         <div>
@@ -245,6 +328,16 @@ export default function CollectionsPage() {
                     resourceType="collection"
                     onConfirm={handleDeleteConfirm}
                     onCancel={() => setCollectionToDelete(null)}
+                />
+            )}
+            {aliasToDelete && (
+                <ConfirmationModal
+                    resourceName={aliasToDelete.name}
+                    resourceType="alias"
+                    message={`Delete alias "${aliasToDelete.name}" from "${aliasToDelete.cluster}"?`}
+                    confirmText="Delete Alias"
+                    onConfirm={handleDeleteAliasConfirm}
+                    onCancel={() => setAliasToDelete(null)}
                 />
             )}
 
@@ -414,6 +507,110 @@ export default function CollectionsPage() {
                             Create Collection
                         </Button>
                     </form>
+                </Card>
+            </div>
+
+            <div className="mt-8">
+                <Card
+                    title="Collection Aliases"
+                    action={
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            leftIcon={<RefreshCw size={16} />}
+                            loading={isLoadingAliases}
+                            disabled={!selectedAliasCluster}
+                            onClick={() => fetchAliases(selectedAliasCluster)}
+                        >
+                            Refresh
+                        </Button>
+                    }
+                >
+                    <div className="grid gap-6 lg:grid-cols-[minmax(280px,420px),1fr]">
+                        <form onSubmit={handleUpsertAlias} className="space-y-4">
+                            <Select
+                                label="Cluster"
+                                value={selectedAliasCluster}
+                                onChange={(event) => setSelectedAliasCluster(event.target.value)}
+                            >
+                                {routingMap.clusters.map((cluster) => (
+                                    <option key={cluster} value={cluster}>{cluster}</option>
+                                ))}
+                            </Select>
+                            <Input
+                                label="Alias"
+                                placeholder="products_live"
+                                value={aliasName}
+                                onChange={(event) => setAliasName(event.target.value)}
+                            />
+                            <Select
+                                label="Target collection"
+                                value={aliasTargetCollection}
+                                onChange={(event) => setAliasTargetCollection(event.target.value)}
+                            >
+                                <option value="">Select collection</option>
+                                {collectionNames.map((name) => (
+                                    <option key={name} value={name}>{name}</option>
+                                ))}
+                            </Select>
+                            <Button
+                                type="submit"
+                                leftIcon={<Link2 size={16} />}
+                                loading={isSavingAlias}
+                                disabled={!selectedAliasCluster || collectionNames.length === 0}
+                            >
+                                Save alias
+                            </Button>
+                        </form>
+
+                        <div className="rounded-lg border border-border">
+                            {isLoadingAliases ? (
+                                <div className="p-6 text-center text-muted-foreground">Loading aliases...</div>
+                            ) : aliases.length > 0 ? (
+                                <div className="divide-y divide-border">
+                                    {aliases.map((alias, index) => {
+                                        const name = getAliasName(alias) || `alias-${index}`;
+                                        return (
+                                            <div
+                                                key={`${name}-${alias.collection_name || index}`}
+                                                className="flex items-center justify-between gap-4 p-4"
+                                            >
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <Tags className="h-4 w-4 text-primary" />
+                                                        <span className="font-mono text-sm font-semibold text-foreground">
+                                                            {name}
+                                                        </span>
+                                                    </div>
+                                                    <p className="mt-1 truncate text-sm text-muted-foreground">
+                                                        {alias.collection_name || 'unknown collection'}
+                                                    </p>
+                                                </div>
+                                                <IconButton
+                                                    type="button"
+                                                    variant="danger"
+                                                    onClick={() => setAliasToDelete({
+                                                        name,
+                                                        cluster: selectedAliasCluster,
+                                                    })}
+                                                    title={`Delete alias ${name}`}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </IconButton>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <EmptyState
+                                    icon={<Tags size={44} />}
+                                    title="No aliases on this cluster"
+                                    description="Create an alias to switch search traffic between versioned collections."
+                                />
+                            )}
+                        </div>
+                    </div>
                 </Card>
             </div>
         </div>
