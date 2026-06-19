@@ -1,0 +1,224 @@
+"""Shared helpers for IMPOSBRO runtime smoke tests."""
+
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+VECTOR_DOCS = [
+    {"id": "near", "title": "Near Vector", "embedding": [0.1, 0.2, 0.3]},
+    {"id": "far", "title": "Far Vector", "embedding": [0.9, 0.9, 0.9]},
+]
+
+VECTOR_SEARCH_PAYLOAD = {
+    "q": "*",
+    "vector_query": "embedding:([0.1,0.2,0.3], k:10)",
+    "exclude_fields": "embedding",
+    "offset": 0,
+    "limit": 10,
+}
+
+
+def load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def scope_matches(scopes, required_scope: str) -> bool:
+    normalized = {str(scope).strip().lower() for scope in scopes}
+    if "*" in normalized or required_scope in normalized:
+        return True
+    if required_scope in {"search", "ingest"} and (
+        "data" in normalized or "data:*" in normalized
+    ):
+        return True
+    if required_scope == "admin" and "admin:*" in normalized:
+        return True
+    return False
+
+
+def scoped_key_for(required_scope: str):
+    raw = os.getenv("SCOPED_API_KEYS", "").strip()
+    if not raw:
+        return None
+    try:
+        entries = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("key", "")).strip()
+        scopes = entry.get("scopes", [])
+        if isinstance(scopes, str):
+            scopes = [scope.strip() for scope in scopes.split(",")]
+        if key and isinstance(scopes, list) and scope_matches(scopes, required_scope):
+            return key
+    return None
+
+
+def auth_headers(scope: str):
+    env_key = {
+        "admin": "SMOKE_ADMIN_API_KEY",
+        "search": "SMOKE_SEARCH_API_KEY",
+        "ingest": "SMOKE_INGEST_API_KEY",
+    }[scope]
+    fallback_key = "ADMIN_API_KEY" if scope == "admin" else "DATA_API_KEY"
+    key = os.getenv(env_key) or os.getenv(fallback_key) or scoped_key_for(scope)
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["X-API-Key"] = key
+    return headers
+
+
+def _parse_response_body(raw: bytes):
+    text = raw.decode("utf-8")
+    return json.loads(text) if text else None
+
+
+def request(method, url, payload=None, headers=None, timeout=15, ok_statuses=None):
+    ok_statuses = set(ok_statuses or {200, 201, 202, 204})
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = _parse_response_body(resp.read())
+            if resp.status not in ok_statuses:
+                raise RuntimeError(f"{method} {url} -> {resp.status}: {payload}")
+            return resp.status, payload
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            parsed = _parse_response_body(raw)
+        except json.JSONDecodeError:
+            parsed = raw.decode("utf-8")
+        if exc.code in ok_statuses:
+            return exc.code, parsed
+        raise RuntimeError(f"{method} {url} -> {exc.code}: {parsed}") from exc
+
+
+def wait_for_ready(query_api_url: str, timeout_seconds: int):
+    deadline = time.monotonic() + timeout_seconds
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            status, payload = request("GET", f"{query_api_url}/ready", timeout=5)
+            if status == 200 and payload.get("status") == "healthy":
+                return payload
+            last_error = payload
+        except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
+            last_error = exc
+        time.sleep(1)
+    raise RuntimeError(f"Query API readiness did not converge: {last_error!r}")
+
+
+def wait_for_degraded_ready(query_api_url: str, timeout_seconds: int):
+    deadline = time.monotonic() + timeout_seconds
+    last_payload = None
+    while time.monotonic() < deadline:
+        try:
+            _status, payload = request(
+                "GET",
+                f"{query_api_url}/ready",
+                timeout=5,
+                ok_statuses={200, 503},
+            )
+            last_payload = payload
+            if payload.get("status") == "degraded":
+                return payload
+        except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
+            last_payload = exc
+        time.sleep(1)
+    raise RuntimeError(f"Degraded readiness did not converge: {last_payload!r}")
+
+
+def wait_for_vector_result(
+    query_api_url: str,
+    collection: str,
+    payload,
+    headers,
+    timeout_seconds: int,
+    *,
+    min_hits: int = 2,
+    partial=None,
+):
+    deadline = time.monotonic() + timeout_seconds
+    last_result = None
+    while time.monotonic() < deadline:
+        try:
+            status, result = request(
+                "POST",
+                f"{query_api_url}/search/{collection}",
+                payload,
+                headers,
+                timeout=30,
+            )
+            hits = result.get("hits", [])
+            ids = [hit.get("document", {}).get("id") for hit in hits]
+            last_result = {"status": status, "ids": ids, "result": result}
+            partial_matches = partial is None or result.get("partial") is partial
+            if (
+                status == 200
+                and len(ids) >= min_hits
+                and ids[:1] == ["near"]
+                and partial_matches
+            ):
+                return result
+        except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
+            last_result = exc
+        time.sleep(1)
+    raise RuntimeError(f"Vector search did not converge: {last_result!r}")
+
+
+def vector_ids(result):
+    return [hit.get("document", {}).get("id") for hit in result.get("hits", [])]
+
+
+def create_vector_collection(query_api_url: str, collection: str, admin_headers):
+    schema = {
+        "name": collection,
+        "fields": [
+            {"name": "title", "type": "string", "facet": False},
+            {"name": "embedding", "type": "float[]", "facet": False, "num_dim": 3},
+        ],
+    }
+    return request(
+        "POST",
+        f"{query_api_url}/admin/collections",
+        schema,
+        admin_headers,
+        timeout=30,
+    )
+
+
+def delete_collection(query_api_url: str, collection: str, admin_headers) -> None:
+    request(
+        "DELETE",
+        f"{query_api_url}/admin/collections/{collection}",
+        headers=admin_headers,
+        timeout=30,
+    )
+
+
+def ingest_vector_documents(query_api_url: str, collection: str, ingest_headers):
+    results = []
+    for doc in VECTOR_DOCS:
+        status, ingested = request(
+            "POST",
+            f"{query_api_url}/ingest/{collection}",
+            doc,
+            ingest_headers,
+        )
+        results.append((status, doc["id"], ingested))
+    return results

@@ -510,8 +510,12 @@ make ci
 # Runtime smoke: Docker stack + vector collection + Kafka ingest + federated search + Admin UI proxy
 make smoke-docker
 
+# Partial outage smoke: stop the secondary data cluster and verify degraded readiness + partial search
+make smoke-docker-outage
+
 # Against an already running stack
 make smoke-vector
+make smoke-outage
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.

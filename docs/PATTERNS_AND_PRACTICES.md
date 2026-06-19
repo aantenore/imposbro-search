@@ -51,7 +51,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 - **Smart Producer**: The Query API decides the target cluster for each document and puts it in the Kafka message; the indexing service only executes that decision. Routing logic lives in one place.
 - **Global search merge**: Gateway-side merge must use the same comparator for sorting and deduplication. Complex shard-local sorts should be rejected until the gateway can merge them exactly. Vector-only results should merge on `_vector_distance:asc` when `text_match` is absent.
 - **Advanced search payloads**: Keep `GET /search/{collection}` for simple queries and use `POST /search/{collection}` for semantic/vector/hybrid params so long `vector_query` payloads are not forced into URLs.
-- **Runtime smoke**: Use `make smoke-docker` after changes that affect Docker wiring, collection schemas, Kafka ingest, search merge, vector search, or the Admin UI proxy. Use `make smoke-vector` when the stack is already running.
+- **Runtime smoke**: Use `make smoke-docker` after changes that affect Docker wiring, collection schemas, Kafka ingest, search merge, vector search, or the Admin UI proxy. Use `make smoke-docker-outage` after changes that affect readiness, cluster failure handling, or partial federated results. Use `make smoke-vector` / `make smoke-outage` when the stack is already running.
 
 ---
 
