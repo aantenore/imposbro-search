@@ -181,8 +181,12 @@ def wait_for_vector_result(
     raise RuntimeError(f"Vector search did not converge: {last_result!r}")
 
 
-def vector_ids(result):
+def hit_ids(result):
     return [hit.get("document", {}).get("id") for hit in result.get("hits", [])]
+
+
+def vector_ids(result):
+    return hit_ids(result)
 
 
 def create_vector_collection(query_api_url: str, collection: str, admin_headers):
@@ -193,6 +197,10 @@ def create_vector_collection(query_api_url: str, collection: str, admin_headers)
             {"name": "embedding", "type": "float[]", "facet": False, "num_dim": 3},
         ],
     }
+    return create_collection(query_api_url, schema, admin_headers)
+
+
+def create_collection(query_api_url: str, schema, admin_headers):
     return request(
         "POST",
         f"{query_api_url}/admin/collections",
@@ -222,3 +230,42 @@ def ingest_vector_documents(query_api_url: str, collection: str, ingest_headers)
         )
         results.append((status, doc["id"], ingested))
     return results
+
+
+def wait_for_search_count(
+    query_api_url: str,
+    collection: str,
+    payload,
+    headers,
+    timeout_seconds: int,
+    *,
+    expected_found: int,
+    expected_first_id: str,
+    partial=False,
+):
+    deadline = time.monotonic() + timeout_seconds
+    last_result = None
+    while time.monotonic() < deadline:
+        try:
+            status, result = request(
+                "POST",
+                f"{query_api_url}/search/{collection}",
+                payload,
+                headers,
+                timeout=30,
+            )
+            hits = result.get("hits", [])
+            ids = [hit.get("document", {}).get("id") for hit in hits]
+            last_result = {"status": status, "found": result.get("found"), "ids": ids}
+            partial_matches = result.get("partial") is partial
+            if (
+                status == 200
+                and result.get("found", 0) >= expected_found
+                and ids[:1] == [expected_first_id]
+                and partial_matches
+            ):
+                return result
+        except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
+            last_result = exc
+        time.sleep(1)
+    raise RuntimeError(f"Search count did not converge: {last_result!r}")

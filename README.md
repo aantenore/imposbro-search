@@ -545,9 +545,13 @@ make smoke-docker
 # Partial outage smoke: stop the secondary data cluster and verify degraded readiness + partial search
 make smoke-docker-outage
 
+# Load smoke: concurrent ingest through Kafka and indexed search convergence
+make smoke-docker-load
+
 # Against an already running stack
 make smoke-vector
 make smoke-outage
+make smoke-load
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
