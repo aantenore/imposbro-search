@@ -25,7 +25,7 @@ from typing import Optional
 from unittest.mock import MagicMock
 
 import typesense
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -339,9 +339,27 @@ def _check_kafka_ok() -> bool:
         return False
 
 
-@app.get("/health", tags=["Health"])
-def health():
-    """Detailed health check endpoint with optional dependency status. Never raises."""
+def _check_typesense_client_ok(client) -> bool:
+    """Return whether a Typesense client can list collections."""
+    try:
+        client.collections.retrieve()
+        return True
+    except Exception:
+        return False
+
+
+def _check_data_clusters() -> dict:
+    """Return per-data-cluster readiness without raising."""
+    statuses = {}
+    if not federation_service or not hasattr(federation_service, "clients"):
+        return statuses
+    for name, client in federation_service.clients.items():
+        statuses[name] = "ok" if _check_typesense_client_ok(client) else "error"
+    return statuses
+
+
+def _build_health_payload() -> dict:
+    """Build dependency health payload for /health and /ready."""
     try:
         redis_ok = _check_redis_ok()
     except Exception:
@@ -364,7 +382,19 @@ def health():
     except Exception:
         clusters = 0
         collections = 0
-    status = "healthy" if (clusters > 0 and redis_ok) else "degraded"
+    try:
+        data_clusters = _check_data_clusters()
+    except Exception:
+        data_clusters = {}
+
+    data_clusters_ready = bool(data_clusters) and all(
+        status == "ok" for status in data_clusters.values()
+    )
+    status = (
+        "healthy"
+        if clusters > 0 and redis_ok and kafka_ok and data_clusters_ready
+        else "degraded"
+    )
     return {
         "status": status,
         "clusters": clusters,
@@ -372,4 +402,20 @@ def health():
         "config_sync": "enabled",
         "redis": "ok" if redis_ok else "error",
         "kafka": "ok" if kafka_ok else "error",
+        "data_clusters": data_clusters,
     }
+
+
+@app.get("/health", tags=["Health"])
+def health():
+    """Detailed dependency health. Returns JSON even when degraded."""
+    return _build_health_payload()
+
+
+@app.get("/ready", tags=["Health"])
+def ready(response: Response):
+    """Readiness probe: HTTP 503 until all required dependencies are ready."""
+    payload = _build_health_payload()
+    if payload["status"] != "healthy":
+        response.status_code = 503
+    return payload

@@ -32,3 +32,8 @@ def test_health_with_real_services():
     assert data["config_sync"] == "enabled"
     assert data["redis"] == "ok"
     assert data["kafka"] == "ok"
+    assert all(status == "ok" for status in data["data_clusters"].values())
+
+    ready = requests.get(f"{base}/ready", timeout=5)
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "healthy"
