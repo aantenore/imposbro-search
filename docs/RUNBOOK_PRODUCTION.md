@@ -30,6 +30,46 @@ Keep Admin UI and Query API services as `ClusterIP` behind an authenticated
 Ingress, gateway, or service mesh. Do not expose the Admin UI directly when it
 can inject server-side API keys.
 
+## Ingress
+
+Use chart-managed Ingress when the cluster ingress controller should own TLS
+and HTTP routing:
+
+```yaml
+queryApi:
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: api.example.com
+        path: /
+        pathType: Prefix
+    tls:
+      - secretName: imposbro-query-api-tls
+        hosts:
+          - api.example.com
+
+adminUi:
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: https://auth.example.com/oauth2/auth
+      nginx.ingress.kubernetes.io/auth-signin: https://auth.example.com/oauth2/start
+    hosts:
+      - host: admin.example.com
+        path: /
+        pathType: Prefix
+    tls:
+      - secretName: imposbro-admin-ui-tls
+        hosts:
+          - admin.example.com
+```
+
+If the Admin UI proxy injects server-side keys, configure
+`ADMIN_UI_PROXY_TRUSTED_HEADER` and make the authenticated ingress/gateway set
+that header. Prefer Admin UI OIDC login when the UI is directly operator-facing.
+
 ## Network Policy
 
 NetworkPolicy is opt-in because every cluster has different ingress-controller,
@@ -78,6 +118,8 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
   every exposed control/data-plane path.
 - `ADMIN_UI_PROXY_TRUSTED_HEADER` set when the Admin UI proxy injects server
   keys, with the authenticated ingress/gateway setting that header.
+- Ingress class, TLS secrets, hosts, and authentication annotations configured
+  for every browser-facing endpoint.
 - `CORS_ORIGINS` set to explicit browser origins.
 - HPA enabled for Query API/Admin UI when CPU or memory tracks request load.
 - KEDA enabled for indexing workers when Kafka lag is the scaling signal.

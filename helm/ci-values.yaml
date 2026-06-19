@@ -9,6 +9,19 @@ queryApi:
     minReplicas: 2
     maxReplicas: 4
     targetCPUUtilizationPercentage: 70
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    hosts:
+      - host: api.imposbro.example.com
+        path: /
+        pathType: Prefix
+    tls:
+      - secretName: imposbro-query-api-tls
+        hosts:
+          - api.imposbro.example.com
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
@@ -27,6 +40,20 @@ adminUi:
     minReplicas: 2
     maxReplicas: 3
     targetCPUUtilizationPercentage: 70
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: https://auth.example.com/oauth2/auth
+      nginx.ingress.kubernetes.io/auth-signin: https://auth.example.com/oauth2/start
+    hosts:
+      - host: admin.imposbro.example.com
+        path: /
+        pathType: Prefix
+    tls:
+      - secretName: imposbro-admin-ui-tls
+        hosts:
+          - admin.imposbro.example.com
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname

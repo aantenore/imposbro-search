@@ -541,7 +541,8 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 ### Step 2: Configure and Deploy the Helm Chart
 
 1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, and `ADMIN_UI_SESSION_SECRET`.
-    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
+    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
+    Enable `queryApi.ingress.enabled=true` and/or `adminUi.ingress.enabled=true` when the cluster ingress controller should own TLS and routing. Keep Admin UI behind an authenticated ingress/gateway whenever the proxy injects server-side keys.
     Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
@@ -632,6 +633,7 @@ indexingService:
 * [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting
 * [x] Opt-in Helm PodDisruptionBudget for Query API, Admin UI, and indexing workers
 * [x] Per-workload Helm topology spread constraints for multi-node availability
+* [x] Opt-in Helm Ingress for Query API and Admin UI with TLS, class, host, path, and annotation controls
 
 ### 🚧 Future
 
