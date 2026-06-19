@@ -234,3 +234,17 @@ config:
   # Configure your authenticated ingress/gateway to set this header.
   ADMIN_UI_PROXY_TRUSTED_HEADER: ""
   ADMIN_UI_PROXY_TRUSTED_VALUE: ""
+  # Optional browser OIDC login for the Admin UI. Uses Authorization Code + PKCE
+  # and seals the resulting access token in an HttpOnly session cookie.
+  ADMIN_UI_OIDC_ENABLED: "false"
+  ADMIN_UI_OIDC_ISSUER: ""
+  ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: ""
+  ADMIN_UI_OIDC_TOKEN_ENDPOINT: ""
+  ADMIN_UI_OIDC_CLIENT_ID: ""
+  ADMIN_UI_OIDC_CLIENT_SECRET: ""
+  ADMIN_UI_OIDC_SCOPES: "openid profile email imposbro:admin imposbro:data"
+  ADMIN_UI_OIDC_REDIRECT_URI: ""
+  ADMIN_UI_OIDC_PROMPT: ""
+  ADMIN_UI_SESSION_SECRET: ""
+  ADMIN_UI_SESSION_TTL_SECONDS: "3600"
+  ADMIN_UI_SESSION_COOKIE_NAME: "imposbro_admin_session"
