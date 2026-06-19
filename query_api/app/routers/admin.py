@@ -51,20 +51,48 @@ def _notify_config_change(notifier: SyncConfigNotifier, change_type: str):
         logger.warning("Failed to broadcast config change: %s", e)
 
 
+def _federation_runtime_snapshot(federation: FederationService) -> Dict[str, Any]:
+    """Capture mutable runtime federation state before a control-plane mutation."""
+    return {
+        "clusters_config": copy.deepcopy(federation.clusters_config),
+        "clients": dict(federation.clients),
+        "routing_rules": copy.deepcopy(federation.routing_rules),
+        "collection_schemas": copy.deepcopy(federation.collection_schemas),
+    }
+
+
+def _restore_federation_runtime(
+    federation: FederationService,
+    snapshot: Dict[str, Any],
+) -> None:
+    """Restore mutable runtime federation state after a failed persistence write."""
+    federation.clusters_config.clear()
+    federation.clusters_config.update(snapshot["clusters_config"])
+    federation.clients.clear()
+    federation.clients.update(snapshot["clients"])
+    federation.routing_rules.clear()
+    federation.routing_rules.update(snapshot["routing_rules"])
+    federation.collection_schemas.clear()
+    federation.collection_schemas.update(snapshot["collection_schemas"])
+
+
 def _persist_state_or_500(
     state_manager: StateManager,
     federation: FederationService,
+    rollback_snapshot: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Persist config mutations and fail the request if the control-plane state cannot be saved."""
+    """Persist config mutations, rolling runtime state back if persistence fails."""
     saved = state_manager.save_state(
         federation.clusters_config,
         federation.routing_rules,
         federation.collection_schemas,
     )
     if not saved:
+        if rollback_snapshot is not None:
+            _restore_federation_runtime(federation, rollback_snapshot)
         raise HTTPException(
             status_code=500,
-            detail="Configuration changed in memory but could not be persisted.",
+            detail="Configuration could not be persisted; runtime state was rolled back.",
         )
 
 
@@ -419,6 +447,7 @@ def register_cluster(
     The cluster will be available for routing rules and federated search.
     All API instances will be notified of this change.
     """
+    rollback_snapshot = _federation_runtime_snapshot(federation)
     try:
         federation.register_cluster(
             name=cluster.name,
@@ -433,40 +462,27 @@ def register_cluster(
         created_collections = federation.backfill_collection_schemas(cluster.name)
     except Exception as e:
         logger.error("Failed to backfill schemas on cluster '%s': %s", cluster.name, e)
-        try:
-            federation.unregister_cluster(cluster.name)
-        except Exception as rollback_error:
-            logger.error(
-                "Failed to roll back cluster '%s' after backfill failure: %s",
-                cluster.name,
-                rollback_error,
-            )
+        _restore_federation_runtime(federation, rollback_snapshot)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to backfill collection schemas on cluster '{cluster.name}': {e}",
         )
 
-    try:
-        _persist_state_or_500(state_manager, federation)
-        _notify_config_change(notifier, f"cluster_registered:{cluster.name}")
-        _record_admin_audit(
-            state_manager,
-            request,
-            action="cluster_registered",
-            resource_type="cluster",
-            resource_id=cluster.name,
-            details={
-                "host": cluster.host,
-                "port": cluster.port,
-                "collections_backfilled": len(created_collections),
-            },
-        )
-        return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
-    except Exception as e:
-        logger.error(f"Failed to register cluster: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to create client: {str(e)}"
-        )
+    _persist_state_or_500(state_manager, federation, rollback_snapshot)
+    _notify_config_change(notifier, f"cluster_registered:{cluster.name}")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="cluster_registered",
+        resource_type="cluster",
+        resource_id=cluster.name,
+        details={
+            "host": cluster.host,
+            "port": cluster.port,
+            "collections_backfilled": len(created_collections),
+        },
+    )
+    return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
 
 
 @router.delete("/federation/clusters/{cluster_name}", summary="Remove a cluster")
@@ -488,9 +504,10 @@ def delete_cluster(
             status_code=400, detail="Cannot delete the default cluster."
         )
 
+    rollback_snapshot = _federation_runtime_snapshot(federation)
     try:
         federation.unregister_cluster(cluster_name)
-        _persist_state_or_500(state_manager, federation)
+        _persist_state_or_500(state_manager, federation, rollback_snapshot)
         _notify_config_change(notifier, f"cluster_deleted:{cluster_name}")
         _record_admin_audit(
             state_manager,
@@ -620,6 +637,7 @@ async def create_collection(
                 status_code=500, detail=f"Failed on cluster {name}: {e}"
             )
 
+    rollback_snapshot = _federation_runtime_snapshot(federation)
     tasks = [
         create_on_cluster(client, name) for name, client in federation.clients.items()
     ]
@@ -634,7 +652,7 @@ async def create_collection(
             "default_cluster": "default",
         }
 
-    _persist_state_or_500(state_manager, federation)
+    _persist_state_or_500(state_manager, federation, rollback_snapshot)
     _notify_config_change(notifier, f"collection_created:{schema.name}")
     _record_admin_audit(
         state_manager,
@@ -671,6 +689,7 @@ async def delete_collection(
         except typesense.exceptions.ObjectNotFound:
             pass
 
+    rollback_snapshot = _federation_runtime_snapshot(federation)
     tasks = [delete_on_cluster(client) for client in federation.clients.values()]
     await asyncio.gather(*tasks)
 
@@ -678,7 +697,7 @@ async def delete_collection(
         del federation.routing_rules[collection_name]
     federation.collection_schemas.pop(collection_name, None)
 
-    _persist_state_or_500(state_manager, federation)
+    _persist_state_or_500(state_manager, federation, rollback_snapshot)
     _notify_config_change(notifier, f"collection_deleted:{collection_name}")
     _record_admin_audit(
         state_manager,
@@ -845,6 +864,7 @@ def set_routing_rules(
                 detail=f"Cannot set rules for non-existent collection '{collection_name}'.",
             )
 
+    rollback_snapshot = _federation_runtime_snapshot(federation)
     try:
         rules_list = [r.model_dump(exclude_none=True) for r in rules_config.rules]
         federation.set_routing_rules(
@@ -852,7 +872,7 @@ def set_routing_rules(
             rules=rules_list,
             default_cluster=rules_config.default_cluster,
         )
-        _persist_state_or_500(state_manager, federation)
+        _persist_state_or_500(state_manager, federation, rollback_snapshot)
         _notify_config_change(notifier, f"routing_updated:{collection_name}")
         _record_admin_audit(
             state_manager,
@@ -887,8 +907,9 @@ def delete_routing_rule(
     Delete all routing rules for a collection, reverting to default routing.
     All API instances will be notified.
     """
+    rollback_snapshot = _federation_runtime_snapshot(federation)
     federation.delete_routing_rules(collection_name)
-    _persist_state_or_500(state_manager, federation)
+    _persist_state_or_500(state_manager, federation, rollback_snapshot)
     _notify_config_change(notifier, f"routing_deleted:{collection_name}")
     _record_admin_audit(
         state_manager,

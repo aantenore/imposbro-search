@@ -19,7 +19,7 @@ import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
-import { Checkbox, Textarea } from '../../components/ui/Input';
+import Input, { Checkbox, Select, Textarea } from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import StatusBadge from '../../components/ui/StatusBadge';
 
@@ -165,7 +165,7 @@ function formatAuditTime(entry) {
   return Number.isNaN(date.getTime()) ? entry.timestamp : date.toLocaleString();
 }
 
-function AuditLogCard({ entries, isLoading, onRefresh }) {
+function AuditLogCard({ entries, isLoading, filters, onFiltersChange, onRefresh }) {
   return (
     <Card className="mt-6">
       <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -189,6 +189,44 @@ function AuditLogCard({ entries, isLoading, onRefresh }) {
         </Button>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 grid gap-3 md:grid-cols-[120px,1fr,1fr]">
+          <Input
+            label="Limit"
+            type="number"
+            min="1"
+            max="100"
+            value={filters.limit}
+            onChange={(event) => onFiltersChange({
+              ...filters,
+              limit: Number(event.target.value || 1),
+            })}
+          />
+          <Input
+            label="Action"
+            placeholder="state_imported"
+            value={filters.action}
+            onChange={(event) => onFiltersChange({
+              ...filters,
+              action: event.target.value,
+            })}
+          />
+          <Select
+            label="Resource type"
+            value={filters.resourceType}
+            onChange={(event) => onFiltersChange({
+              ...filters,
+              resourceType: event.target.value,
+            })}
+          >
+            <option value="">Any</option>
+            <option value="cluster">cluster</option>
+            <option value="collection">collection</option>
+            <option value="alias">alias</option>
+            <option value="routing_rule">routing_rule</option>
+            <option value="control_plane_state">control_plane_state</option>
+            <option value="collection_schema">collection_schema</option>
+          </Select>
+        </div>
         {entries.length > 0 ? (
           <div className="divide-y divide-border rounded-lg border border-border">
             {entries.map((entry) => (
@@ -241,20 +279,25 @@ export default function OperationsPage() {
   const [isApplying, setIsApplying] = useState(false);
   const [auditEntries, setAuditEntries] = useState([]);
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+  const [auditFilters, setAuditFilters] = useState({
+    limit: 12,
+    action: '',
+    resourceType: '',
+  });
   const fileInputRef = useRef(null);
   const { notification, showSuccess, showError, showInfo } = useNotification();
 
   const fetchAudit = useCallback(async () => {
     setIsLoadingAudit(true);
     try {
-      const data = await api.audit.list({ limit: 12 });
+      const data = await api.audit.list(auditFilters);
       setAuditEntries(data.entries || []);
     } catch (err) {
       showError(err.message);
     } finally {
       setIsLoadingAudit(false);
     }
-  }, [showError]);
+  }, [auditFilters, showError]);
 
   useEffect(() => {
     fetchAudit();
@@ -576,6 +619,8 @@ export default function OperationsPage() {
       <AuditLogCard
         entries={auditEntries}
         isLoading={isLoadingAudit}
+        filters={auditFilters}
+        onFiltersChange={setAuditFilters}
         onRefresh={fetchAudit}
       />
     </div>

@@ -16,12 +16,21 @@ import { useNotification, Notification } from '../../hooks/useNotification';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
-import Input, { Select, Textarea } from '../../components/ui/Input';
+import Input, { Checkbox, Select, Textarea } from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import StatusBadge from '../../components/ui/StatusBadge';
 
 const DEFAULT_LIMIT = 10;
 const JSON_INDENT = 2;
+const NUMERIC_SEARCH_PARAMS = [
+  'offset',
+  'limit',
+  'remote_embedding_timeout_ms',
+  'remote_embedding_num_tries',
+  'limit_hits',
+  'search_cutoff_ms',
+  'max_candidates',
+];
 
 function buildSampleDocument(collectionName, fields) {
   const doc = { id: `${collectionName || 'doc'}-1` };
@@ -108,8 +117,17 @@ export default function WorkspacePage() {
     query_by_weights: '',
     include_fields: '',
     exclude_fields: '',
+    highlight_fields: '',
+    highlight_full_fields: '',
+    highlight_start_tag: '',
+    highlight_end_tag: '',
     remote_embedding_timeout_ms: '',
     remote_embedding_num_tries: '',
+    limit_hits: '',
+    search_cutoff_ms: '',
+    max_candidates: '',
+    exhaustive_search: false,
+    offset: 0,
     limit: DEFAULT_LIMIT,
   });
   const [searchResult, setSearchResult] = useState(null);
@@ -177,9 +195,14 @@ export default function WorkspacePage() {
   }, [selectedCollection, showError]);
 
   const handleSearchParamChange = (field) => (event) => {
+    const value = field === 'exhaustive_search'
+      ? event.target.checked
+      : event.target.value;
     setSearchParams((previous) => ({
       ...previous,
-      [field]: field === 'limit' ? Number(event.target.value) : event.target.value,
+      [field]: NUMERIC_SEARCH_PARAMS.includes(field) && value !== ''
+        ? Number(value)
+        : value,
     }));
   };
 
@@ -224,8 +247,7 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleSearch = async (event) => {
-    event.preventDefault();
+  const executeSearch = async (offsetOverride = 0) => {
     if (!selectedCollection) {
       showError('Select a collection before searching.');
       return;
@@ -238,7 +260,7 @@ export default function WorkspacePage() {
 
     const params = {
       q: searchParams.q.trim(),
-      offset: 0,
+      offset: offsetOverride,
       limit: searchParams.limit || DEFAULT_LIMIT,
     };
     if (searchParams.query_by.trim()) params.query_by = searchParams.query_by.trim();
@@ -248,17 +270,32 @@ export default function WorkspacePage() {
     if (searchParams.query_by_weights.trim()) params.query_by_weights = searchParams.query_by_weights.trim();
     if (searchParams.include_fields.trim()) params.include_fields = searchParams.include_fields.trim();
     if (searchParams.exclude_fields.trim()) params.exclude_fields = searchParams.exclude_fields.trim();
+    if (searchParams.highlight_fields.trim()) params.highlight_fields = searchParams.highlight_fields.trim();
+    if (searchParams.highlight_full_fields.trim()) {
+      params.highlight_full_fields = searchParams.highlight_full_fields.trim();
+    }
+    if (searchParams.highlight_start_tag.trim()) {
+      params.highlight_start_tag = searchParams.highlight_start_tag.trim();
+    }
+    if (searchParams.highlight_end_tag.trim()) {
+      params.highlight_end_tag = searchParams.highlight_end_tag.trim();
+    }
     if (searchParams.remote_embedding_timeout_ms) {
       params.remote_embedding_timeout_ms = Number(searchParams.remote_embedding_timeout_ms);
     }
     if (searchParams.remote_embedding_num_tries) {
       params.remote_embedding_num_tries = Number(searchParams.remote_embedding_num_tries);
     }
+    if (searchParams.limit_hits) params.limit_hits = Number(searchParams.limit_hits);
+    if (searchParams.search_cutoff_ms) params.search_cutoff_ms = Number(searchParams.search_cutoff_ms);
+    if (searchParams.max_candidates) params.max_candidates = Number(searchParams.max_candidates);
+    if (searchParams.exhaustive_search) params.exhaustive_search = true;
 
     setIsSearching(true);
     try {
       const result = await api.search.queryAdvanced(selectedCollection, params);
       setSearchResult(result);
+      setSearchParams((previous) => ({ ...previous, offset: offsetOverride }));
       if (result.partial) {
         showInfo(`Search completed with ${result.failed_clusters?.length || 0} failed cluster(s).`);
       } else {
@@ -269,6 +306,22 @@ export default function WorkspacePage() {
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const handleSearch = async (event) => {
+    event.preventDefault();
+    await executeSearch(Number(searchParams.offset || 0));
+  };
+
+  const handlePreviousPage = () => {
+    const currentOffset = Number(searchResult?.offset ?? searchParams.offset ?? 0);
+    const pageSize = Number(searchParams.limit || DEFAULT_LIMIT);
+    executeSearch(Math.max(0, currentOffset - pageSize));
+  };
+
+  const handleNextPage = () => {
+    const nextOffset = Number(searchResult?.next_offset);
+    if (Number.isFinite(nextOffset)) executeSearch(nextOffset);
   };
 
   const hasCollections = collections.length > 0;
@@ -446,6 +499,18 @@ export default function WorkspacePage() {
                       value={searchParams.exclude_fields}
                       onChange={handleSearchParamChange('exclude_fields')}
                     />
+                    <Input
+                      label="highlight_fields"
+                      placeholder="title,description"
+                      value={searchParams.highlight_fields}
+                      onChange={handleSearchParamChange('highlight_fields')}
+                    />
+                    <Input
+                      label="highlight_full_fields"
+                      placeholder="description"
+                      value={searchParams.highlight_full_fields}
+                      onChange={handleSearchParamChange('highlight_full_fields')}
+                    />
                   </div>
                   <Textarea
                     label="vector_query"
@@ -455,7 +520,29 @@ export default function WorkspacePage() {
                     onChange={handleSearchParamChange('vector_query')}
                     spellCheck={false}
                   />
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Input
+                      label="highlight_start_tag"
+                      placeholder="<mark>"
+                      value={searchParams.highlight_start_tag}
+                      onChange={handleSearchParamChange('highlight_start_tag')}
+                    />
+                    <Input
+                      label="highlight_end_tag"
+                      placeholder="</mark>"
+                      value={searchParams.highlight_end_tag}
+                      onChange={handleSearchParamChange('highlight_end_tag')}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                    <Input
+                      className="sm:max-w-32"
+                      label="Offset"
+                      type="number"
+                      min="0"
+                      value={searchParams.offset}
+                      onChange={handleSearchParamChange('offset')}
+                    />
                     <Input
                       className="sm:max-w-32"
                       label="Limit"
@@ -481,6 +568,37 @@ export default function WorkspacePage() {
                       value={searchParams.remote_embedding_num_tries}
                       onChange={handleSearchParamChange('remote_embedding_num_tries')}
                     />
+                    <Input
+                      className="sm:max-w-36"
+                      label="limit_hits"
+                      type="number"
+                      min="1"
+                      value={searchParams.limit_hits}
+                      onChange={handleSearchParamChange('limit_hits')}
+                    />
+                    <Input
+                      className="sm:max-w-40"
+                      label="Cutoff ms"
+                      type="number"
+                      min="1"
+                      value={searchParams.search_cutoff_ms}
+                      onChange={handleSearchParamChange('search_cutoff_ms')}
+                    />
+                    <Input
+                      className="sm:max-w-44"
+                      label="Max candidates"
+                      type="number"
+                      min="1"
+                      value={searchParams.max_candidates}
+                      onChange={handleSearchParamChange('max_candidates')}
+                    />
+                    <div className="flex h-10 items-center">
+                      <Checkbox
+                        label="Exhaustive search"
+                        checked={searchParams.exhaustive_search}
+                        onChange={handleSearchParamChange('exhaustive_search')}
+                      />
+                    </div>
                     <Button
                       type="submit"
                       className="sm:ml-auto"
@@ -498,6 +616,8 @@ export default function WorkspacePage() {
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                       <MetadataItem label="Found" value={searchResult.found ?? 0} />
                       <MetadataItem label="Returned" value={hits.length} />
+                      <MetadataItem label="Offset" value={searchResult.offset ?? 0} />
+                      <MetadataItem label="Next" value={searchResult.next_offset ?? 'End'} />
                       <MetadataItem label="Responded" value={`${searchResult.clusters_responded ?? 0}/${searchResult.clusters_queried ?? 0}`} />
                       <MetadataItem
                         label="Partial"
@@ -511,6 +631,25 @@ export default function WorkspacePage() {
                         Failed clusters: {(searchResult.failed_clusters || []).join(', ') || 'unknown'}
                       </div>
                     )}
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handlePreviousPage}
+                        disabled={isSearching || Number(searchResult.offset || 0) <= 0}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="sm:ml-auto"
+                        onClick={handleNextPage}
+                        disabled={isSearching || !searchResult.has_more || searchResult.next_offset === null}
+                      >
+                        Next
+                      </Button>
+                    </div>
                     {hits.length > 0 ? (
                       <div className="space-y-3">
                         {hits.map((hit, index) => (

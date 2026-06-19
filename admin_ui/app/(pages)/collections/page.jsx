@@ -100,6 +100,7 @@ export default function CollectionsPage() {
     const [routingMap, setRoutingMap] = useState({ clusters: [], collections: {} });
     const [newCollection, setNewCollection] = useState({
         name: '',
+        default_sorting_field: '',
         fields: [{ name: '', type: 'string', facet: false }]
     });
     const [collectionToDelete, setCollectionToDelete] = useState(null);
@@ -212,6 +213,9 @@ export default function CollectionsPage() {
             ...newCollection,
             fields,
         };
+        if (!schema.default_sorting_field) {
+            delete schema.default_sorting_field;
+        }
 
         if (!schema.name.trim()) {
             showError('Collection Name is required.');
@@ -228,12 +232,23 @@ export default function CollectionsPage() {
             showError(`Vector field '${invalidVectorField.name}' requires num_dim.`);
             return;
         }
+        if (
+            schema.default_sorting_field &&
+            !schema.fields.some((field) => field.name === schema.default_sorting_field)
+        ) {
+            showError('Default sorting field must be one of the schema fields.');
+            return;
+        }
 
         setIsSubmitting(true);
         try {
             await api.collections.create(schema);
             showSuccess(`Collection '${schema.name}' created successfully on all clusters!`);
-            setNewCollection({ name: '', fields: [{ name: '', type: 'string', facet: false }] });
+            setNewCollection({
+                name: '',
+                default_sorting_field: '',
+                fields: [{ name: '', type: 'string', facet: false }]
+            });
             fetchRoutingMap();
         } catch (err) {
             showError(err.message);
@@ -318,6 +333,9 @@ export default function CollectionsPage() {
 
     const collections = Object.entries(routingMap.collections);
     const collectionNames = collections.map(([name]) => name);
+    const defaultSortCandidates = newCollection.fields.filter(
+        (field) => field.name.trim() && ['int32', 'int64', 'float'].includes(field.type)
+    );
 
     return (
         <div>
@@ -423,6 +441,21 @@ export default function CollectionsPage() {
                                 required
                             />
                         </div>
+                        <Select
+                            label="Default sorting field"
+                            value={newCollection.default_sorting_field}
+                            onChange={(e) => setNewCollection(prev => ({
+                                ...prev,
+                                default_sorting_field: e.target.value,
+                            }))}
+                        >
+                            <option value="">None</option>
+                            {defaultSortCandidates.map((field) => (
+                                <option key={`${field.name}-${field.type}`} value={field.name}>
+                                    {field.name} ({field.type})
+                                </option>
+                            ))}
+                        </Select>
 
                         <div>
                             <label className="mb-2 block text-sm font-medium text-foreground">
@@ -468,6 +501,7 @@ export default function CollectionsPage() {
                                             disabled={field.type === 'float[]'}
                                         />
                                         <IconButton
+                                            type="button"
                                             variant="danger"
                                             onClick={() => handleRemoveField(index)}
                                         >
@@ -488,6 +522,7 @@ export default function CollectionsPage() {
                             ))}
 
                             <Button
+                                type="button"
                                 variant="ghost"
                                 size="sm"
                                 leftIcon={<Plus size={16} />}

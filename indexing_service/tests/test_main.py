@@ -184,6 +184,20 @@ def test_process_message_upserts_to_target_cluster():
     assert sample_value("indexing_documents_indexed_total", labels) == before + 1
 
 
+def test_process_message_without_target_cluster_uses_default_data_cluster():
+    client = FakeTypesenseClient()
+
+    consumer.process_message(
+        {
+            "collection": "products",
+            "document": {"id": "doc-1", "name": "Product"},
+        },
+        {"default-data-cluster": client},
+    )
+
+    assert client.documents.upserted == [{"id": "doc-1", "name": "Product"}]
+
+
 def test_process_message_raises_when_target_cluster_is_missing():
     try:
         consumer.process_message(

@@ -1,3 +1,4 @@
+{{- include "imposbro-search.validateConfig" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -20,3 +21,4 @@ data:
   CORS_ORIGINS: {{ .Values.config.CORS_ORIGINS | quote }}
   ALLOW_UNAUTHENTICATED_ADMIN: {{ .Values.config.ALLOW_UNAUTHENTICATED_ADMIN | quote }}
   ALLOW_UNAUTHENTICATED_DATA: {{ .Values.config.ALLOW_UNAUTHENTICATED_DATA | quote }}
+  ADMIN_UI_PROXY_TRUSTED_HEADER: {{ .Values.config.ADMIN_UI_PROXY_TRUSTED_HEADER | quote }}

@@ -114,3 +114,28 @@ def test_create_client_respects_configured_port(monkeypatch):
         {"host": "node-b", "port": "9109", "protocol": "http"},
     ]
     assert captured["api_key"] == "test-key"
+
+
+def test_register_cluster_rejects_unreachable_declared_nodes(monkeypatch):
+    federation = FederationService()
+
+    monkeypatch.setattr(
+        FederationService,
+        "node_statuses",
+        staticmethod(
+            lambda hosts, port, api_key: [
+                {"host": "node-a", "status": "ok"},
+                {"host": "node-b", "status": "error", "error": "timeout"},
+            ]
+        ),
+    )
+
+    try:
+        federation.register_cluster("cluster-a", "node-a,node-b", 8108, "secret")
+    except ValueError as exc:
+        assert "not reachable" in str(exc)
+    else:
+        raise AssertionError("Expected unreachable cluster registration to fail")
+
+    assert federation.clients == {}
+    assert federation.clusters_config == {}

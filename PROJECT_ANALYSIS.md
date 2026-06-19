@@ -90,6 +90,9 @@ The market does validate the problem, but it also narrows the room for different
 28. **Schema reconciliation workflow**: Admin UI Collections now exposes `POST /admin/collections/reconcile` with a per-cluster created/existing report for restore or cluster-recovery drills.
 29. **Collection aliases workflow**: Admin UI Collections now supports listing, creating/updating, and deleting per-cluster aliases for zero-downtime reindexing.
 30. **Collection aliases smoke**: `make smoke-docker-alias` creates versioned collections, upserts aliases on every data cluster, verifies federated search follows the alias, switches the alias, verifies search follows the new target, and cleans up.
+31. **Remote release gate**: GitHub Actions now runs the API/worker tests, Admin UI tests, lint, production build, Docker Compose config validation, and Helm lint/render on pull requests and pushes to `main`.
+32. **Release hardening**: Admin mutations roll runtime state back when persistence fails, cluster registration probes all declared nodes, search pagination fetches one extra hit for `next_offset`, fan-out search exposes deduplicated counts, legacy worker messages resolve `default` to a real cluster, Compose binds dev ports to localhost, Helm fails on placeholder/mutable images or missing service/secret values, and GitHub has a manual/weekly Docker runtime smoke.
+33. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
 
 ### Fixes
 

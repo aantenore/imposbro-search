@@ -32,7 +32,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Values.indexingService.name }}
-          image: "{{ .Values.indexingService.image }}"
+          image: "{{ include "imposbro-search.requiredImage" (dict "name" "indexingService.image" "value" .Values.indexingService.image) }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:
