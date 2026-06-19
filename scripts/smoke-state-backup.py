@@ -192,15 +192,23 @@ def assert_alias_restored(
     alias: str,
     collection: str,
     cluster: str,
+    timeout_seconds: int,
 ) -> None:
-    payload = list_aliases(query_api_url, headers, cluster)
-    aliases = payload.get("aliases", [])
-    if isinstance(aliases, dict):
-        aliases = aliases.get("aliases", [])
-    for item in aliases:
-        if item.get("name") == alias and item.get("collection_name") == collection:
-            return
-    raise RuntimeError(f"Restored alias {alias} -> {collection} not found: {payload}")
+    deadline = time.monotonic() + timeout_seconds
+    last_payload = None
+    while time.monotonic() < deadline:
+        payload = list_aliases(query_api_url, headers, cluster)
+        last_payload = payload
+        aliases = payload.get("aliases", [])
+        if isinstance(aliases, dict):
+            aliases = aliases.get("aliases", [])
+        for item in aliases:
+            if item.get("name") == alias and item.get("collection_name") == collection:
+                return
+        time.sleep(1)
+    raise RuntimeError(
+        f"Restored alias {alias} -> {collection} did not converge: {last_payload}"
+    )
 
 
 def assert_reconcile_recreated(result, collection: str) -> None:
@@ -348,6 +356,7 @@ def main() -> int:
             alias,
             collection,
             target_cluster,
+            args.timeout_seconds,
         )
         reconcile_result = reconcile_collections(query_api_url, admin_headers)
         assert_reconcile_recreated(reconcile_result, collection)
