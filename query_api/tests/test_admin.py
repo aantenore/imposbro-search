@@ -1,4 +1,5 @@
 """Tests for admin endpoints."""
+import json
 import os
 
 os.environ.setdefault("TESTING", "1")
@@ -15,6 +16,36 @@ def test_admin_requires_api_key_when_configured(client, monkeypatch):
 
     valid = client.get("/admin/stats", headers={"X-API-Key": "admin-secret"})
     assert valid.status_code == 200
+
+
+def test_scoped_admin_key_grants_admin_access(client, monkeypatch):
+    """SCOPED_API_KEYS can grant admin access without the legacy ADMIN_API_KEY."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "operator", "key": "ops-secret", "scopes": ["admin"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_ADMIN", False)
+
+    r = client.get("/admin/stats", headers={"Authorization": "Bearer ops-secret"})
+
+    assert r.status_code == 200
+
+
+def test_scoped_non_admin_key_cannot_access_admin(client, monkeypatch):
+    """Data/search scoped keys are not accepted by admin endpoints."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "reader", "key": "search-secret", "scopes": ["search"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_ADMIN", False)
+
+    r = client.get("/admin/stats", headers={"X-API-Key": "search-secret"})
+
+    assert r.status_code == 401
 
 
 def test_admin_requires_api_key_when_no_dev_bypass(client, monkeypatch):

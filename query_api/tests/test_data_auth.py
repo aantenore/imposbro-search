@@ -1,4 +1,5 @@
 """Tests for data-plane API authentication."""
+import json
 
 
 def test_data_endpoints_require_api_key_when_configured(client, monkeypatch):
@@ -45,3 +46,89 @@ def test_data_endpoints_accept_bearer_token(client, monkeypatch):
     )
 
     assert r.status_code == 404
+
+
+def test_scoped_search_key_cannot_ingest(client, monkeypatch):
+    """A search-scoped key can search but cannot publish ingest messages."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "reader", "key": "search-secret", "scopes": ["search"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+
+    search = client.get(
+        "/search/products?q=test&query_by=name",
+        headers={"X-API-Key": "search-secret"},
+    )
+    ingest = client.post(
+        "/ingest/products",
+        headers={"X-API-Key": "search-secret"},
+        json={"id": "doc-1", "name": "Product"},
+    )
+
+    assert search.status_code == 404
+    assert ingest.status_code == 401
+
+
+def test_scoped_ingest_key_cannot_search(client, monkeypatch):
+    """An ingest-scoped key can ingest but cannot query search endpoints."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "writer", "key": "ingest-secret", "scopes": ["ingest"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+
+    ingest = client.post(
+        "/ingest/products",
+        headers={"X-API-Key": "ingest-secret"},
+        json={"id": "doc-1", "name": "Product"},
+    )
+    search = client.get(
+        "/search/products?q=test&query_by=name",
+        headers={"X-API-Key": "ingest-secret"},
+    )
+
+    assert ingest.status_code == 200
+    assert search.status_code == 401
+
+
+def test_scoped_data_key_grants_search_and_ingest(client, monkeypatch):
+    """The coarse data scope remains available for simple data-plane clients."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "pipeline", "key": "data-secret", "scopes": ["data"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+
+    search = client.get(
+        "/search/products?q=test&query_by=name",
+        headers={"Authorization": "Bearer data-secret"},
+    )
+    ingest = client.post(
+        "/ingest/products",
+        headers={"Authorization": "Bearer data-secret"},
+        json={"id": "doc-1", "name": "Product"},
+    )
+
+    assert search.status_code == 404
+    assert ingest.status_code == 200
+
+
+def test_invalid_scoped_api_keys_configuration_fails_closed(client, monkeypatch):
+    """Malformed scoped key config fails closed instead of opening data endpoints."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", "not-json")
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", True)
+
+    r = client.get("/search/products?q=test&query_by=name")
+
+    assert r.status_code == 500
+    assert "SCOPED_API_KEYS" in r.json().get("detail", "")

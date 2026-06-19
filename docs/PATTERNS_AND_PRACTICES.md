@@ -23,8 +23,9 @@ Dependencies (FederationService, StateManager, KafkaService, SyncConfigNotifier)
 - **API keys**: Never logged in full. The admin endpoint `GET /admin/federation/clusters` returns **masked** API keys (e.g. `****key`); full keys are only sent when registering a cluster (POST body).
 - **Path parameters**: Collection and cluster names are validated with `Path(..., pattern=NAME_PATTERN)` so only alphanumeric, hyphen, and underscore are allowed (Typesense-compatible, reduces injection risk).
 - **CORS**: Enabled only when `CORS_ORIGINS` is set; use explicit origins in production (e.g. `https://admin.example.com`).
-- **Admin API key**: If `ADMIN_API_KEY` is set, all `/admin/*` requests must include `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, admin endpoints are available only if `ALLOW_UNAUTHENTICATED_ADMIN=true`.
-- **Data-plane API key**: If `DATA_API_KEY` is set, `/ingest/*` and `/search/*` require `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, data endpoints are available only if `ALLOW_UNAUTHENTICATED_DATA=true`.
+- **Admin API key**: If `ADMIN_API_KEY` is set, all `/admin/*` requests must include `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, admin endpoints are available only if `ALLOW_UNAUTHENTICATED_ADMIN=true` or a `SCOPED_API_KEYS` entry grants `admin`.
+- **Data-plane API key**: If `DATA_API_KEY` is set, `/ingest/*` and `/search/*` require `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, data endpoints are available only if `ALLOW_UNAUTHENTICATED_DATA=true` or `SCOPED_API_KEYS` grants the required endpoint scope.
+- **Scoped API keys**: Prefer `SCOPED_API_KEYS` for least-privilege clients. Supported scopes are `admin`, `search`, `ingest`, coarse `data` (search+ingest), and `*`. Apply endpoint-specific dependencies (`require_search_api_key`, `require_ingest_api_key`) instead of broad router-level data-plane auth when adding new routes.
 - **Audit log**: Successful admin mutations are recorded in `_imposbro_audit_log` with hashed actor identifiers and safe metadata only.
 
 ### 1.4 Error handling and HTTP status

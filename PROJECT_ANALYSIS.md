@@ -78,6 +78,7 @@ The market does validate the problem, but it also narrows the room for different
 16. **Typesense readiness hardening**: `/ready` now verifies every declared node in every data cluster and reports `data_cluster_nodes`; Compose pins Typesense node IPs so Raft peer state survives `docker compose down/up` with volumes.
 17. **Runtime validation**: Docker smoke covered create collection, Kafka ingest, federated search with both clusters responding, and a down/up restart with persisted volumes.
 18. **Hybrid/vector search path**: `/search/{collection}` now supports a JSON body for semantic/vector/hybrid Typesense params, including `vector_query`, embedding retry controls, and global merge by `_vector_distance`.
+19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, or `*` access while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
 
 ### Fixes
 
@@ -132,7 +133,7 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Enterprise access model**: API keys are enough for a self-hosted MVP; public or multi-team deployments still need OAuth2/OIDC, RBAC, and per-tenant/admin scopes.
+- **Enterprise identity model**: Scoped API keys reduce blast radius for self-hosted clients; public or multi-team deployments still need OAuth2/OIDC, tenant-aware RBAC, and admin role mapping.
 - **Operational scale proof**: local Docker and unit gates are strong; the next credibility step is a repeatable multi-instance/load test with Kafka lag, partial cluster outage, and rolling restart scenarios.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, disaster recovery, backup/restore, and production network topology need operator-grade docs before calling this “enterprise-ready.”
