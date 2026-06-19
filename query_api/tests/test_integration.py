@@ -27,5 +27,8 @@ def test_health_with_real_services():
     r = requests.get(f"{base}/health", timeout=5)
     assert r.status_code == 200
     data = r.json()
-    assert "status" in data
-    assert "service" in data
+    assert data["status"] == "healthy"
+    assert data["clusters"] >= 1
+    assert data["config_sync"] == "enabled"
+    assert data["redis"] == "ok"
+    assert data["kafka"] == "ok"
