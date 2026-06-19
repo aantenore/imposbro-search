@@ -75,11 +75,26 @@ Validate required external service and secret configuration.
 {{- end -}}
 {{- $_ := required "config.INTERNAL_STATE_API_KEY is required" .Values.config.INTERNAL_STATE_API_KEY -}}
 {{- $_ := required "config.DEFAULT_DATA_CLUSTER_API_KEY is required" .Values.config.DEFAULT_DATA_CLUSTER_API_KEY -}}
-{{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_ADMIN) "false") (not .Values.config.ADMIN_API_KEY) -}}
-{{- fail "config.ADMIN_API_KEY is required when ALLOW_UNAUTHENTICATED_ADMIN is false" -}}
+{{- $oidcEnabled := eq (toString .Values.config.OIDC_ENABLED) "true" -}}
+{{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_ADMIN) "false") (not .Values.config.ADMIN_API_KEY) (not .Values.config.SCOPED_API_KEYS) (not $oidcEnabled) -}}
+{{- fail "config.ADMIN_API_KEY, config.SCOPED_API_KEYS, or config.OIDC_ENABLED=true is required when ALLOW_UNAUTHENTICATED_ADMIN is false" -}}
 {{- end -}}
-{{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_DATA) "false") (not .Values.config.DATA_API_KEY) (not .Values.config.SCOPED_API_KEYS) -}}
-{{- fail "config.DATA_API_KEY or config.SCOPED_API_KEYS is required when ALLOW_UNAUTHENTICATED_DATA is false" -}}
+{{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_DATA) "false") (not .Values.config.DATA_API_KEY) (not .Values.config.SCOPED_API_KEYS) (not $oidcEnabled) -}}
+{{- fail "config.DATA_API_KEY, config.SCOPED_API_KEYS, or config.OIDC_ENABLED=true is required when ALLOW_UNAUTHENTICATED_DATA is false" -}}
+{{- end -}}
+{{- if $oidcEnabled -}}
+{{- $_ := required "config.OIDC_ISSUER is required when OIDC_ENABLED is true" .Values.config.OIDC_ISSUER -}}
+{{- $_ := required "config.OIDC_AUDIENCE is required when OIDC_ENABLED is true" .Values.config.OIDC_AUDIENCE -}}
+{{- $_ := required "config.OIDC_ALGORITHMS is required when OIDC_ENABLED is true" .Values.config.OIDC_ALGORITHMS -}}
+{{- if and (not .Values.config.OIDC_JWKS_URL) (not .Values.config.OIDC_PUBLIC_KEY) -}}
+{{- fail "config.OIDC_JWKS_URL or config.OIDC_PUBLIC_KEY is required when OIDC_ENABLED is true" -}}
+{{- end -}}
+{{- if and .Values.config.OIDC_JWKS_URL .Values.config.OIDC_PUBLIC_KEY -}}
+{{- fail "config.OIDC_JWKS_URL and config.OIDC_PUBLIC_KEY are mutually exclusive" -}}
+{{- end -}}
+{{- if contains "HS" (upper (toString .Values.config.OIDC_ALGORITHMS)) -}}
+{{- fail "config.OIDC_ALGORITHMS must use asymmetric algorithms; HS* is not allowed" -}}
+{{- end -}}
 {{- end -}}
 {{- if and (or .Values.config.ADMIN_API_KEY .Values.config.DATA_API_KEY .Values.config.INTERNAL_QUERY_API_ADMIN_API_KEY .Values.config.INTERNAL_QUERY_API_DATA_API_KEY) (not .Values.config.ADMIN_UI_PROXY_TRUSTED_HEADER) -}}
 {{- fail "config.ADMIN_UI_PROXY_TRUSTED_HEADER is required when the Admin UI proxy injects server-side API keys" -}}

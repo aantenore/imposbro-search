@@ -144,6 +144,46 @@ def test_invalid_collection_schema_name_returns_422(client):
     assert r.status_code == 422
 
 
+def test_invalid_collection_field_name_returns_422(client):
+    """Collection field names are validated server-side, not only in the UI."""
+    r = client.post(
+        "/admin/collections",
+        json={
+            "name": "products",
+            "fields": [{"name": "bad field", "type": "string"}],
+        },
+    )
+
+    assert r.status_code == 422
+
+
+def test_invalid_collection_field_type_returns_422(client):
+    """Unsupported Typesense field types are rejected by the API."""
+    r = client.post(
+        "/admin/collections",
+        json={
+            "name": "products",
+            "fields": [{"name": "title", "type": "varchar"}],
+        },
+    )
+
+    assert r.status_code == 422
+
+
+def test_invalid_default_sorting_field_returns_422(client):
+    """default_sorting_field must reference a declared numeric field."""
+    r = client.post(
+        "/admin/collections",
+        json={
+            "name": "products",
+            "fields": [{"name": "title", "type": "string"}],
+            "default_sorting_field": "title",
+        },
+    )
+
+    assert r.status_code == 422
+
+
 def test_admin_stats_returns_200(client):
     """GET /admin/stats returns 200 with clusters and collections."""
     r = client.get("/admin/stats")
@@ -227,7 +267,7 @@ def test_state_export_masks_cluster_api_keys_by_default(client):
         "products": {"rules": [], "default_cluster": "default"}
     }
     client.app.state.federation_service.collection_schemas = {
-        "products": {"name": "products", "fields": []}
+        "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
     }
 
     r = client.get("/admin/state/export")
@@ -289,7 +329,7 @@ def test_state_import_dry_run_validates_without_mutating(client):
             "products": {"rules": [], "default_cluster": "default"}
         },
         "collection_schemas": {
-            "products": {"name": "products", "fields": []}
+            "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
         },
     }
 
@@ -306,6 +346,63 @@ def test_state_import_dry_run_validates_without_mutating(client):
     }
     client.app.state.state_manager.save_state.assert_not_called()
     client.app.state.federation_service.reload_from_state.assert_not_called()
+
+
+def test_state_import_rejects_schema_name_mismatch(client):
+    """Snapshot map key and schema.name must agree before import can proceed."""
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": True,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "api_key": "raw-secret",
+            }
+        },
+        "collection_routing_rules": {},
+        "collection_schemas": {
+            "products": {
+                "name": "other",
+                "fields": [{"name": "title", "type": "string"}],
+            }
+        },
+    }
+
+    r = client.post("/admin/state/import", json=snapshot)
+
+    assert r.status_code == 400
+    assert "mismatch" in r.json().get("detail", "").lower()
+
+
+def test_state_import_rejects_routing_collection_mismatch(client):
+    """Snapshot routing map key and routing collection must agree."""
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": True,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "api_key": "raw-secret",
+            }
+        },
+        "collection_routing_rules": {
+            "products": {
+                "collection": "other",
+                "rules": [],
+                "default_cluster": "default",
+            }
+        },
+        "collection_schemas": {},
+    }
+
+    r = client.post("/admin/state/import", json=snapshot)
+
+    assert r.status_code == 400
+    assert "mismatch" in r.json().get("detail", "").lower()
 
 
 def test_state_import_apply_rejects_masked_secrets(client):
@@ -350,7 +447,7 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
             "products": {"rules": [], "default_cluster": "default"}
         },
         "collection_schemas": {
-            "products": {"name": "products", "fields": []}
+            "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
         },
     }
 
@@ -389,7 +486,7 @@ def test_routing_update_rolls_back_runtime_state_when_persist_fails(client):
         "cluster-b": MagicMock(),
     }
     federation.collection_schemas = {
-        "products": {"name": "products", "fields": []}
+        "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
     }
     federation.routing_rules = {
         "products": {"rules": [], "default_cluster": "cluster-a"}
@@ -509,7 +606,7 @@ def test_create_collection_omits_null_optional_field_metadata(client):
 def test_reconcile_collections_returns_cluster_report(client):
     """POST /admin/collections/reconcile exposes the schema reconciliation report."""
     client.app.state.federation_service.collection_schemas = {
-        "products": {"name": "products", "fields": []}
+        "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
     }
     client.app.state.federation_service.reconcile_collection_schemas.return_value = {
         "cluster-a": {"existing": [], "created": ["products"]}
@@ -553,7 +650,7 @@ def test_upsert_alias_uses_typesense_alias_collection_api(client):
 def test_set_routing_rules_omits_null_fanout_field(client):
     """Single-cluster rules must not be serialized with clusters=None."""
     client.app.state.federation_service.collection_schemas = {
-        "products": {"name": "products", "fields": []}
+        "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
     }
 
     r = client.post(

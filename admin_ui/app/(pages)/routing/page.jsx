@@ -28,6 +28,10 @@ function toApiRule(rule) {
     return { ...base, clusters: targetClusters };
 }
 
+function clusterOptions(clusters) {
+    return ['default', ...clusters.filter((cluster) => cluster !== 'default')];
+}
+
 /**
  * Routing Page
  *
@@ -55,7 +59,7 @@ export default function RoutingPage() {
             setCollections(colls);
             setClusters(clus);
             setCurrentRules(data.collections || {});
-            if (clus.length > 0) setDefaultCluster((prev) => prev || clus[0]);
+            setDefaultCluster((prev) => prev || 'default');
         } catch (err) {
             showError(err.message);
         }
@@ -88,10 +92,10 @@ export default function RoutingPage() {
                         value: r.value,
                         clusters: normalizeRuleTargets(r, clus[0] || ''),
                     })));
-                    setDefaultCluster(existing.default_cluster || clus[0] || '');
+                    setDefaultCluster(existing.default_cluster || 'default');
                 } else {
                     setRules([]);
-                    setDefaultCluster(clus[0] || '');
+                    setDefaultCluster(existing?.default_cluster || 'default');
                 }
             })
             .catch(() => {
@@ -322,7 +326,7 @@ export default function RoutingPage() {
                                         value={defaultCluster}
                                         onChange={(e) => setDefaultCluster(e.target.value)}
                                     >
-                                        {clusters.map(c => (
+                                        {clusterOptions(clusters).map(c => (
                                             <option key={c} value={c}>{c}</option>
                                         ))}
                                     </Select>

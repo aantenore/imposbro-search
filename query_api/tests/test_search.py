@@ -221,6 +221,36 @@ def test_offset_search_fetches_extra_hit_for_next_offset(client):
     assert cluster.documents.params["per_page"] == 2
 
 
+def test_get_search_passes_advanced_params(client):
+    """GET search exposes the same scalar tuning knobs as JSON-body search."""
+    cluster = PaginatedTypesenseClient([
+        {"document": {"id": "doc-1", "name": "First"}, "text_match": 100},
+    ])
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-a", cluster),
+    ]
+
+    r = client.get(
+        "/search/products"
+        "?q=test&query_by=name"
+        "&highlight_start_tag=<mark>"
+        "&highlight_end_tag=</mark>"
+        "&limit_hits=25"
+        "&search_cutoff_ms=50"
+        "&max_candidates=100"
+        "&exhaustive_search=true"
+    )
+
+    assert r.status_code == 200
+    params = cluster.documents.params
+    assert params["highlight_start_tag"] == "<mark>"
+    assert params["highlight_end_tag"] == "</mark>"
+    assert params["limit_hits"] == 25
+    assert params["search_cutoff_ms"] == 50
+    assert params["max_candidates"] == 100
+    assert params["exhaustive_search"] is True
+
+
 def test_search_partial_failure_is_visible(client):
     """A single failed shard is reported as partial instead of hidden."""
     client.app.state.federation_service.get_named_clients_for_search.return_value = [
