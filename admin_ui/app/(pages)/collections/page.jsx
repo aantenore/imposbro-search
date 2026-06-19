@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, Trash2, Database } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
@@ -42,11 +42,7 @@ export default function CollectionsPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { notification, showSuccess, showError } = useNotification();
 
-    useEffect(() => {
-        fetchRoutingMap();
-    }, []);
-
-    const fetchRoutingMap = async () => {
+    const fetchRoutingMap = useCallback(async () => {
         try {
             setIsLoading(true);
             const data = await api.routing.getMap();
@@ -56,7 +52,11 @@ export default function CollectionsPage() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [showError]);
+
+    useEffect(() => {
+        fetchRoutingMap();
+    }, [fetchRoutingMap]);
 
     const handleFieldChange = (index, event) => {
         const values = [...newCollection.fields];

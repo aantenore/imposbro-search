@@ -33,5 +33,8 @@ class Settings(BaseSettings):
     # header X-API-Key: <value> or Authorization: Bearer <value>
     ADMIN_API_KEY: str = ""
 
+    # Local-development escape hatch. Keep false in shared, exposed, or production environments.
+    ALLOW_UNAUTHENTICATED_ADMIN: bool = False
+
 
 settings = Settings()

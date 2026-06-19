@@ -7,7 +7,7 @@ Thank you for your interest in contributing to IMPOSBRO Search! This document pr
 ### Prerequisites
 
 - Docker and Docker Compose
-- Node.js 18+ (for frontend development)
+- Node.js 22+ (for frontend development)
 - Python 3.11+ (for backend development)
 - Git
 
@@ -109,6 +109,11 @@ cd query_api
 pip install -r requirements-dev.txt
 python -m pytest tests -v   # TESTING=1 is set in conftest
 
+# From indexing_service/
+cd indexing_service
+pip install -r requirements.txt
+python -m pytest tests -v
+
 # Integration tests (require live Kafka/Redis/Typesense)
 # By default they are skipped. To run them:
 docker-compose up -d   # start the stack
@@ -116,7 +121,7 @@ cd query_api && INTEGRATION=1 python -m pytest tests -v -m integration
 # Or exclude integration from CI: pytest tests -v -m "not integration"
 ```
 
-The Admin UI proxies `/api/*` to the Query API via `app/api/[[...path]]/route.js`; set `INTERNAL_QUERY_API_URL` (e.g. in `.env`) to the backend URL.
+The Admin UI proxies `/api/*` to the Query API via `app/api/[[...path]]/route.js`; set `INTERNAL_QUERY_API_URL` (e.g. in `.env`) to the backend URL. If `ADMIN_API_KEY` is enabled, set `INTERNAL_QUERY_API_ADMIN_API_KEY` or reuse `ADMIN_API_KEY` server-side so the proxy can authenticate admin requests without exposing the key to browser JavaScript.
 
 ### Manual Testing Checklist
 

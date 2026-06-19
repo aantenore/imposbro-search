@@ -17,6 +17,7 @@ import logging
 import sys
 from typing import Dict, Optional
 from kafka import KafkaConsumer
+from kafka.structs import OffsetAndMetadata, TopicPartition
 import time
 
 # Configure logging
@@ -76,8 +77,7 @@ def run_consumer(typesense_clients: Dict) -> None:
                 group_id="imposbro_federated_indexing_group",
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                 consumer_timeout_ms=1000,  # Allow periodic shutdown checks
-                enable_auto_commit=True,
-                auto_commit_interval_ms=5000,
+                enable_auto_commit=False,
             )
             consumer.subscribe(pattern=f"^{topic_prefix}_.*")
             logger.info(
@@ -107,9 +107,19 @@ def run_consumer(typesense_clients: Dict) -> None:
 
                     try:
                         process_message(message.value, typesense_clients)
+                        consumer.commit(
+                            {
+                                TopicPartition(message.topic, message.partition): OffsetAndMetadata(
+                                    message.offset + 1,
+                                    None,
+                                )
+                            }
+                        )
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
-                        # Continue processing other messages
+                        # Do not commit failed offsets. Leave the message available
+                        # for retry; add a DLQ before enabling poison-message skipping.
+                        break
 
         except Exception as e:
             if not shutdown_requested:
@@ -142,8 +152,7 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
 
     # Validate message structure
     if not collection_name or not document:
-        logger.warning(f"Invalid message format (missing collection or document)")
-        return
+        raise ValueError("Invalid message format (missing collection or document)")
 
     if not target_cluster:
         logger.warning(
@@ -158,13 +167,11 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
     client = typesense_clients.get(target_cluster)
 
     if not client:
-        # Log error but don't crash - cluster might have been removed
-        logger.error(
+        raise RuntimeError(
             f"No client found for cluster '{target_cluster}'. "
             f"Document {doc_id} cannot be indexed. "
             f"Available clusters: {list(typesense_clients.keys())}"
         )
-        return
 
     # Upsert the document
     try:

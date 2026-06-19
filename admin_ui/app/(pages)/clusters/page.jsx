@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Trash2, Server } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
@@ -30,12 +30,7 @@ export default function ClustersPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { notification, showSuccess, showError } = useNotification();
 
-    // Fetch clusters on mount
-    useEffect(() => {
-        fetchClusters();
-    }, []);
-
-    const fetchClusters = async () => {
+    const fetchClusters = useCallback(async () => {
         try {
             setIsLoading(true);
             const data = await api.clusters.list();
@@ -45,7 +40,12 @@ export default function ClustersPage() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [showError]);
+
+    // Fetch clusters on mount
+    useEffect(() => {
+        fetchClusters();
+    }, [fetchClusters]);
 
     const handleRegister = async (e) => {
         e.preventDefault();

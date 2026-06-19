@@ -39,6 +39,22 @@ def _notify_config_change(notifier: SyncConfigNotifier, change_type: str):
         logger.warning("Failed to broadcast config change: %s", e)
 
 
+def _persist_state_or_500(
+    state_manager: StateManager,
+    federation: FederationService,
+) -> None:
+    """Persist config mutations and fail the request if the control-plane state cannot be saved."""
+    saved = state_manager.save_state(
+        federation.clusters_config,
+        federation.routing_rules,
+    )
+    if not saved:
+        raise HTTPException(
+            status_code=500,
+            detail="Configuration changed in memory but could not be persisted.",
+        )
+
+
 def _mask_api_key(api_key: str, visible: int = 4) -> str:
     """Mask API key for display (show only last visible chars)."""
     if not api_key or api_key == "N/A":
@@ -91,6 +107,24 @@ def get_all_clusters(
     return display_config
 
 
+@router.get(
+    "/federation/clusters/internal",
+    summary="List raw cluster config for internal services",
+    include_in_schema=False,
+)
+def get_internal_clusters(
+    federation: FederationService = Depends(get_federation_service),
+) -> Dict[str, Any]:
+    """
+    Return raw cluster configuration for trusted service-to-service consumers.
+
+    The public cluster listing intentionally masks API keys for the Admin UI.
+    The indexing service needs unmasked credentials to build Typesense clients,
+    and this route inherits the Admin API key dependency from the router.
+    """
+    return {name: dict(cfg) for name, cfg in federation.clusters_config.items()}
+
+
 @router.post("/federation/clusters", status_code=201, summary="Register a new cluster")
 def register_cluster(
     cluster: Cluster,
@@ -111,7 +145,7 @@ def register_cluster(
             port=cluster.port,
             api_key=cluster.api_key,
         )
-        state_manager.save_state(federation.clusters_config, federation.routing_rules)
+        _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"cluster_registered:{cluster.name}")
         return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
     except ValueError as e:
@@ -125,7 +159,7 @@ def register_cluster(
 
 @router.delete("/federation/clusters/{cluster_name}", summary="Remove a cluster")
 def delete_cluster(
-    cluster_name: str,
+    cluster_name: str = Path(..., pattern=NAME_PATTERN, description="Cluster name"),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
     notifier: SyncConfigNotifier = Depends(get_config_notifier),
@@ -143,7 +177,7 @@ def delete_cluster(
 
     try:
         federation.unregister_cluster(cluster_name)
-        state_manager.save_state(federation.clusters_config, federation.routing_rules)
+        _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"cluster_deleted:{cluster_name}")
         return OperationResponse(message=f"Cluster '{cluster_name}' deleted.")
     except ValueError as e:
@@ -226,7 +260,7 @@ async def create_collection(
             "default_cluster": "default",
         }
 
-    state_manager.save_state(federation.clusters_config, federation.routing_rules)
+    _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"collection_created:{schema.name}")
 
     return OperationResponse(message="Collection created successfully on all clusters.")
@@ -234,7 +268,7 @@ async def create_collection(
 
 @router.delete("/collections/{collection_name}", summary="Delete a collection")
 async def delete_collection(
-    collection_name: str,
+    collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
     notifier: SyncConfigNotifier = Depends(get_config_notifier),
@@ -256,7 +290,7 @@ async def delete_collection(
     if collection_name in federation.routing_rules:
         del federation.routing_rules[collection_name]
 
-    state_manager.save_state(federation.clusters_config, federation.routing_rules)
+    _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"collection_deleted:{collection_name}")
 
     return OperationResponse(message=f"Collection '{collection_name}' deleted.")
@@ -271,8 +305,12 @@ async def delete_collection(
 )
 async def upsert_alias(
     alias_name: str = Path(..., pattern=NAME_PATTERN, description="Alias name"),
-    collection_name: str = Query(..., description="Target collection name"),
-    cluster_name: str = Query("default", description="Cluster where the alias is created"),
+    collection_name: str = Query(
+        ..., pattern=NAME_PATTERN, description="Target collection name"
+    ),
+    cluster_name: str = Query(
+        "default", pattern=NAME_PATTERN, description="Cluster where the alias is created"
+    ),
     federation: FederationService = Depends(get_federation_service),
 ) -> OperationResponse:
     """
@@ -302,7 +340,9 @@ async def upsert_alias(
     summary="List aliases on a cluster",
 )
 def list_aliases(
-    cluster_name: str = Query("default", description="Cluster to list aliases from"),
+    cluster_name: str = Query(
+        "default", pattern=NAME_PATTERN, description="Cluster to list aliases from"
+    ),
     federation: FederationService = Depends(get_federation_service),
 ) -> Dict[str, Any]:
     """List all collection aliases on the given cluster."""
@@ -325,7 +365,9 @@ def list_aliases(
 )
 async def delete_alias(
     alias_name: str = Path(..., pattern=NAME_PATTERN),
-    cluster_name: str = Query("default", description="Cluster where the alias lives"),
+    cluster_name: str = Query(
+        "default", pattern=NAME_PATTERN, description="Cluster where the alias lives"
+    ),
     federation: FederationService = Depends(get_federation_service),
 ) -> OperationResponse:
     """Remove an alias from the cluster."""
@@ -393,7 +435,7 @@ def set_routing_rules(
             rules=rules_list,
             default_cluster=rules_config.default_cluster,
         )
-        state_manager.save_state(federation.clusters_config, federation.routing_rules)
+        _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"routing_updated:{collection_name}")
         return OperationResponse(
             message=f"Routing rules for '{collection_name}' have been updated."
@@ -417,7 +459,7 @@ def delete_routing_rule(
     All API instances will be notified.
     """
     federation.delete_routing_rules(collection_name)
-    state_manager.save_state(federation.clusters_config, federation.routing_rules)
+    _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"routing_deleted:{collection_name}")
     return OperationResponse(
         message=f"Routing rules for '{collection_name}' have been deleted."

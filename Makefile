@@ -1,6 +1,8 @@
 # IMPOSBRO Search – root-level targets
 # Use: make test-api | test (alias) | help
 
+PYTHON ?= python3
+
 .PHONY: help test test-api lint
 
 help:
@@ -12,7 +14,7 @@ help:
 test: test-api
 
 test-api:
-	cd query_api && TESTING=1 python -m pytest tests -v
+	cd query_api && TESTING=1 $(PYTHON) -m pytest tests -v
 
 lint:
 	@command -v ruff >/dev/null 2>&1 && cd query_api && ruff check app || true
