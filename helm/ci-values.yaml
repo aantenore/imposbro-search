@@ -9,6 +9,13 @@ queryApi:
     minReplicas: 2
     maxReplicas: 4
     targetCPUUtilizationPercentage: 70
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: query-api
 
 adminUi:
   image: registry.example.com/imposbro-admin-ui:1.0.0
@@ -20,6 +27,13 @@ adminUi:
     minReplicas: 2
     maxReplicas: 3
     targetCPUUtilizationPercentage: 70
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: admin-ui
 
 indexingService:
   image: registry.example.com/imposbro-indexing-service:1.0.0
@@ -33,6 +47,13 @@ indexingService:
     kafka:
       lagThreshold: "25"
       ensureEvenDistributionOfPartitions: "true"
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: indexing-service
 
 networkPolicy:
   enabled: true
