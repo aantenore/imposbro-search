@@ -6,25 +6,54 @@ metadata:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: admin-ui
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.adminUi.replicaCount | default .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: admin-ui
   template:
     metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "imposbro-search.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: admin-ui
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "imposbro-search.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Values.adminUi.name }}
           image: "{{ .Values.adminUi.image }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.adminUi.port }}
               protocol: TCP
+          {{- with .Values.adminUi.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.adminUi.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.adminUi.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "imposbro-search.fullname" . }}-config
@@ -32,3 +61,15 @@ spec:
             - secretRef:
                 name: {{ include "imposbro-search.fullname" . }}-secret
             {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -99,11 +99,18 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 - `GET /health`: Detailed dependency health with cluster count, Redis, Kafka, and per-data-cluster readiness. It returns JSON even when degraded.
 - `GET /ready`: Readiness probe for orchestrators. Returns HTTP 503 until all required dependencies and data clusters are ready.
 
-### 4.3 Metrics
+### 4.3 Kubernetes deployment
+
+- Helm defaults run workloads with a service account that does not mount an API token unless explicitly enabled.
+- Query API probes use `/ready` for startup/readiness and `/` for liveness; Admin UI probes `/`.
+- Workload resources, replica counts, probes, security context, pod labels/annotations, node selectors, affinity, and tolerations are values-driven.
+- Worker processes should not get fake HTTP probes. Add `indexingService.livenessProbe` only when a real process-level healthcheck is available.
+
+### 4.4 Metrics
 
 - Prometheus metrics are exposed via `prometheus_fastapi_instrumentator`. Custom counters (e.g. `documents_ingested_total`) are defined in the router that performs the action.
 
-### 4.4 Documentation
+### 4.5 Documentation
 
 - README: User-facing setup, configuration, and deployment.
 - CONTRIBUTING: How to run tests, code style, PR process.
