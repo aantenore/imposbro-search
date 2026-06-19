@@ -15,6 +15,7 @@ BENCHMARK_DOCKER_SEARCH_REQUESTS ?= 100
 BENCHMARK_DOCKER_SEARCH_CONCURRENCY ?= 8
 BENCHMARK_DOCKER_TIMEOUT_SECONDS ?= 180
 BENCHMARK_DOCKER_OUTPUT_JSON ?= artifacts/benchmark-docker.json
+BENCHMARK_DOCKER_OUTPUT_MARKDOWN ?= artifacts/benchmark-docker.md
 
 .PHONY: help test test-api test-ui lint build-ui compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s benchmark-docker smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
 
@@ -99,6 +100,7 @@ benchmark-docker:
 	BENCHMARK_SEARCH_CONCURRENCY=$(BENCHMARK_DOCKER_SEARCH_CONCURRENCY) \
 	BENCHMARK_TIMEOUT_SECONDS=$(BENCHMARK_DOCKER_TIMEOUT_SECONDS) \
 	BENCHMARK_OUTPUT_JSON=$(BENCHMARK_DOCKER_OUTPUT_JSON) \
+	BENCHMARK_OUTPUT_MARKDOWN=$(BENCHMARK_DOCKER_OUTPUT_MARKDOWN) \
 	$(PYTHON) scripts/benchmark-k8s.py
 
 smoke-docker:
