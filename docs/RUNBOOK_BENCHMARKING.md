@@ -12,8 +12,9 @@ SLO thresholds.
   searchable within a known time budget.
 - Federated search responds with measurable p50/p95/p99 latency and no hidden
   shard partials unless partial responses are explicitly allowed.
-- Benchmark output is JSON-friendly, so release candidates can be compared over
-  time instead of judged from ad hoc terminal output.
+- Benchmark output is both JSON-friendly and Markdown-friendly, so release
+  candidates can be compared by machines and published for human review without
+  rewriting terminal notes by hand.
 
 ## Precheck
 
@@ -48,6 +49,7 @@ BENCHMARK_INGEST_CONCURRENCY=32 \
 BENCHMARK_SEARCH_REQUESTS=500 \
 BENCHMARK_SEARCH_CONCURRENCY=16 \
 BENCHMARK_OUTPUT_JSON=artifacts/benchmark-baseline.json \
+BENCHMARK_OUTPUT_MARKDOWN=artifacts/benchmark-baseline.md \
 make benchmark-k8s
 ```
 
@@ -58,7 +60,8 @@ make benchmark-docker
 ```
 
 The Docker target starts the stack, runs the same harness with conservative
-defaults, writes `artifacts/benchmark-docker.json`, and tears the stack down.
+defaults, writes `artifacts/benchmark-docker.json` and
+`artifacts/benchmark-docker.md`, and tears the stack down.
 Tune it without editing the Makefile:
 
 ```bash
@@ -67,6 +70,7 @@ BENCHMARK_DOCKER_INGEST_CONCURRENCY=32 \
 BENCHMARK_DOCKER_SEARCH_REQUESTS=250 \
 BENCHMARK_DOCKER_SEARCH_CONCURRENCY=16 \
 BENCHMARK_DOCKER_OUTPUT_JSON=artifacts/benchmark-docker-2k.json \
+BENCHMARK_DOCKER_OUTPUT_MARKDOWN=artifacts/benchmark-docker-2k.md \
 make benchmark-docker
 ```
 
@@ -76,6 +80,11 @@ The harness prints:
 - seconds until all documents become searchable;
 - search successes, errors, p95 latency, and partial response count;
 - SLO violations when thresholds are configured.
+
+When `BENCHMARK_OUTPUT_MARKDOWN` is set, the harness also writes a compact
+release-evidence report with ingest, indexing, search, SLO, and request-error
+sections. Keep the JSON artifact beside the Markdown report; the Markdown is
+for release review and the JSON is for trend comparison.
 
 ## Release SLO Example
 
@@ -93,6 +102,7 @@ BENCHMARK_MAX_INDEXING_VISIBLE_SECONDS=300 \
 BENCHMARK_MAX_SEARCH_P95_MS=250 \
 BENCHMARK_MAX_SEARCH_ERROR_RATE=0 \
 BENCHMARK_OUTPUT_JSON=artifacts/benchmark-release.json \
+BENCHMARK_OUTPUT_MARKDOWN=artifacts/benchmark-release.md \
 make benchmark-k8s
 ```
 
@@ -131,5 +141,6 @@ The existing collection must contain these fields:
 - **Search p95/p99 regression** should be compared against a previous JSON
   artifact from the same dataset size and cluster shape.
 
-Keep benchmark JSON artifacts with release evidence. They are intentionally not
-committed by default because they are environment-specific measurements.
+Keep benchmark JSON and Markdown artifacts with release evidence. They are
+intentionally not committed by default because they are environment-specific
+measurements.

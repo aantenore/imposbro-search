@@ -108,3 +108,72 @@ def test_run_parallel_collects_successes_and_errors():
     assert result["error_count"] == 1
     assert result["errors"] == ["boom"]
     assert sorted(payload["index"] for payload in result["payloads"]) == [0, 1, 3]
+
+
+def sample_summary():
+    return {
+        "status": "passed",
+        "generated_at": "2026-06-20T00:00:00+00:00",
+        "query_api_url": "https://api.example.com",
+        "collection": "benchmark_20260620",
+        "tenant": "tenant_a",
+        "documents": 1000,
+        "ingest": {
+            "concurrency": 16,
+            "successes": 1000,
+            "error_count": 0,
+            "errors": [],
+            "elapsed_seconds": 10.5,
+            "docs_per_second": 95.24,
+            "latency_ms": {
+                "p50_ms": 12.3,
+                "p95_ms": 45.6,
+                "p99_ms": 78.9,
+            },
+        },
+        "indexing": {
+            "visible_seconds": 24.2,
+            "found": 1000,
+            "clusters_responded": 2,
+            "failed_clusters": [],
+            "partial": False,
+        },
+        "search": {
+            "requests": 200,
+            "concurrency": 8,
+            "successes": 200,
+            "error_count": 0,
+            "error_rate": 0.0,
+            "errors": [],
+            "partial_responses": 0,
+            "found_min": 100,
+            "found_max": 1000,
+            "latency_ms": {
+                "p50_ms": 18.1,
+                "p95_ms": 52.4,
+                "p99_ms": 90.0,
+            },
+        },
+        "slo_violations": [],
+    }
+
+
+def test_render_markdown_report_summarizes_release_evidence():
+    report = benchmark.render_markdown_report(sample_summary())
+
+    assert "# IMPOSBRO Benchmark Report" in report
+    assert "- Status: **PASSED**" in report
+    assert "| Throughput | 95.24 docs/s |" in report
+    assert "| Visible after | 24.2s |" in report
+    assert "| Latency p95 | 52.4 ms |" in report
+    assert "No SLO violations recorded." in report
+    assert "Keep the JSON artifact beside this report" in report
+
+
+def test_write_markdown_creates_parent_directories(tmp_path):
+    output_path = tmp_path / "nested" / "benchmark.md"
+
+    benchmark.write_markdown(str(output_path), sample_summary())
+
+    assert output_path.exists()
+    assert "benchmark_20260620" in output_path.read_text(encoding="utf-8")

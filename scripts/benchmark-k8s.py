@@ -13,6 +13,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 
@@ -326,6 +327,11 @@ def parse_args():
         help="Optional path for machine-readable benchmark summary",
     )
     parser.add_argument(
+        "--output-markdown",
+        default=os.getenv("BENCHMARK_OUTPUT_MARKDOWN", ""),
+        help="Optional path for a human-readable benchmark report",
+    )
+    parser.add_argument(
         "--use-existing-collection",
         action="store_true",
         default=env_bool("BENCHMARK_USE_EXISTING_COLLECTION"),
@@ -477,6 +483,108 @@ def write_json(path: str, summary) -> None:
     output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
 
 
+def markdown_value(value, suffix: str = "") -> str:
+    """Format benchmark values for stable Markdown output."""
+    if value is None:
+        return "n/a"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        text = f"{value:.3f}".rstrip("0").rstrip(".")
+    else:
+        text = str(value)
+    return f"{text}{suffix}"
+
+
+def render_markdown_report(summary) -> str:
+    """Render a compact benchmark report suitable for release evidence."""
+    ingest_latency = summary["ingest"]["latency_ms"]
+    search_latency = summary["search"]["latency_ms"]
+    violations = summary.get("slo_violations", [])
+    status = str(summary.get("status", "unknown")).upper()
+
+    lines = [
+        "# IMPOSBRO Benchmark Report",
+        "",
+        f"- Status: **{status}**",
+        f"- Generated at: {summary.get('generated_at', 'not recorded')}",
+        f"- Query API URL: `{summary.get('query_api_url', 'n/a')}`",
+        f"- Collection: `{summary.get('collection', 'n/a')}`",
+        f"- Tenant: `{summary.get('tenant', 'n/a')}`",
+        f"- Documents: {markdown_value(summary.get('documents'))}",
+        "",
+        "## Ingest",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| Concurrency | {markdown_value(summary['ingest']['concurrency'])} |",
+        f"| Successes | {markdown_value(summary['ingest']['successes'])} |",
+        f"| Errors | {markdown_value(summary['ingest']['error_count'])} |",
+        f"| Elapsed | {markdown_value(summary['ingest']['elapsed_seconds'], 's')} |",
+        f"| Throughput | {markdown_value(summary['ingest']['docs_per_second'], ' docs/s')} |",
+        f"| Latency p50 | {markdown_value(ingest_latency['p50_ms'], ' ms')} |",
+        f"| Latency p95 | {markdown_value(ingest_latency['p95_ms'], ' ms')} |",
+        f"| Latency p99 | {markdown_value(ingest_latency['p99_ms'], ' ms')} |",
+        "",
+        "## Indexing Visibility",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| Visible after | {markdown_value(summary['indexing']['visible_seconds'], 's')} |",
+        f"| Found | {markdown_value(summary['indexing']['found'])} |",
+        f"| Clusters responded | {markdown_value(summary['indexing']['clusters_responded'])} |",
+        f"| Partial | {markdown_value(summary['indexing']['partial'])} |",
+        f"| Failed clusters | {', '.join(summary['indexing']['failed_clusters']) or 'none'} |",
+        "",
+        "## Search",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| Requests | {markdown_value(summary['search']['requests'])} |",
+        f"| Concurrency | {markdown_value(summary['search']['concurrency'])} |",
+        f"| Successes | {markdown_value(summary['search']['successes'])} |",
+        f"| Errors | {markdown_value(summary['search']['error_count'])} |",
+        f"| Error rate | {markdown_value(summary['search']['error_rate'])} |",
+        f"| Partial responses | {markdown_value(summary['search']['partial_responses'])} |",
+        f"| Found min | {markdown_value(summary['search']['found_min'])} |",
+        f"| Found max | {markdown_value(summary['search']['found_max'])} |",
+        f"| Latency p50 | {markdown_value(search_latency['p50_ms'], ' ms')} |",
+        f"| Latency p95 | {markdown_value(search_latency['p95_ms'], ' ms')} |",
+        f"| Latency p99 | {markdown_value(search_latency['p99_ms'], ' ms')} |",
+        "",
+        "## SLO Result",
+        "",
+    ]
+
+    if violations:
+        lines.extend([f"- {violation}" for violation in violations])
+    else:
+        lines.append("No SLO violations recorded.")
+
+    errors = summary["ingest"].get("errors", []) + summary["search"].get("errors", [])
+    lines.extend(["", "## Request Errors", ""])
+    if errors:
+        lines.extend([f"- `{error}`" for error in errors])
+    else:
+        lines.append("No request errors recorded.")
+
+    lines.extend([
+        "",
+        "## Evidence Notes",
+        "",
+        "- Keep the JSON artifact beside this report for machine comparison.",
+        "- Record cluster shape, image tags, and Helm values separately with the release.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def write_markdown(path: str, summary) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(render_markdown_report(summary), encoding="utf-8")
+
+
 def main() -> int:
     load_dotenv(Path.cwd() / ".env")
     args = parse_args()
@@ -572,11 +680,15 @@ def main() -> int:
         violations = evaluate_slos(summary, args)
         summary["slo_violations"] = violations
         summary["status"] = "failed" if violations or search_result["error_count"] else "passed"
+        summary["generated_at"] = datetime.now(timezone.utc).isoformat()
 
         print_summary(summary, violations)
         if args.output_json:
             write_json(args.output_json, summary)
             print("summary-json:", args.output_json)
+        if args.output_markdown:
+            write_markdown(args.output_markdown, summary)
+            print("summary-markdown:", args.output_markdown)
 
         return 1 if summary["status"] == "failed" else 0
     finally:
