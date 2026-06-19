@@ -56,6 +56,15 @@ class CollectionField(BaseModel):
     name: str = Field(..., description="Field name")
     type: str = Field(..., description="Field type (string, int32, float, bool, string[])")
     facet: bool = Field(default=False, description="Enable faceting for this field")
+    num_dim: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Vector dimensions for float[] embedding fields",
+    )
+    embed: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Typesense auto-embedding configuration for float[] fields",
+    )
 
 
 class CollectionSchema(BaseModel):
@@ -126,6 +135,57 @@ class IngestResponse(BaseModel):
     status: str = Field(..., description="Operation status")
     document_id: str = Field(..., description="ID of ingested document")
     routed_to: str = Field(..., description="Target cluster name")
+
+
+class SearchRequest(BaseModel):
+    """
+    Federated search request.
+
+    Supports keyword, semantic, and vector/hybrid Typesense searches. `query_by`
+    is optional only when `vector_query` is supplied for manual vector search.
+    """
+    q: str = Field(..., min_length=1, description="Search query text, or '*'")
+    query_by: Optional[str] = Field(
+        default=None,
+        description="Comma-separated fields to search; required without vector_query",
+    )
+    filter_by: Optional[str] = Field(default=None, description="Typesense filter expression")
+    sort_by: Optional[str] = Field(default=None, description="Typesense sort expression")
+    vector_query: Optional[str] = Field(
+        default=None,
+        description="Typesense vector_query for semantic/vector/hybrid search",
+    )
+    query_by_weights: Optional[str] = Field(
+        default=None,
+        description="Optional Typesense query_by_weights expression",
+    )
+    include_fields: Optional[str] = Field(default=None, description="Fields to include")
+    exclude_fields: Optional[str] = Field(default=None, description="Fields to exclude")
+    highlight_fields: Optional[str] = Field(default=None, description="Fields to highlight")
+    highlight_full_fields: Optional[str] = Field(
+        default=None,
+        description="Fields to fully highlight",
+    )
+    highlight_start_tag: Optional[str] = Field(default=None, description="Highlight start tag")
+    highlight_end_tag: Optional[str] = Field(default=None, description="Highlight end tag")
+    remote_embedding_timeout_ms: Optional[int] = Field(default=None, ge=1)
+    remote_embedding_num_tries: Optional[int] = Field(default=None, ge=1)
+    limit_hits: Optional[int] = Field(default=None, ge=1)
+    search_cutoff_ms: Optional[int] = Field(default=None, ge=1)
+    max_candidates: Optional[int] = Field(default=None, ge=1)
+    exhaustive_search: Optional[bool] = Field(default=None)
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=10, ge=1, le=250)
+    offset: Optional[int] = Field(default=None, ge=0)
+    limit: Optional[int] = Field(default=None, ge=1, le=250)
+
+    @model_validator(mode="after")
+    def require_query_by_or_vector_query(self) -> Self:
+        if not (self.query_by and self.query_by.strip()) and not (
+            self.vector_query and self.vector_query.strip()
+        ):
+            raise ValueError("Set query_by for keyword search or vector_query for vector search")
+        return self
 
 
 class SearchHit(BaseModel):

@@ -77,6 +77,7 @@ The market does validate the problem, but it also narrows the room for different
 15. **Admin search workspace**: Admin UI now includes a `/workspace` view for create-schema, ingest, and search workflows against the configured Query API proxy.
 16. **Typesense readiness hardening**: `/ready` now verifies every declared node in every data cluster and reports `data_cluster_nodes`; Compose pins Typesense node IPs so Raft peer state survives `docker compose down/up` with volumes.
 17. **Runtime validation**: Docker smoke covered create collection, Kafka ingest, federated search with both clusters responding, and a down/up restart with persisted volumes.
+18. **Hybrid/vector search path**: `/search/{collection}` now supports a JSON body for semantic/vector/hybrid Typesense params, including `vector_query`, embedding retry controls, and global merge by `_vector_distance`.
 
 ### Fixes
 
@@ -123,6 +124,7 @@ The market does validate the problem, but it also narrows the room for different
 - ~~**Collection aliases**~~: **Done.** Admin API: `PUT /admin/aliases/{alias_name}`, `GET /admin/aliases`, `DELETE /admin/aliases/{alias_name}` (per cluster) for zero-downtime reindexing.
 - ~~**Cursor-based pagination**~~: **Done.** Search accepts optional `offset` and `limit` for cursor-style deep pagination; response includes `next_offset` when applicable.
 - ~~**Admin UI dashboard**~~: **Done.** Dashboard fetches `/admin/stats` and `/health` every 15s; shows status, clusters, collections, Redis/Kafka.
+- ~~**Hybrid/vector search gateway**~~: **Done.** JSON search endpoint supports long vector/hybrid params and cross-cluster merge can order vector-only results by `_vector_distance`.
 
 ### Low priority
 
@@ -130,7 +132,6 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Hybrid/semantic retrieval gap**: market expectation is moving toward hybrid/vector search. Typesense supports vector and semantic patterns, but IMPOSBRO does not yet expose a configurable hybrid retrieval story across clusters.
 - **Enterprise access model**: API keys are enough for a self-hosted MVP; public or multi-team deployments still need OAuth2/OIDC, RBAC, and per-tenant/admin scopes.
 - **Operational scale proof**: local Docker and unit gates are strong; the next credibility step is a repeatable multi-instance/load test with Kafka lag, partial cluster outage, and rolling restart scenarios.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.

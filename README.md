@@ -171,7 +171,7 @@ imposbro-search/
 
 ### 🔍 Data Flow Example: Federated Search
 
-1. A user sends a `GET /search/{collection}` request with query parameters to the `query-api`.
+1. A user sends a `GET /search/{collection}` request with query parameters or a `POST /search/{collection}` request with a JSON body to the `query-api`.
 2. The `query-api` evaluates the routing rules to determine relevant clusters.
 3. It issues parallel search queries to all matching clusters (scatter phase).
 4. It handles timeouts or errors gracefully.
@@ -234,6 +234,21 @@ docker-compose up --build
       "http://localhost:8000/search/products?q=widget&query_by=name"
     ```
 
+    For semantic/vector/hybrid search, use the JSON body endpoint so long `vector_query` values do not live in the URL:
+    ```bash
+    curl -X POST "http://localhost:8000/search/products" \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: $DATA_API_KEY" \
+      -d '{
+        "q": "*",
+        "vector_query": "embedding:([0.1,0.2,0.3], k:10, alpha: 0.8)",
+        "exclude_fields": "embedding",
+        "offset": 0,
+        "limit": 10
+      }'
+    ```
+    Vector collections can be created with a `float[]` field and `num_dim`, optionally including Typesense `embed` configuration for auto-embedding fields.
+
 ---
 
 ## 📖 API Documentation
@@ -246,10 +261,11 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 |----------|--------|-------------|
 | `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` unless local dev bypass is enabled) |
 | `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` unless local dev bypass is enabled) |
+| `/search/{collection}` | POST | Federated search with JSON body for semantic, vector, or hybrid Typesense parameters |
 
 Search responses include `clusters_queried`, `clusters_responded`, `failed_clusters`, and `partial`.
 If at least one cluster responds, partial failures return `200` with `partial: true`; if every target cluster fails, the API returns `503`.
-Global merge supports simple `sort_by` expressions such as `price:asc` or `_text_match:desc`; complex geo/function sorts are rejected until they can be merged exactly across clusters.
+Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_match:desc`, or `_vector_distance:asc`; complex geo/function sorts are rejected until they can be merged exactly across clusters. The JSON search endpoint accepts allowlisted Typesense parameters including `vector_query`, `query_by_weights`, `include_fields`, `exclude_fields`, highlighting options, and remote embedding retry/timeout controls. When `vector_query` is present, the gateway uses Typesense Multi Search so the data-cluster request is also sent as a POST body.
 
 ### Administration
 
