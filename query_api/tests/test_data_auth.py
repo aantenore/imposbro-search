@@ -1,5 +1,6 @@
 """Tests for data-plane API authentication."""
 import json
+from unittest.mock import MagicMock
 
 
 def test_data_endpoints_require_api_key_when_configured(client, monkeypatch):
@@ -118,6 +119,65 @@ def test_scoped_data_key_grants_search_and_ingest(client, monkeypatch):
 
     assert search.status_code == 404
     assert ingest.status_code == 200
+
+
+def test_collection_scoped_search_key_only_grants_matching_collection(client, monkeypatch):
+    """Collection-scoped search keys use safe glob patterns for least privilege."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {
+            "name": "catalog-reader",
+            "key": "products-secret",
+            "scopes": ["search:products_*"],
+        }
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+
+    matching = client.get(
+        "/search/products_2026?q=test&query_by=name",
+        headers={"X-API-Key": "products-secret"},
+    )
+    denied = client.get(
+        "/search/orders_2026?q=test&query_by=name",
+        headers={"X-API-Key": "products-secret"},
+    )
+
+    assert matching.status_code == 404
+    assert denied.status_code == 401
+
+
+def test_collection_scoped_ingest_key_only_grants_matching_collection(client, monkeypatch):
+    """Collection-scoped ingest keys cannot write to unrelated collections."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {
+            "name": "orders-writer",
+            "key": "orders-secret",
+            "scopes": ["ingest:orders_*"],
+        }
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+
+    matching = client.post(
+        "/ingest/orders_2026",
+        headers={"X-API-Key": "orders-secret"},
+        json={"id": "doc-1", "name": "Order"},
+    )
+    denied = client.post(
+        "/ingest/products_2026",
+        headers={"X-API-Key": "orders-secret"},
+        json={"id": "doc-2", "name": "Product"},
+    )
+
+    assert matching.status_code == 200
+    assert denied.status_code == 401
 
 
 def test_invalid_scoped_api_keys_configuration_fails_closed(client, monkeypatch):

@@ -78,7 +78,7 @@ The market does validate the problem, but it also narrows the room for different
 16. **Typesense readiness hardening**: `/ready` now verifies every declared node in every data cluster and reports `data_cluster_nodes`; Compose pins Typesense node IPs so Raft peer state survives `docker compose down/up` with volumes.
 17. **Runtime validation**: Docker smoke covered create collection, Kafka ingest, federated search with both clusters responding, and a down/up restart with persisted volumes.
 18. **Hybrid/vector search path**: `/search/{collection}` now supports a JSON body for semantic/vector/hybrid Typesense params, including `vector_query`, embedding retry controls, and global merge by `_vector_distance`.
-19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, or `*` access while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
+19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, `*`, or collection-pattern data-plane access such as `search:products_*` while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
 20. **Repeatable runtime smoke**: `make smoke-docker` builds/starts the stack, creates a vector collection, ingests through Kafka, verifies federated vector ordering and the Admin UI proxy, then tears the stack down.
 21. **Partial outage smoke**: `make smoke-docker-outage` stops the secondary data cluster and verifies `/ready` degrades while federated search still returns healthy-cluster hits with `partial: true` and explicit `failed_clusters`.
 22. **Control-plane backup/restore**: Admin API can export state snapshots with masked secrets by default, create restore-ready exports with explicit secret opt-in, dry-run imports, and apply audited state restores for clusters, routing, schemas, and aliases.
@@ -97,6 +97,7 @@ The market does validate the problem, but it also narrows the room for different
 35. **Alias state portability**: Collection alias bindings are persisted in control-plane state, included in backup/restore snapshots, restored through import apply, and covered by DR smoke.
 36. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
 37. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
+38. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/data access to collection glob patterns, with server-side enforcement in the Query API.
 
 ### Fixes
 
@@ -152,7 +153,7 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Enterprise authorization depth**: OIDC and tenant policies cover API-level identity and tenant isolation; future enterprise deployments may still need richer per-collection RBAC, admin role mapping, and UI login/session flows.
+- **Enterprise authorization depth**: OIDC, tenant policies, and collection-scoped data-plane RBAC now cover API identity, tenant isolation, and collection access. Future enterprise deployments may still need richer admin role mapping and Admin UI login/session flows.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, and Helm autoscaling manifests; the next credibility step is a real Kubernetes benchmark with production-sized topics and sustained traffic.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”

@@ -4,12 +4,14 @@ Allows tests and production to use the same code path without mutating router mo
 """
 import json
 import hashlib
+import fnmatch
 import secrets
 from typing import List, Optional, Set, Tuple
 
-from fastapi import Request, Header, HTTPException
+from fastapi import Request, Header, HTTPException, Path
 
 from auth import authenticate_oidc_bearer, oidc_enabled, oidc_http_exception
+from constants import NAME_PATTERN
 from settings import settings
 from services import FederationService, StateManager, KafkaService, SyncConfigNotifier
 
@@ -69,7 +71,22 @@ def _parse_scoped_api_keys() -> List[Tuple[str, Set[str]]]:
     return parsed
 
 
-def _scope_matches(scopes: Set[str], required_scope: str) -> bool:
+def _resource_scope_matches(scope: str, base_scope: str, resource_name: str) -> bool:
+    prefix = f"{base_scope}:"
+    if not scope.startswith(prefix):
+        return False
+    pattern = scope[len(prefix):].strip()
+    return bool(pattern) and fnmatch.fnmatchcase(
+        resource_name.casefold(),
+        pattern.casefold(),
+    )
+
+
+def _scope_matches(
+    scopes: Set[str],
+    required_scope: str,
+    resource_name: Optional[str] = None,
+) -> bool:
     if "*" in scopes:
         return True
     if required_scope in scopes:
@@ -82,17 +99,38 @@ def _scope_matches(scopes: Set[str], required_scope: str) -> bool:
         return True
     if required_scope == "admin" and "admin:*" in scopes:
         return True
+    if resource_name:
+        if required_scope == "search":
+            return any(
+                _resource_scope_matches(scope, "search", resource_name)
+                or _resource_scope_matches(scope, "data", resource_name)
+                for scope in scopes
+            )
+        if required_scope == "ingest":
+            return any(
+                _resource_scope_matches(scope, "ingest", resource_name)
+                or _resource_scope_matches(scope, "data", resource_name)
+                for scope in scopes
+            )
+        if required_scope == "data":
+            return any(
+                _resource_scope_matches(scope, "data", resource_name)
+                for scope in scopes
+            )
     return False
 
 
-def _candidate_keys_for_scope(required_scope: str) -> List[str]:
+def _candidate_keys_for_scope(
+    required_scope: str,
+    resource_name: Optional[str] = None,
+) -> List[str]:
     candidates: List[str] = []
     if required_scope == "admin" and settings.ADMIN_API_KEY:
         candidates.append(settings.ADMIN_API_KEY)
     if required_scope in {"search", "ingest", "data"} and settings.DATA_API_KEY:
         candidates.append(settings.DATA_API_KEY)
     for key, scopes in _parse_scoped_api_keys():
-        if _scope_matches(scopes, required_scope):
+        if _scope_matches(scopes, required_scope, resource_name):
             candidates.append(key)
     return candidates
 
@@ -105,8 +143,9 @@ def _require_api_key_for_scope(
     missing_detail: str,
     x_api_key: Optional[str],
     authorization: Optional[str],
+    resource_name: Optional[str] = None,
 ) -> None:
-    candidates = _candidate_keys_for_scope(required_scope)
+    candidates = _candidate_keys_for_scope(required_scope, resource_name)
     oidc_is_enabled = oidc_enabled()
     if not candidates and not oidc_is_enabled:
         if allow_unauthenticated:
@@ -125,7 +164,11 @@ def _require_api_key_for_scope(
     if authorization and authorization.startswith("Bearer ") and oidc_is_enabled:
         token = authorization[7:].strip()
         try:
-            auth_result = authenticate_oidc_bearer(token, required_scope)
+            auth_result = authenticate_oidc_bearer(
+                token,
+                required_scope,
+                resource_name,
+            )
         except Exception as exc:
             raise oidc_http_exception(exc) from exc
         if auth_result:
@@ -198,6 +241,42 @@ def require_ingest_api_key(
     _require_api_key_for_scope(
         request=request,
         required_scope="ingest",
+        allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_DATA,
+        missing_detail="Ingest API key is required",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_search_collection_api_key(
+    request: Request,
+    collection_name: str = Path(..., pattern=NAME_PATTERN),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require search scope for the requested collection."""
+    _require_api_key_for_scope(
+        request=request,
+        required_scope="search",
+        resource_name=collection_name,
+        allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_DATA,
+        missing_detail="Search API key is required",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_ingest_collection_api_key(
+    request: Request,
+    collection_name: str = Path(..., pattern=NAME_PATTERN),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require ingest scope for the requested collection."""
+    _require_api_key_for_scope(
+        request=request,
+        required_scope="ingest",
+        resource_name=collection_name,
         allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_DATA,
         missing_detail="Ingest API key is required",
         x_api_key=x_api_key,
