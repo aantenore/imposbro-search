@@ -206,7 +206,9 @@ docker-compose up --build
 
 * **Admin UI:** `http://localhost:3001` - **Your primary control panel.**
 * **API Documentation:** `http://localhost:8000/docs` - **Interactive Swagger UI**
-* **Grafana Monitoring:** `http://localhost:3000` (Login: `admin` / `admin`)
+* **Grafana Monitoring:** `http://localhost:3000` (defaults from `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`)
+
+Docker Compose binds published ports to `127.0.0.1` by default through `HOST_BIND_IP`, matching the local-only unauthenticated defaults in `.env.example`.
 
 ### 3. Test Document-Level Sharding
 
@@ -323,6 +325,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DEFAULT_DATA2_CLUSTER_NODES` | Optional second federated cluster nodes |
 | `DEFAULT_DATA2_CLUSTER_API_KEY` | API key for optional second cluster |
 | `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
+| `HOST_BIND_IP` | Local Docker Compose bind address for published ports; defaults to `127.0.0.1` |
 | `COMPOSE_SUBNET` | Local Docker Compose subnet used for stable Typesense Raft peer IPs |
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
@@ -330,11 +333,14 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, `search`, `ingest`, `data`, and `*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
+| `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
+| `ADMIN_UI_PROXY_TRUSTED_VALUE` | Optional expected value for `ADMIN_UI_PROXY_TRUSTED_HEADER` |
 | `DATA_API_KEY` | Coarse legacy data-plane API key; grants both `/ingest/*` and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
 | `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
+| `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
 Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials or scoped keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
 
@@ -462,25 +468,24 @@ The Helm chart deploys pre-built images. You must first build the images and pus
 docker compose build admin_ui query_api indexing_service
 
 # 2. Tag the images for your registry
-# Replace 'your-registry-user' with your registry's username/organization
-docker tag imposbro-search-admin_ui your-registry-user/imposbro-admin-ui:latest
-docker tag imposbro-search-query_api your-registry-user/imposbro-query-api:latest
-docker tag imposbro-search-indexing_service your-registry-user/imposbro-indexing-service:latest
+# Replace 'your-registry-user' and '1.0.0' with your registry and immutable release tag
+docker tag imposbro-search-admin_ui your-registry-user/imposbro-admin-ui:1.0.0
+docker tag imposbro-search-query_api your-registry-user/imposbro-query-api:1.0.0
+docker tag imposbro-search-indexing_service your-registry-user/imposbro-indexing-service:1.0.0
 
 # 3. Push the images
-docker push your-registry-user/imposbro-admin-ui:latest
-docker push your-registry-user/imposbro-query-api:latest
-docker push your-registry-user/imposbro-indexing-service:latest
+docker push your-registry-user/imposbro-admin-ui:1.0.0
+docker push your-registry-user/imposbro-query-api:1.0.0
+docker push your-registry-user/imposbro-indexing-service:1.0.0
 ```
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Update `values.yaml`:** Open `helm/values.yaml` and update the `image` repository values for `queryApi`, `adminUi`, and `indexingService` to match the image names you just pushed.
-    For production, set `config.useSecret: true`, provide all API keys through a secure values file or external secret manager, and keep `ALLOW_UNAUTHENTICATED_ADMIN` set to `"false"`.
+1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required API keys. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, `ADMIN_API_KEY`, `DATA_API_KEY` or scoped keys, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header.
     The chart also exposes per-workload `replicaCount`, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
-    helm install imposbro-release ./helm
+    helm install imposbro-release ./helm -f production-values.yaml
     ```
 3.  **Check Status:** To check the status of your deployment, run:
     ```bash
@@ -529,6 +534,8 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] Grafana dashboard panels (documents by collection, error rate, indexing retries, DLQ)
 * [x] Admin UI Operations workflow for masked export, restore-ready export, dry-run import, and apply confirmation
 * [x] Admin UI schema reconciliation workflow with per-cluster report
+* [x] Helm release validation for immutable images, required external services, required secrets, and trusted Admin UI proxy key injection
+* [x] Admin UI fan-out routing editor, search pagination, advanced search tuning fields, cluster health details, and audit filters
 
 ### 🚧 Future
 
@@ -573,6 +580,8 @@ make smoke-alias
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
+
+Pushes to `main` and pull requests run the same release gate in GitHub Actions: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm lint/render. A separate Runtime Smoke workflow can be run manually and also runs weekly to boot the Docker stack and verify Kafka ingest, indexing, federated vector search, and the Admin UI proxy.
 
 ---
 

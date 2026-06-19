@@ -103,6 +103,17 @@ def build_topic_subscription_pattern(topic_prefix: str) -> str:
     return rf"^{escaped_prefix}_(?!{dlq_topic_name}$).*"
 
 
+def resolve_target_cluster(target_cluster: Optional[str], typesense_clients: Dict) -> str:
+    """Resolve legacy/virtual target names to a concrete loaded data cluster."""
+    if target_cluster and target_cluster != "default":
+        return target_cluster
+    if "default-data-cluster" in typesense_clients:
+        return "default-data-cluster"
+    if typesense_clients:
+        return next(iter(typesense_clients.keys()))
+    return target_cluster or "default"
+
+
 def run_consumer(typesense_clients: Dict, refresh_clients=None) -> None:
     """
     Main consumer loop for indexing documents from Kafka.
@@ -319,7 +330,7 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
             f"Message missing target_cluster field. "
             f"Falling back to 'default' cluster for backward compatibility."
         )
-        target_cluster = "default"
+    target_cluster = resolve_target_cluster(target_cluster, typesense_clients)
 
     doc_id = document.get("id", "unknown")
 

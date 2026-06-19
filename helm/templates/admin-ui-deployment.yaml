@@ -32,7 +32,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Values.adminUi.name }}
-          image: "{{ .Values.adminUi.image }}"
+          image: "{{ include "imposbro-search.requiredImage" (dict "name" "adminUi.image" "value" .Values.adminUi.image) }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

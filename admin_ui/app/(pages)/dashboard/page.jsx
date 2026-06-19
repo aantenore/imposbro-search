@@ -7,6 +7,7 @@ import { api } from '../../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/Card';
 import RoutingDiagram from '../../components/RoutingDiagram';
 import { cn } from '../../lib/utils';
+import StatusBadge from '../../components/ui/StatusBadge';
 
 const GRAFANA_URL = process.env.NEXT_PUBLIC_GRAFANA_URL || 'http://localhost:3000';
 
@@ -70,6 +71,8 @@ export default function DashboardPage() {
   const status = health?.status ?? 'unknown';
   const clusters = stats?.clusters ?? health?.clusters ?? '—';
   const collections = stats?.collections ?? health?.collections ?? '—';
+  const dataClusters = Object.entries(health?.data_clusters || {});
+  const dataClusterNodes = health?.data_cluster_nodes || {};
 
   return (
     <div className="space-y-10">
@@ -125,6 +128,52 @@ export default function DashboardPage() {
           </CardHeader>
         </Card>
       </div>
+
+      {dataClusters.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold">Data cluster health</CardTitle>
+            <CardDescription>Per-cluster readiness from the Query API health endpoint</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {dataClusters.map(([clusterName, clusterStatus]) => {
+                const nodes = dataClusterNodes[clusterName] || [];
+                return (
+                  <div
+                    key={clusterName}
+                    className="rounded-lg border border-border bg-muted/20 p-3"
+                  >
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono text-sm font-semibold text-foreground">
+                        {clusterName}
+                      </span>
+                      <StatusBadge variant={clusterStatus === 'ok' ? 'success' : 'warning'}>
+                        {clusterStatus}
+                      </StatusBadge>
+                    </div>
+                    <div className="space-y-1">
+                      {nodes.map((node) => (
+                        <div
+                          key={`${clusterName}-${node.host}`}
+                          className="flex items-center justify-between gap-2 text-xs"
+                        >
+                          <span className="truncate font-mono text-muted-foreground">
+                            {node.host}
+                          </span>
+                          <span className={node.status === 'ok' ? 'text-emerald-400' : 'text-amber-400'}>
+                            {node.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-5">
         <FeatureCard

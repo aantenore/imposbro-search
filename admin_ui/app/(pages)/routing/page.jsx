@@ -7,10 +7,26 @@ import { useNotification, Notification } from '../../hooks/useNotification';
 import { ConfirmationModal } from '../../components/ui';
 import Card from '../../components/ui/Card';
 import Button, { IconButton } from '../../components/ui/Button';
-import Input, { Select } from '../../components/ui/Input';
+import Input, { Checkbox, Select } from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import RoutingDiagram from '../../components/RoutingDiagram';
+
+function normalizeRuleTargets(rule, fallbackCluster = '') {
+    const rawTargets = Array.isArray(rule.clusters)
+        ? rule.clusters
+        : [rule.cluster || fallbackCluster];
+    return Array.from(new Set(rawTargets.filter(Boolean)));
+}
+
+function toApiRule(rule) {
+    const targetClusters = normalizeRuleTargets(rule);
+    const base = { field: rule.field, value: rule.value };
+    if (targetClusters.length === 1) {
+        return { ...base, cluster: targetClusters[0] };
+    }
+    return { ...base, clusters: targetClusters };
+}
 
 /**
  * Routing Page
@@ -70,7 +86,7 @@ export default function RoutingPage() {
                     setRules(existing.rules.map((r) => ({
                         field: r.field,
                         value: r.value,
-                        cluster: r.cluster || (r.clusters && r.clusters[0]) || clus[0] || '',
+                        clusters: normalizeRuleTargets(r, clus[0] || ''),
                     })));
                     setDefaultCluster(existing.default_cluster || clus[0] || '');
                 } else {
@@ -95,7 +111,7 @@ export default function RoutingPage() {
         if (availableFields.length === 0) return;
         setRules(prev => [
             ...prev,
-            { field: availableFields[0].name, value: '', cluster: clusters[0] || '' }
+            { field: availableFields[0].name, value: '', clusters: clusters[0] ? [clusters[0]] : [] }
         ]);
     };
 
@@ -112,6 +128,17 @@ export default function RoutingPage() {
         });
     };
 
+    const handleRuleClusterToggle = (index, clusterName, checked) => {
+        setRules(prev => prev.map((rule, ruleIndex) => {
+            if (ruleIndex !== index) return rule;
+            const current = normalizeRuleTargets(rule);
+            const nextClusters = checked
+                ? Array.from(new Set([...current, clusterName]))
+                : current.filter((name) => name !== clusterName);
+            return { ...rule, clusters: nextClusters };
+        }));
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -124,7 +151,9 @@ export default function RoutingPage() {
         try {
             await api.routing.setRules({
                 collection: selectedCollection,
-                rules: rules.filter(r => r.field && r.value && r.cluster),
+                rules: rules
+                    .filter(r => r.field && r.value && normalizeRuleTargets(r).length > 0)
+                    .map(toApiRule),
                 default_cluster: defaultCluster,
             });
             showSuccess(`Routing rules for '${selectedCollection}' saved successfully!`);
@@ -221,10 +250,10 @@ export default function RoutingPage() {
                                     {rules.map((rule, index) => (
                                         <div
                                             key={index}
-                                            className="grid grid-cols-12 gap-2 items-center mt-2 p-3 bg-muted/30 rounded-lg border border-border"
+                                            className="grid grid-cols-12 gap-3 items-start mt-2 p-3 bg-muted/30 rounded-lg border border-border"
                                         >
                                             <Select
-                                                className="col-span-4"
+                                                className="col-span-12 md:col-span-3"
                                                 name="field"
                                                 value={rule.field}
                                                 onChange={(e) => handleRuleChange(index, e)}
@@ -236,24 +265,31 @@ export default function RoutingPage() {
                                                 ))}
                                             </Select>
                                             <Input
-                                                className="col-span-4"
+                                                className="col-span-12 md:col-span-3"
                                                 name="value"
                                                 placeholder="Value"
                                                 value={rule.value}
                                                 onChange={(e) => handleRuleChange(index, e)}
                                             />
-                                            <Select
-                                                className="col-span-3"
-                                                name="cluster"
-                                                value={rule.cluster}
-                                                onChange={(e) => handleRuleChange(index, e)}
-                                            >
-                                                {clusters.map(c => (
-                                                    <option key={c} value={c}>{c}</option>
-                                                ))}
-                                            </Select>
+                                            <div className="col-span-12 md:col-span-5">
+                                                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                    Target clusters
+                                                </p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {clusters.map(c => (
+                                                        <Checkbox
+                                                            key={c}
+                                                            label={c}
+                                                            checked={normalizeRuleTargets(rule).includes(c)}
+                                                            onChange={(e) => handleRuleClusterToggle(index, c, e.target.checked)}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
                                             <IconButton
+                                                type="button"
                                                 variant="danger"
+                                                className="col-span-12 justify-self-end md:col-span-1"
                                                 onClick={() => handleRemoveRule(index)}
                                             >
                                                 <X size={16} />
@@ -262,6 +298,7 @@ export default function RoutingPage() {
                                     ))}
 
                                     <Button
+                                        type="button"
                                         variant="ghost"
                                         size="sm"
                                         leftIcon={<Plus size={16} />}
@@ -314,12 +351,19 @@ export default function RoutingPage() {
                                     <p className="mb-3 font-bold text-foreground">{collection}</p>
                                     <ul className="space-y-2 text-sm">
                                         {ruleConfig.rules.map((r, i) => (
-                                            <li key={i} className="flex items-center gap-2">
+                                            <li key={i} className="flex flex-wrap items-center gap-2">
                                                 <span className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs">
                                                     {r.field}: {r.value}
                                                 </span>
                                                 <span className="text-muted-foreground">→</span>
-                                                <span className="font-semibold text-primary">{r.cluster}</span>
+                                                {normalizeRuleTargets(r).map((clusterName) => (
+                                                    <span
+                                                        key={clusterName}
+                                                        className="rounded border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-semibold text-primary"
+                                                    >
+                                                        {clusterName}
+                                                    </span>
+                                                ))}
                                             </li>
                                         ))}
                                         <li className="flex items-center gap-2 border-t border-border pt-2">

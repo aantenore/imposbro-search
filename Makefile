@@ -2,6 +2,7 @@
 
 PYTHON ?= python3
 HELM ?= $(shell command -v helm 2>/dev/null || printf "%s/.local/bin/helm" "$$HOME")
+HELM_TEST_VALUES ?= -f helm/ci-values.yaml
 
 .PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias ci
 
@@ -44,8 +45,8 @@ compose-config:
 	docker compose config --quiet
 
 helm:
-	$(HELM) lint ./helm
-	$(HELM) template imposbro-release ./helm >/tmp/imposbro-helm-rendered.yaml
+	$(HELM) lint ./helm $(HELM_TEST_VALUES)
+	$(HELM) template imposbro-release ./helm $(HELM_TEST_VALUES) >/tmp/imposbro-helm-rendered.yaml
 
 smoke-vector:
 	$(PYTHON) scripts/smoke-vector-search.py
