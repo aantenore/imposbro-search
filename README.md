@@ -272,7 +272,8 @@ Global merge supports simple `sort_by` expressions such as `price:asc` or `_text
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Basic health check |
-| `/health` | GET | Detailed health with cluster count |
+| `/health` | GET | Detailed dependency health with Redis, Kafka, and per-data-cluster readiness |
+| `/ready` | GET | Readiness probe; returns HTTP 503 until required dependencies and data clusters are ready |
 | `/metrics` | GET | Prometheus metrics |
 
 ---

@@ -69,7 +69,7 @@ Implication: the product should not compete as “another search engine.” It s
 
 ### Improvements
 
-1. **Health**: `/health` now exposes `redis` and `kafka` connectivity; `status` is `degraded` when there are no clusters or Redis is down.
+1. **Health/readiness**: `/health` now exposes Redis, Kafka, and per-data-cluster readiness; `/ready` returns HTTP 503 until all required dependencies and data clusters are ready.
 2. **Helm**: Added indexing-service deployment (values + template).
 3. **Tests**: Pytest suite for Query API (root, health, ingest without `id`, valid ingest), with test lifespan (`TESTING=1`) and minimal env in `conftest`.
 4. **Documentation**: `.env.example` commented; `PROJECT_ANALYSIS.md` (this file).

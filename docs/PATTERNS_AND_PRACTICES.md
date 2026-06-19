@@ -96,7 +96,8 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 ### 4.2 Health checks
 
 - `GET /`: Minimal liveness (service name, version, status).
-- `GET /health`: Detailed health with cluster count, Redis and Kafka connectivity. Returns `status: degraded` when clusters are zero or Redis is down, so load balancers can optionally treat it as unhealthy.
+- `GET /health`: Detailed dependency health with cluster count, Redis, Kafka, and per-data-cluster readiness. It returns JSON even when degraded.
+- `GET /ready`: Readiness probe for orchestrators. Returns HTTP 503 until all required dependencies and data clusters are ready.
 
 ### 4.3 Metrics
 
