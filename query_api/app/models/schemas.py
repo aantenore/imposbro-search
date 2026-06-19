@@ -307,3 +307,7 @@ class ControlPlaneStateSnapshot(BaseModel):
         default_factory=dict,
         description="Desired Typesense collection schemas for reconciliation",
     )
+    collection_aliases: Dict[str, Dict[str, Dict[str, str]]] = Field(
+        default_factory=dict,
+        description="Desired collection aliases keyed by cluster name",
+    )

@@ -59,6 +59,7 @@ def _federation_runtime_snapshot(federation: FederationService) -> Dict[str, Any
         "clients": dict(federation.clients),
         "routing_rules": copy.deepcopy(federation.routing_rules),
         "collection_schemas": copy.deepcopy(federation.collection_schemas),
+        "collection_aliases": copy.deepcopy(federation.collection_aliases),
     }
 
 
@@ -75,6 +76,8 @@ def _restore_federation_runtime(
     federation.routing_rules.update(snapshot["routing_rules"])
     federation.collection_schemas.clear()
     federation.collection_schemas.update(snapshot["collection_schemas"])
+    federation.collection_aliases.clear()
+    federation.collection_aliases.update(snapshot["collection_aliases"])
 
 
 def _persist_state_or_500(
@@ -87,6 +90,7 @@ def _persist_state_or_500(
         federation.clusters_config,
         federation.routing_rules,
         federation.collection_schemas,
+        federation.collection_aliases,
     )
     if not saved:
         if rollback_snapshot is not None:
@@ -170,7 +174,12 @@ def _state_snapshot_from_federation(
         federation_clusters_config=clusters_config,
         collection_routing_rules=copy.deepcopy(federation.routing_rules),
         collection_schemas=copy.deepcopy(federation.collection_schemas),
+        collection_aliases=copy.deepcopy(federation.collection_aliases),
     )
+
+
+def _alias_count(snapshot: ControlPlaneStateSnapshot) -> int:
+    return sum(len(aliases) for aliases in snapshot.collection_aliases.values())
 
 
 def _snapshot_counts(snapshot: ControlPlaneStateSnapshot) -> Dict[str, int]:
@@ -178,6 +187,7 @@ def _snapshot_counts(snapshot: ControlPlaneStateSnapshot) -> Dict[str, int]:
         "clusters": len(snapshot.federation_clusters_config),
         "routing_rules": len(snapshot.collection_routing_rules),
         "collection_schemas": len(snapshot.collection_schemas),
+        "collection_aliases": _alias_count(snapshot),
     }
 
 
@@ -203,8 +213,27 @@ def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: boo
     _validate_name_map("cluster", snapshot.federation_clusters_config)
     _validate_name_map("collection", snapshot.collection_routing_rules)
     _validate_name_map("collection", snapshot.collection_schemas)
+    _validate_name_map("cluster", snapshot.collection_aliases)
 
     cluster_names = set(snapshot.federation_clusters_config.keys())
+    for cluster_name, aliases in snapshot.collection_aliases.items():
+        if cluster_name != "default" and cluster_name not in cluster_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Aliases reference unknown cluster '{cluster_name}'.",
+            )
+        _validate_name_map("alias", aliases)
+        for alias_name, alias_config in aliases.items():
+            collection_name = str(alias_config.get("collection_name", "")).strip()
+            if not collection_name or not re.fullmatch(NAME_PATTERN, collection_name):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Alias '{alias_name}' on cluster '{cluster_name}' "
+                        "has an invalid collection_name."
+                    ),
+                )
+
     for collection, schema_config in snapshot.collection_schemas.items():
         try:
             schema = CollectionSchema.model_validate(schema_config)
@@ -266,6 +295,53 @@ def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: boo
                             f"cluster '{target}'."
                         ),
                     )
+
+
+def _restore_collection_aliases(
+    federation: FederationService,
+    collection_aliases: Dict[str, Dict[str, Dict[str, str]]],
+) -> None:
+    """Apply desired alias bindings to their configured Typesense clusters."""
+    for cluster_name, aliases in collection_aliases.items():
+        client = federation.get_client_for_cluster(cluster_name)
+        if not client:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cannot restore aliases: cluster '{cluster_name}' is unavailable.",
+            )
+        for alias_name, alias_config in aliases.items():
+            collection_name = alias_config["collection_name"]
+            try:
+                client.aliases.upsert(
+                    alias_name,
+                    {"collection_name": collection_name},
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to restore alias '%s' on cluster '%s': %s",
+                    alias_name,
+                    cluster_name,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"Could not restore alias '{alias_name}' on cluster "
+                        f"'{cluster_name}': {exc}"
+                    ),
+                )
+
+
+def _resolved_alias_cluster_name(
+    federation: FederationService,
+    cluster_name: str,
+) -> str:
+    resolver = getattr(federation, "resolve_cluster_name", None)
+    if callable(resolver):
+        resolved = resolver(cluster_name)
+        if isinstance(resolved, str) and resolved:
+            return resolved
+    return cluster_name
 
 
 # ----- Cluster Management -----
@@ -415,11 +491,13 @@ def import_control_plane_state(
     clusters_config = copy.deepcopy(snapshot.federation_clusters_config)
     routing_rules = copy.deepcopy(snapshot.collection_routing_rules)
     collection_schemas = copy.deepcopy(snapshot.collection_schemas)
+    collection_aliases = copy.deepcopy(snapshot.collection_aliases)
 
     saved = state_manager.save_state(
         clusters_config,
         routing_rules,
         collection_schemas,
+        collection_aliases,
     )
     if not saved:
         raise HTTPException(status_code=500, detail="Could not persist imported state.")
@@ -428,7 +506,11 @@ def import_control_plane_state(
         clusters_config,
         routing_rules,
         collection_schemas,
+        collection_aliases,
     )
+    if collection_aliases:
+        federation.reconcile_collection_schemas()
+    _restore_collection_aliases(federation, collection_aliases)
     _notify_config_change(notifier, "state_imported")
     _record_admin_audit(
         state_manager,
@@ -727,6 +809,10 @@ async def delete_collection(
     if collection_name in federation.routing_rules:
         del federation.routing_rules[collection_name]
     federation.collection_schemas.pop(collection_name, None)
+    for aliases in federation.collection_aliases.values():
+        for alias_name, alias_config in list(aliases.items()):
+            if alias_config.get("collection_name") == collection_name:
+                aliases.pop(alias_name, None)
 
     _persist_state_or_500(state_manager, federation, rollback_snapshot)
     _notify_config_change(notifier, f"collection_deleted:{collection_name}")
@@ -759,6 +845,7 @@ async def upsert_alias(
     ),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """
     Create or update an alias pointing to a collection (Typesense alias).
@@ -770,26 +857,36 @@ async def upsert_alias(
             status_code=404,
             detail=f"Cluster '{cluster_name}' not found or not available.",
         )
+    resolved_cluster_name = _resolved_alias_cluster_name(federation, cluster_name)
     try:
         await asyncio.to_thread(
             client.aliases.upsert,
             alias_name,
             {"collection_name": collection_name},
         )
-        _record_admin_audit(
-            state_manager,
-            request,
-            action="alias_upserted",
-            resource_type="alias",
-            resource_id=alias_name,
-            details={"collection_name": collection_name, "cluster_name": cluster_name},
-        )
-        return OperationResponse(
-            message=f"Alias '{alias_name}' -> '{collection_name}' on cluster '{cluster_name}'."
-        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    rollback_snapshot = _federation_runtime_snapshot(federation)
+    federation.collection_aliases.setdefault(resolved_cluster_name, {})[alias_name] = {
+        "collection_name": collection_name
+    }
+    _persist_state_or_500(state_manager, federation, rollback_snapshot)
+    _notify_config_change(notifier, f"alias_upserted:{resolved_cluster_name}:{alias_name}")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="alias_upserted",
+        resource_type="alias",
+        resource_id=alias_name,
+        details={
+            "collection_name": collection_name,
+            "cluster_name": resolved_cluster_name,
+        },
+    )
+    return OperationResponse(
+        message=f"Alias '{alias_name}' -> '{collection_name}' on cluster '{cluster_name}'."
+    )
 
 @router.get(
     "/aliases",
@@ -827,6 +924,7 @@ async def delete_alias(
     ),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
 ) -> OperationResponse:
     """Remove an alias from the cluster."""
     client = federation.get_client_for_cluster(cluster_name)
@@ -835,21 +933,31 @@ async def delete_alias(
             status_code=404,
             detail=f"Cluster '{cluster_name}' not found or not available.",
         )
+    resolved_cluster_name = _resolved_alias_cluster_name(federation, cluster_name)
     try:
         await asyncio.to_thread(client.aliases[alias_name].delete)
-        _record_admin_audit(
-            state_manager,
-            request,
-            action="alias_deleted",
-            resource_type="alias",
-            resource_id=alias_name,
-            details={"cluster_name": cluster_name},
-        )
-        return OperationResponse(message=f"Alias '{alias_name}' deleted.")
     except typesense.exceptions.ObjectNotFound:
         raise HTTPException(status_code=404, detail=f"Alias '{alias_name}' not found.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    rollback_snapshot = _federation_runtime_snapshot(federation)
+    aliases = federation.collection_aliases.get(resolved_cluster_name)
+    if aliases is not None:
+        aliases.pop(alias_name, None)
+        if not aliases:
+            federation.collection_aliases.pop(resolved_cluster_name, None)
+    _persist_state_or_500(state_manager, federation, rollback_snapshot)
+    _notify_config_change(notifier, f"alias_deleted:{resolved_cluster_name}:{alias_name}")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="alias_deleted",
+        resource_type="alias",
+        resource_id=alias_name,
+        details={"cluster_name": resolved_cluster_name},
+    )
+    return OperationResponse(message=f"Alias '{alias_name}' deleted.")
 
 
 # ----- Routing Rules Management -----

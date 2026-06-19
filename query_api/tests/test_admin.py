@@ -269,6 +269,9 @@ def test_state_export_masks_cluster_api_keys_by_default(client):
     client.app.state.federation_service.collection_schemas = {
         "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
     }
+    client.app.state.federation_service.collection_aliases = {
+        "cluster-a": {"products_live": {"collection_name": "products"}}
+    }
 
     r = client.get("/admin/state/export")
 
@@ -279,6 +282,9 @@ def test_state_export_masks_cluster_api_keys_by_default(client):
     assert data["federation_clusters_config"]["cluster-a"]["api_key"] == (
         "************-key"
     )
+    assert data["collection_aliases"] == {
+        "cluster-a": {"products_live": {"collection_name": "products"}}
+    }
     assert "super-secret-key" not in json.dumps(data)
 
 
@@ -307,6 +313,7 @@ def test_state_export_can_include_raw_secrets_when_requested(client):
         "clusters": 1,
         "routing_rules": 0,
         "collection_schemas": 0,
+        "collection_aliases": 0,
         "secrets_included": True,
     }
     assert "super-secret-key" not in str(audit_kwargs["details"])
@@ -343,6 +350,7 @@ def test_state_import_dry_run_validates_without_mutating(client):
         "clusters": 1,
         "routing_rules": 1,
         "collection_schemas": 1,
+        "collection_aliases": 0,
     }
     client.app.state.state_manager.save_state.assert_not_called()
     client.app.state.federation_service.reload_from_state.assert_not_called()
@@ -432,6 +440,10 @@ def test_state_import_apply_rejects_masked_secrets(client):
 def test_state_import_apply_persists_reloads_notifies_and_audits(client):
     """A restore-ready snapshot is persisted, loaded into runtime, broadcast, and audited."""
     client.app.state.state_manager.save_state.return_value = True
+    fake_typesense = MagicMock()
+    client.app.state.federation_service.get_client_for_cluster.return_value = (
+        fake_typesense
+    )
     snapshot = {
         "version": "imposbro.state.v1",
         "secrets_included": True,
@@ -449,6 +461,9 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
         "collection_schemas": {
             "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
         },
+        "collection_aliases": {
+            "cluster-a": {"products_live": {"collection_name": "products"}}
+        },
     }
 
     r = client.post("/admin/state/import?apply=true", json=snapshot)
@@ -459,12 +474,19 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
         snapshot["federation_clusters_config"],
         snapshot["collection_routing_rules"],
         snapshot["collection_schemas"],
+        snapshot["collection_aliases"],
     )
     client.app.state.federation_service.reload_from_state.assert_called_once_with(
         snapshot["federation_clusters_config"],
         snapshot["collection_routing_rules"],
         snapshot["collection_schemas"],
+        snapshot["collection_aliases"],
     )
+    fake_typesense.aliases.upsert.assert_called_once_with(
+        "products_live",
+        {"collection_name": "products"},
+    )
+    client.app.state.federation_service.reconcile_collection_schemas.assert_called_once_with()
     client.app.state.config_notifier.notify.assert_called_once_with("state_imported")
     audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
     assert audit_kwargs["action"] == "state_imported"
@@ -472,6 +494,7 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
         "clusters": 1,
         "routing_rules": 1,
         "collection_schemas": 1,
+        "collection_aliases": 1,
     }
     assert "raw-secret" not in str(audit_kwargs)
 
@@ -622,6 +645,8 @@ def test_reconcile_collections_returns_cluster_report(client):
 
 def test_upsert_alias_uses_typesense_alias_collection_api(client):
     """Alias upsert goes through Typesense's collection-level aliases API."""
+    client.app.state.state_manager.save_state.return_value = True
+    client.app.state.federation_service.collection_aliases = {}
     fake_typesense = MagicMock()
     client.app.state.federation_service.get_client_for_cluster.return_value = (
         fake_typesense
@@ -637,6 +662,18 @@ def test_upsert_alias_uses_typesense_alias_collection_api(client):
         "products_live",
         {"collection_name": "products_v2"},
     )
+    assert client.app.state.federation_service.collection_aliases == {
+        "cluster-a": {"products_live": {"collection_name": "products_v2"}}
+    }
+    client.app.state.state_manager.save_state.assert_called_once_with(
+        client.app.state.federation_service.clusters_config,
+        client.app.state.federation_service.routing_rules,
+        client.app.state.federation_service.collection_schemas,
+        {"cluster-a": {"products_live": {"collection_name": "products_v2"}}},
+    )
+    client.app.state.config_notifier.notify.assert_called_once_with(
+        "alias_upserted:cluster-a:products_live"
+    )
     audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
     assert audit_kwargs["action"] == "alias_upserted"
     assert audit_kwargs["resource_type"] == "alias"
@@ -645,6 +682,34 @@ def test_upsert_alias_uses_typesense_alias_collection_api(client):
         "collection_name": "products_v2",
         "cluster_name": "cluster-a",
     }
+
+
+def test_delete_alias_removes_persisted_desired_alias(client):
+    """Alias delete removes the desired alias binding from persisted control-plane state."""
+    client.app.state.state_manager.save_state.return_value = True
+    client.app.state.federation_service.collection_aliases = {
+        "cluster-a": {"products_live": {"collection_name": "products_v2"}}
+    }
+    fake_typesense = MagicMock()
+    client.app.state.federation_service.get_client_for_cluster.return_value = (
+        fake_typesense
+    )
+
+    r = client.delete("/admin/aliases/products_live?cluster_name=cluster-a")
+
+    assert r.status_code == 200
+    fake_typesense.aliases.__getitem__.assert_called_once_with("products_live")
+    fake_typesense.aliases.__getitem__.return_value.delete.assert_called_once_with()
+    assert client.app.state.federation_service.collection_aliases == {}
+    client.app.state.state_manager.save_state.assert_called_once_with(
+        client.app.state.federation_service.clusters_config,
+        client.app.state.federation_service.routing_rules,
+        client.app.state.federation_service.collection_schemas,
+        {},
+    )
+    client.app.state.config_notifier.notify.assert_called_once_with(
+        "alias_deleted:cluster-a:products_live"
+    )
 
 
 def test_set_routing_rules_omits_null_fanout_field(client):
