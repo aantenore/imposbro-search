@@ -100,7 +100,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 - **Helm fail-fast**: The chart deploys only IMPOSBRO application workloads. Kafka, Redis, and Typesense must be supplied explicitly through values. Keep Helm validation strict: reject placeholder images, mutable `:latest` tags, missing external service endpoints, missing required API keys, and missing trusted Admin UI proxy identity headers when server-side key injection is enabled.
 - **Compose exposure**: Docker Compose is a local development stack. Bind published ports to `127.0.0.1` by default and keep unauthenticated bypasses local-only.
-- **Remote gates**: Pull requests and pushes to `main` must run unit/API/UI/lint/build/Compose/Helm checks. Runtime Docker smoke belongs in the manual/scheduled workflow because it validates the real Kafka/Typesense path and takes longer than the normal PR gate.
+- **Hosted gates**: Pull requests and pushes to `main` should run the same checks as `make ci`: unit/API/UI/lint/build/Compose/Helm. Runtime Docker smoke should run manually or on a schedule because it validates the real Kafka/Typesense path and takes longer than the normal PR gate. Creating GitHub workflow files requires credentials with the `workflow` scope.
 
 ---
 
