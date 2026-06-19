@@ -12,6 +12,16 @@ The market already has strong alternatives:
 
 The product is therefore not a generic “federated search” novelty. Its defensible value is narrower and real: document-level routing/fan-out, async indexing, and an admin surface around **multiple Typesense clusters** where native Typesense federation is not enough. Recommended positioning: open-source Typesense federation gateway/control plane, not an Elasticsearch/OpenSearch replacement.
 
+### Market Signals Checked
+
+- [Typesense federated / multi-search](https://typesense.org/docs/30.2/api/federated-multi-search.html) searches multiple collections in one request, mostly inside the Typesense API surface.
+- [Typesense search sorting](https://typesense.org/docs/30.2/api/search.html) supports `_text_match` and up to three sort fields, which makes exact gateway-side merge semantics important when results come from multiple physical clusters.
+- [Algolia multi-index search](https://www.algolia.com/doc/guides/building-search-ui/ui-and-ux-patterns/multi-index-search/react) is mature for UX-level federated experiences across indices.
+- [Meilisearch multi-search / federated search](https://meilisearch.com/docs/capabilities/multi_search/overview) now supports merged and re-ranked multi-index results.
+- [OpenSearch cross-cluster search](https://docs.opensearch.org/latest/search-plugins/cross-cluster-search/) and [Amazon OpenSearch Service cross-cluster search](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/cross-cluster-search.html) cover native cross-cluster querying for the OpenSearch ecosystem.
+
+Implication: the product should not compete as “another search engine.” It should compete as a configurable operational control plane for teams that already want Typesense but need physical cluster routing, async ingestion, auditability, and safer admin workflows.
+
 ### Build-vs-buy
 
 - **Build** when Typesense is a strategic choice and data must be split by tenant/region/cluster while still exposing one API and admin workflow.
@@ -38,11 +48,12 @@ The product is therefore not a generic “federated search” novelty. Its defen
 4. **Input validation**: cluster names, collection names, aliases, and routing models consistently use the shared Typesense-compatible name pattern.
 5. **State consistency**: startup distinguishes empty routing config from missing state, and admin mutations fail if state persistence fails.
 6. **Kafka reliability**: indexing consumer now uses manual offset commits after successful upsert and fails missing target-cluster messages instead of silently dropping them.
-7. **Search relevance**: federated merge now preserves Typesense `_text_match:desc` semantics.
+7. **Search relevance and honesty**: federated merge preserves Typesense `_text_match:desc` semantics, supports simple global `sort_by`, deduplicates using the same comparator, exposes partial failures, and returns `503` when every target cluster fails.
 8. **Helm deployment**: chart metadata is now `Chart.yaml`; ConfigMap/Secret env vars match the app settings; Admin UI service defaults to `ClusterIP`.
 9. **Dependency/security**: Admin UI upgraded to Next.js 16.2.9 and ESLint 9; production audit gate has no high/critical findings.
 10. **Delivery gates**: root `npm test` runs API and indexing tests; Admin UI has explicit lint/build/audit commands. A GitHub Actions workflow is recommended next, but was not committed because the current OAuth token cannot create workflow files without the `workflow` scope.
 11. **Runtime hardening**: Python Docker images use Python 3.11 and non-root users.
+12. **Data-plane auth and auditability**: `/ingest/*` and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
 
 ### Fixes
 

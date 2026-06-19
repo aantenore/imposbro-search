@@ -239,6 +239,38 @@ class FederationService:
         client = self.clients.get(default_name)
         return [(client, default_name)] if client else []
 
+    def _cluster_names_for_search(self, collection_name: str) -> List[str]:
+        """Return cluster names that may contain documents for a collection."""
+        rules = self.routing_rules.get(collection_name, {})
+        if not rules.get("rules"):
+            return list(self.clients.keys())
+
+        cluster_names: List[str] = []
+
+        def add_cluster(name: str) -> None:
+            if name == "default":
+                name = self._resolve_default_cluster() or ""
+            if name and name in self.clients and name not in cluster_names:
+                cluster_names.append(name)
+
+        for rule in rules.get("rules", []):
+            if "clusters" in rule:
+                for name in rule["clusters"]:
+                    add_cluster(name)
+            else:
+                add_cluster(rule["cluster"])
+        add_cluster(rules.get("default_cluster", "default"))
+        return cluster_names
+
+    def get_named_clients_for_search(
+        self, collection_name: str
+    ) -> List[Tuple[str, typesense.Client]]:
+        """Get named clients that may contain documents for a collection."""
+        return [
+            (name, self.clients[name])
+            for name in self._cluster_names_for_search(collection_name)
+        ]
+
     def get_clients_for_search(self, collection_name: str) -> List[typesense.Client]:
         """
         Get all clients that might contain documents for a collection.
@@ -252,26 +284,7 @@ class FederationService:
         Returns:
             List of Typesense clients to query
         """
-        rules = self.routing_rules.get(collection_name, {})
-        if rules.get("rules"):
-            cluster_names = set()
-            for r in rules.get("rules", []):
-                if "clusters" in r:
-                    cluster_names.update(r["clusters"])
-                else:
-                    cluster_names.add(r["cluster"])
-            default_name = rules.get("default_cluster", "default")
-            if default_name == "default":
-                resolved = self._resolve_default_cluster()
-                if resolved:
-                    cluster_names.add(resolved)
-            else:
-                cluster_names.add(default_name)
-            return [
-                self.clients[name] for name in cluster_names if name in self.clients
-            ]
-
-        return list(self.clients.values())
+        return [client for _, client in self.get_named_clients_for_search(collection_name)]
 
     def set_routing_rules(
         self, collection: str, rules: List[Dict], default_cluster: str
