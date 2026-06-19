@@ -92,13 +92,14 @@ The market does validate the problem, but it also narrows the room for different
 30. **Collection aliases smoke**: `make smoke-docker-alias` creates versioned collections, upserts aliases on every data cluster, verifies federated search follows the alias, switches the alias, verifies search follows the new target, and cleans up.
 31. **Local release gate**: `make ci` runs the API/worker tests, Admin UI tests, lint, production build, Docker Compose config validation, and Helm lint/render with CI values.
 32. **Kubernetes benchmark harness**: `make benchmark-k8s` runs configurable sustained ingest/search against a deployed Query API, waits for indexing visibility, records p50/p95/p99 latencies, emits JSON artifacts, and can enforce environment-specific SLO thresholds.
-33. **Release hardening**: Admin mutations roll runtime state back when persistence fails, cluster registration probes all declared nodes, search pagination fetches one extra hit for `next_offset`, fan-out search exposes deduplicated counts, legacy worker messages resolve `default` to a real cluster, Compose binds dev ports to localhost, Helm fails on placeholder/mutable images or missing service/secret values, and local Docker smoke targets cover runtime paths.
-34. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
-35. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search filters and validate or inject ingest tenant fields.
-36. **Alias state portability**: Collection alias bindings are persisted in control-plane state, included in backup/restore snapshots, restored through import apply, and covered by DR smoke.
-37. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
-38. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
-39. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/data access to collection glob patterns, with server-side enforcement in the Query API.
+33. **Kubernetes network boundary**: Helm now renders opt-in NetworkPolicies for Query API, Admin UI, and indexing metrics, with configurable ingress/gateway, Prometheus, and egress rules so production teams can enforce cluster-specific traffic boundaries.
+34. **Release hardening**: Admin mutations roll runtime state back when persistence fails, cluster registration probes all declared nodes, search pagination fetches one extra hit for `next_offset`, fan-out search exposes deduplicated counts, legacy worker messages resolve `default` to a real cluster, Compose binds dev ports to localhost, Helm fails on placeholder/mutable images or missing service/secret values, and local Docker smoke targets cover runtime paths.
+35. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
+36. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search filters and validate or inject ingest tenant fields.
+37. **Alias state portability**: Collection alias bindings are persisted in control-plane state, included in backup/restore snapshots, restored through import apply, and covered by DR smoke.
+38. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
+39. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
+40. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/data access to collection glob patterns, with server-side enforcement in the Query API.
 
 ### Fixes
 
@@ -157,7 +158,7 @@ The market does validate the problem, but it also narrows the room for different
 - **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, Helm autoscaling manifests, and a repeatable Kubernetes benchmark harness; the next credibility step is publishing results from a production-sized Kubernetes run.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
-- **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”
+- **Documentation depth**: horizontal scaling, production topology, NetworkPolicy, benchmark execution, and disaster-recovery drills now have operator runbooks. A published production-sized benchmark result is still needed before claiming broad enterprise scale proof.
 
 ---
 
