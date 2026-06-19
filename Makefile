@@ -9,7 +9,14 @@ SCALE_COMPOSE_FILE ?= docker-compose.yml:docker-compose.scale.yml
 SCALE_QUERY_API_REPLICAS ?= 3
 SCALE_INDEXING_REPLICAS ?= 3
 
-.PHONY: help test test-api test-ui lint build-ui compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
+BENCHMARK_DOCKER_DOCUMENTS ?= 500
+BENCHMARK_DOCKER_INGEST_CONCURRENCY ?= 16
+BENCHMARK_DOCKER_SEARCH_REQUESTS ?= 100
+BENCHMARK_DOCKER_SEARCH_CONCURRENCY ?= 8
+BENCHMARK_DOCKER_TIMEOUT_SECONDS ?= 180
+BENCHMARK_DOCKER_OUTPUT_JSON ?= artifacts/benchmark-docker.json
+
+.PHONY: help test test-api test-ui lint build-ui compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s benchmark-docker smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -28,6 +35,7 @@ help:
 	@echo "  make smoke-alias    Run collection alias switching smoke against an already running stack"
 	@echo "  make smoke-scale    Run multi-instance rolling smoke against an already running scaled stack"
 	@echo "  make benchmark-k8s  Run sustained ingest/search benchmark against Query API"
+	@echo "  make benchmark-docker Build/start Docker stack, run local benchmark, then stop it"
 	@echo "  make smoke-docker   Build/start Docker stack, run vector smoke, then stop it"
 	@echo "  make smoke-docker-outage Build/start Docker stack, run outage smoke, then stop it"
 	@echo "  make smoke-docker-load Build/start Docker stack, run load smoke, then stop it"
@@ -78,6 +86,19 @@ smoke-scale:
 	$(PYTHON) scripts/smoke-scale.py
 
 benchmark-k8s:
+	$(PYTHON) scripts/benchmark-k8s.py
+
+benchmark-docker:
+	@set -e; \
+	export COMPOSE_ENV_FILE=$(COMPOSE_ENV_FILE); \
+	docker compose --env-file $(COMPOSE_ENV_FILE) up -d --build query_api indexing_service admin_ui; \
+	trap 'docker compose --env-file $(COMPOSE_ENV_FILE) down' EXIT; \
+	BENCHMARK_DOCUMENTS=$(BENCHMARK_DOCKER_DOCUMENTS) \
+	BENCHMARK_INGEST_CONCURRENCY=$(BENCHMARK_DOCKER_INGEST_CONCURRENCY) \
+	BENCHMARK_SEARCH_REQUESTS=$(BENCHMARK_DOCKER_SEARCH_REQUESTS) \
+	BENCHMARK_SEARCH_CONCURRENCY=$(BENCHMARK_DOCKER_SEARCH_CONCURRENCY) \
+	BENCHMARK_TIMEOUT_SECONDS=$(BENCHMARK_DOCKER_TIMEOUT_SECONDS) \
+	BENCHMARK_OUTPUT_JSON=$(BENCHMARK_DOCKER_OUTPUT_JSON) \
 	$(PYTHON) scripts/benchmark-k8s.py
 
 smoke-docker:

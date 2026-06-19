@@ -635,6 +635,7 @@ indexingService:
 * [x] Per-workload Helm topology spread constraints for multi-node availability
 * [x] Opt-in Helm Ingress for Query API and Admin UI with TLS, class, host, path, and annotation controls
 * [x] Helm chart validation harness covering rendered resource counts, Ingress permutations, and fail-fast guardrails
+* [x] Docker benchmark target that starts the local stack, runs sustained ingest/search, and writes a JSON artifact
 
 ### 🚧 Future
 
@@ -675,6 +676,9 @@ make smoke-docker-scale
 
 # Kubernetes or port-forward benchmark: sustained ingest/search with optional SLOs
 make benchmark-k8s
+
+# Local Docker benchmark: start stack, run sustained ingest/search, save JSON artifact
+make benchmark-docker
 
 # Against an already running stack
 make smoke-vector
