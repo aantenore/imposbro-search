@@ -3,7 +3,7 @@
 PYTHON ?= python3
 HELM ?= $(shell command -v helm 2>/dev/null || printf "%s/.local/bin/helm" "$$HOME")
 
-.PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-outage smoke-load smoke-state smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state ci
+.PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -18,10 +18,12 @@ help:
 	@echo "  make smoke-outage   Run partial-outage smoke against an already running stack"
 	@echo "  make smoke-load     Run Kafka/indexing load smoke against an already running stack"
 	@echo "  make smoke-state    Run control-plane backup/restore smoke against an already running stack"
+	@echo "  make smoke-alias    Run collection alias switching smoke against an already running stack"
 	@echo "  make smoke-docker   Build/start Docker stack, run vector smoke, then stop it"
 	@echo "  make smoke-docker-outage Build/start Docker stack, run outage smoke, then stop it"
 	@echo "  make smoke-docker-load Build/start Docker stack, run load smoke, then stop it"
 	@echo "  make smoke-docker-state Build/start Docker stack, run state backup/restore smoke, then stop it"
+	@echo "  make smoke-docker-alias Build/start Docker stack, run alias switching smoke, then stop it"
 	@echo "  make ci             Run local release gate"
 
 test: test-api test-ui
@@ -57,6 +59,9 @@ smoke-load:
 smoke-state:
 	$(PYTHON) scripts/smoke-state-backup.py
 
+smoke-alias:
+	$(PYTHON) scripts/smoke-aliases.py
+
 smoke-docker:
 	@set -e; \
 	docker compose up -d --build query_api indexing_service admin_ui; \
@@ -80,5 +85,11 @@ smoke-docker-state:
 	docker compose up -d --build query_api indexing_service admin_ui; \
 	trap 'docker compose down' EXIT; \
 	$(PYTHON) scripts/smoke-state-backup.py
+
+smoke-docker-alias:
+	@set -e; \
+	docker compose up -d --build query_api indexing_service admin_ui; \
+	trap 'docker compose down' EXIT; \
+	$(PYTHON) scripts/smoke-aliases.py
 
 ci: test lint build-ui compose-config helm

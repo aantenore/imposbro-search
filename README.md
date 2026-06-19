@@ -561,11 +561,15 @@ make smoke-docker-load
 # DR smoke: control-plane export/import/reconcile against Docker stack
 make smoke-docker-state
 
+# Alias smoke: create versioned collections, switch alias, verify search follows it
+make smoke-docker-alias
+
 # Against an already running stack
 make smoke-vector
 make smoke-outage
 make smoke-load
 make smoke-state
+make smoke-alias
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
