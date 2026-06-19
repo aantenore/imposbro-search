@@ -99,4 +99,23 @@ Validate required external service and secret configuration.
 {{- if and (or .Values.config.ADMIN_API_KEY .Values.config.DATA_API_KEY .Values.config.INTERNAL_QUERY_API_ADMIN_API_KEY .Values.config.INTERNAL_QUERY_API_DATA_API_KEY) (not .Values.config.ADMIN_UI_PROXY_TRUSTED_HEADER) -}}
 {{- fail "config.ADMIN_UI_PROXY_TRUSTED_HEADER is required when the Admin UI proxy injects server-side API keys" -}}
 {{- end -}}
+{{- if and .Values.indexingService.autoscaling.enabled .Values.indexingService.keda.enabled -}}
+{{- fail "indexingService.autoscaling.enabled and indexingService.keda.enabled cannot both be true" -}}
+{{- end -}}
+{{- if and .Values.queryApi.autoscaling.enabled (not .Values.queryApi.autoscaling.targetCPUUtilizationPercentage) (not .Values.queryApi.autoscaling.targetMemoryUtilizationPercentage) -}}
+{{- fail "queryApi.autoscaling requires at least one CPU or memory target" -}}
+{{- end -}}
+{{- if and .Values.adminUi.autoscaling.enabled (not .Values.adminUi.autoscaling.targetCPUUtilizationPercentage) (not .Values.adminUi.autoscaling.targetMemoryUtilizationPercentage) -}}
+{{- fail "adminUi.autoscaling requires at least one CPU or memory target" -}}
+{{- end -}}
+{{- if and .Values.indexingService.autoscaling.enabled (not .Values.indexingService.autoscaling.targetCPUUtilizationPercentage) (not .Values.indexingService.autoscaling.targetMemoryUtilizationPercentage) -}}
+{{- fail "indexingService.autoscaling requires at least one CPU or memory target" -}}
+{{- end -}}
+{{- if .Values.indexingService.keda.enabled -}}
+{{- $_ := required "indexingService.keda.kafka.consumerGroup is required when KEDA is enabled" .Values.indexingService.keda.kafka.consumerGroup -}}
+{{- $bootstrap := default .Values.config.KAFKA_BROKER_URL .Values.indexingService.keda.kafka.bootstrapServers -}}
+{{- if not $bootstrap -}}
+{{- fail "indexingService.keda.kafka.bootstrapServers or config.KAFKA_BROKER_URL is required when KEDA is enabled" -}}
+{{- end -}}
+{{- end -}}
 {{- end }}

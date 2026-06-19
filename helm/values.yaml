@@ -37,6 +37,13 @@ queryApi:
   service:
     type: ClusterIP
     port: 80
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: ""
+    behavior: {}
   resources:
     requests:
       cpu: 100m
@@ -77,6 +84,13 @@ adminUi:
   service:
     type: ClusterIP # Expose through an authenticated Ingress or gateway in production
     port: 80
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: ""
+    behavior: {}
   resources:
     requests:
       cpu: 100m
@@ -114,6 +128,37 @@ indexingService:
       enabled: true
       type: ClusterIP
       port: 9108
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: ""
+    behavior: {}
+  keda:
+    enabled: false
+    minReplicaCount: 1
+    maxReplicaCount: 10
+    pollingInterval: 30
+    cooldownPeriod: 300
+    kafka:
+      # Defaults to config.KAFKA_BROKER_URL when empty.
+      bootstrapServers: ""
+      consumerGroup: imposbro_federated_indexing_group
+      # Leave empty to let KEDA calculate lag across all topics known to the consumer group.
+      topic: ""
+      lagThreshold: "50"
+      activationLagThreshold: "0"
+      offsetResetPolicy: latest
+      allowIdleConsumers: "false"
+      limitToPartitionsWithLag: "false"
+      ensureEvenDistributionOfPartitions: "false"
+      version: "1.0.0"
+      sasl: ""
+      tls: ""
+      unsafeSsl: ""
+    authenticationRef:
+      name: ""
   resources:
     requests:
       cpu: 100m

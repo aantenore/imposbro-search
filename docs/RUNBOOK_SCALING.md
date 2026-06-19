@@ -69,6 +69,41 @@ kubectl rollout status deployment imposbro-release-imposbro-search-indexing-serv
 
 Keep indexing replicas at or below useful Kafka partition parallelism. Extra replicas can help failover, but they will sit idle if there are fewer assigned partitions.
 
+## Kubernetes Autoscaling
+
+Use HPA for request-serving workloads when CPU or memory is the best available signal:
+
+```yaml
+queryApi:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+adminUi:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+```
+
+Use KEDA for indexing workers when Kafka lag is the real bottleneck signal. Install KEDA and its CRDs before enabling this value:
+
+```yaml
+indexingService:
+  keda:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 10
+    kafka:
+      lagThreshold: "50"
+      ensureEvenDistributionOfPartitions: "true"
+```
+
+When `indexingService.keda.kafka.topic` is empty, KEDA calculates lag across topics known to the consumer group. This matches the dynamic per-collection topic pattern, but production teams should confirm the consumer group has committed offsets for representative topics before relying on scale-from-zero. Keep `minReplicaCount` above `0` unless every high-volume topic has an explicit trigger.
+
 ## Lag Budget
 
 Default acceptance for local smoke is lag returning to `0` within `SMOKE_TIMEOUT_SECONDS`.

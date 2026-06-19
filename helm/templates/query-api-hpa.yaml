@@ -1,0 +1,37 @@
+{{- if .Values.queryApi.autoscaling.enabled -}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-query-api
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: query-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "imposbro-search.fullname" . }}-query-api
+  minReplicas: {{ .Values.queryApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.queryApi.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.queryApi.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.queryApi.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.queryApi.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.queryApi.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  {{- with .Values.queryApi.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

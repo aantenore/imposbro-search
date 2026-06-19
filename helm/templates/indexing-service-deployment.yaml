@@ -6,7 +6,9 @@ metadata:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: indexing-service
 spec:
+  {{- if and (not .Values.indexingService.autoscaling.enabled) (not .Values.indexingService.keda.enabled) }}
   replicas: {{ .Values.indexingService.replicaCount | default 1 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
