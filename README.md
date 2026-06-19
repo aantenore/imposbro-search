@@ -581,7 +581,7 @@ make smoke-alias
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
 
-Pushes to `main` and pull requests run the same release gate in GitHub Actions: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm lint/render. A separate Runtime Smoke workflow can be run manually and also runs weekly to boot the Docker stack and verify Kafka ingest, indexing, federated vector search, and the Admin UI proxy.
+`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm lint/render. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, and the Admin UI proxy. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
 
 ---
 
