@@ -346,6 +346,12 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DATA_API_KEY` | Coarse legacy data-plane API key; grants both `/ingest/*` and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
+| `RATE_LIMIT_ENABLED` | Enables fixed-window rate limiting for `/search/*` and `/ingest/*`; default `false` for backwards-compatible upgrades |
+| `RATE_LIMIT_BACKEND` | Rate-limit counter backend: `redis` for multi-replica deployments, `memory` only for single-process local/test runs |
+| `RATE_LIMIT_WINDOW_SECONDS` | Fixed-window duration in seconds |
+| `RATE_LIMIT_SEARCH_REQUESTS` / `RATE_LIMIT_INGEST_REQUESTS` | Per-identity request budgets per window for search and ingest |
+| `RATE_LIMIT_FAIL_CLOSED` | When `true`, return 503 if the rate-limit backend is unavailable; default fail-open keeps traffic flowing during Redis incidents |
+| `RATE_LIMIT_REDIS_PREFIX` | Redis key prefix for rate-limit counters |
 | `OIDC_ENABLED` | Enables OIDC/JWT Bearer-token auth after API-key checks fail; requires issuer, audience, algorithms, and either JWKS URL or static public key |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | Expected JWT `iss` and `aud` values |
 | `OIDC_JWKS_URL` / `OIDC_PUBLIC_KEY` | Exactly one signing-key source for JWT verification; asymmetric algorithms only |
@@ -359,6 +365,12 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
 Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
+
+Rate limiting is optional and config-driven. When `RATE_LIMIT_ENABLED=true`,
+`/search/*` and `/ingest/*` are limited separately by authenticated actor
+(hashed API-key actor or OIDC actor) and collection. In unauthenticated local
+development, the fallback identity is the client IP. Use `RATE_LIMIT_BACKEND=redis`
+for any replicated Query API deployment so all pods share counters.
 
 Example collection-scoped API key:
 
@@ -628,6 +640,7 @@ indexingService:
 * [x] Collection-scoped data-plane RBAC for API keys and OIDC claims
 * [x] Admin UI OIDC Authorization Code + PKCE login/session flow
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
+* [x] Configurable data-plane rate limiting for search and ingest with Redis-backed multi-replica counters
 * [x] Kubernetes ingest/search benchmark harness with JSON output and configurable SLO thresholds
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
 * [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting

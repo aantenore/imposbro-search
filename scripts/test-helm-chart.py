@@ -122,6 +122,7 @@ def main() -> None:
     require_contains(manifest, 'ingressClassName: "nginx"')
     require_contains(manifest, "api.imposbro.example.com")
     require_contains(manifest, "admin.imposbro.example.com")
+    require_contains(manifest, "RATE_LIMIT_ENABLED")
     print(f"Rendered counts: {counts}")
 
     print("==> Helm render: query-api ingress only")
@@ -155,6 +156,26 @@ def main() -> None:
         "indexingService.autoscaling.enabled and indexingService.keda.enabled cannot both be true",
         "--set",
         "indexingService.autoscaling.enabled=true",
+    )
+
+    print("==> Helm guardrail: rate-limit backend must be supported")
+    expect_failure(
+        "config.RATE_LIMIT_BACKEND must be redis or memory",
+        "--set",
+        "config.RATE_LIMIT_ENABLED=true",
+        "--set",
+        "config.RATE_LIMIT_BACKEND=sqlite",
+    )
+
+    print("==> Helm guardrail: memory rate-limit backend requires one replica")
+    expect_failure(
+        "config.RATE_LIMIT_BACKEND=memory is only supported for a single Query API replica",
+        "--set",
+        "config.RATE_LIMIT_ENABLED=true",
+        "--set",
+        "config.RATE_LIMIT_BACKEND=memory",
+        "--set",
+        "queryApi.replicaCount=2",
     )
 
     print("Helm chart validation passed.")
