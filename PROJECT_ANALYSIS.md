@@ -22,6 +22,24 @@ The product is therefore not a generic “federated search” novelty. Its defen
 
 Implication: the product should not compete as “another search engine.” It should compete as a configurable operational control plane for teams that already want Typesense but need physical cluster routing, async ingestion, auditability, and safer admin workflows.
 
+### Market Validation Refresh (2026-06-19)
+
+The market does validate the problem, but it also narrows the room for differentiation:
+
+- [Typesense Cloud pricing](https://cloud.typesense.org/pricing) emphasizes dedicated clusters with no record/search-operation limits, so the economic wedge is strongest for teams that like Typesense but need to manage multiple physical clusters themselves.
+- [Typesense federated / multi-search](https://typesense.org/docs/30.2/api/federated-multi-search.html) already supports multiple searches in one request and union search across collections; IMPOSBRO must therefore differentiate on multi-cluster routing, ingestion, operations, and governance, not on basic multi-index search.
+- [Typesense HA docs](https://typesense.org/docs/guide/high-availability.html) require explicit peering addresses in the nodes file; stable Docker/Kubernetes networking and readiness are not incidental details, they are core product reliability.
+- [Meilisearch federated search](https://www.meilisearch.com/docs/capabilities/multi_search/getting_started/federated_search) can merge multiple indexes into a single result list, making “merged search UX” a commodity expectation rather than a defensible feature by itself.
+- [OpenSearch cross-cluster search](https://docs.opensearch.org/latest/search-plugins/cross-cluster-search/) and [Elastic cross-cluster search](https://www.elastic.co/docs/explore-analyze/cross-cluster-search) directly address querying multiple clusters for their ecosystems; IMPOSBRO should not try to out-platform them.
+- [OpenSearch hybrid search](https://docs.opensearch.org/latest/vector-search/ai-search/hybrid-search/index/) and [Elastic AI/search positioning](https://www.elastic.co/enterprise-search) show that semantic, vector, and hybrid retrieval are now baseline market expectations.
+- [Algolia pricing](https://www.algolia.com/pricing) and [Coveo pricing](https://www.coveo.com/en/pricing) position AI relevance, enterprise controls, analytics, and managed support as paid value. IMPOSBRO’s opportunity is open, configurable control for teams that prefer owning infrastructure and avoiding per-request/vendor-platform economics.
+
+**Go / no-go:** Go for an open-source, self-hostable Typesense federation gateway/control plane. No-go for a generic hosted search engine, a generic federated search UI, or an Algolia/Elastic/Coveo replacement.
+
+**Best ICP:** platform/search teams with multi-tenant, regional, compliance, or scaling reasons to keep separate Typesense clusters while exposing one API, one admin workflow, and one ingestion path.
+
+**Sharp product promise:** “One configurable control plane for routing, ingesting, searching, observing, and operating many Typesense clusters.”
+
 ### Build-vs-buy
 
 - **Build** when Typesense is a strategic choice and data must be split by tenant/region/cluster while still exposing one API and admin workflow.
@@ -56,6 +74,9 @@ Implication: the product should not compete as “another search engine.” It s
 12. **Data-plane auth and auditability**: `/ingest/*` and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
 13. **Schema reconciliation**: desired collection schemas are persisted in control-plane state; new clusters are backfilled automatically, and operators can trigger an idempotent `/admin/collections/reconcile`.
 14. **Worker observability and DLQ safety**: indexing service exposes configurable Prometheus metrics for cluster config fetches, loaded clusters, successful indexing, retries, and DLQ publications; the Kafka subscription pattern excludes the DLQ topic so poison messages are not recursively consumed.
+15. **Admin search workspace**: Admin UI now includes a `/workspace` view for create-schema, ingest, and search workflows against the configured Query API proxy.
+16. **Typesense readiness hardening**: `/ready` now verifies every declared node in every data cluster and reports `data_cluster_nodes`; Compose pins Typesense node IPs so Raft peer state survives `docker compose down/up` with volumes.
+17. **Runtime validation**: Docker smoke covered create collection, Kafka ingest, federated search with both clusters responding, and a down/up restart with persisted volumes.
 
 ### Fixes
 
@@ -106,6 +127,14 @@ Implication: the product should not compete as “another search engine.” It s
 ### Low priority
 
 - ~~**Grafana**~~: **Done.** Overview dashboard extended with documents by collection, Query API error rate, indexing throughput, retry, and DLQ panels.
+
+### Remaining Product Risks
+
+- **Hybrid/semantic retrieval gap**: market expectation is moving toward hybrid/vector search. Typesense supports vector and semantic patterns, but IMPOSBRO does not yet expose a configurable hybrid retrieval story across clusters.
+- **Enterprise access model**: API keys are enough for a self-hosted MVP; public or multi-team deployments still need OAuth2/OIDC, RBAC, and per-tenant/admin scopes.
+- **Operational scale proof**: local Docker and unit gates are strong; the next credibility step is a repeatable multi-instance/load test with Kafka lag, partial cluster outage, and rolling restart scenarios.
+- **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
+- **Documentation depth**: horizontal scaling, disaster recovery, backup/restore, and production network topology need operator-grade docs before calling this “enterprise-ready.”
 
 ---
 
