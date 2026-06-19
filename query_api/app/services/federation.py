@@ -31,6 +31,7 @@ class FederationService:
         self.clusters_config: Dict[str, Dict] = {}
         self.clients: Dict[str, typesense.Client] = {}
         self.routing_rules: Dict[str, Dict] = {}
+        self.collection_schemas: Dict[str, Dict] = {}
 
     @staticmethod
     def create_client_config(name: str, nodes_str: str, api_key: str) -> Dict:
@@ -132,6 +133,64 @@ class FederationService:
         del self.clients[name]
         del self.clusters_config[name]
         logger.info(f"Cluster '{name}' unregistered.")
+
+    def backfill_collection_schemas(self, cluster_name: str) -> List[str]:
+        """
+        Ensure a newly registered cluster has every desired collection schema.
+
+        Existing collections are treated as already reconciled. The method returns
+        only collection names that were actually created on the target cluster.
+        """
+        client = self.clients.get(cluster_name)
+        if not client:
+            raise ValueError(f"Cluster '{cluster_name}' not found.")
+
+        created: List[str] = []
+        for collection_name, schema in self.collection_schemas.items():
+            try:
+                client.collections.create(schema)
+                created.append(collection_name)
+                logger.info(
+                    "Backfilled collection '%s' on cluster '%s'.",
+                    collection_name,
+                    cluster_name,
+                )
+            except typesense.exceptions.ObjectAlreadyExists:
+                logger.debug(
+                    "Collection '%s' already exists on cluster '%s'.",
+                    collection_name,
+                    cluster_name,
+                )
+        return created
+
+    def reconcile_collection_schemas(self) -> Dict[str, Dict[str, List[str]]]:
+        """
+        Reconcile desired collection schemas across all registered clusters.
+
+        Returns a per-cluster report with existing and created collections. Any
+        unexpected Typesense error is propagated so operators do not mistake a
+        partial reconcile for a successful one.
+        """
+        report: Dict[str, Dict[str, List[str]]] = {}
+        for cluster_name, client in self.clients.items():
+            cluster_report = {"existing": [], "created": []}
+            for collection_name, schema in self.collection_schemas.items():
+                try:
+                    client.collections[collection_name].retrieve()
+                    cluster_report["existing"].append(collection_name)
+                except typesense.exceptions.ObjectNotFound:
+                    try:
+                        client.collections.create(schema)
+                        cluster_report["created"].append(collection_name)
+                        logger.info(
+                            "Reconciled missing collection '%s' on cluster '%s'.",
+                            collection_name,
+                            cluster_name,
+                        )
+                    except typesense.exceptions.ObjectAlreadyExists:
+                        cluster_report["existing"].append(collection_name)
+            report[cluster_name] = cluster_report
+        return report
 
     def _resolve_default_cluster(self) -> Optional[str]:
         """
@@ -329,7 +388,10 @@ class FederationService:
         logger.info(f"Routing rules for '{collection}' reset to defaults.")
 
     def load_from_state(
-        self, clusters_config: Dict[str, Dict], routing_rules: Dict[str, Dict]
+        self,
+        clusters_config: Dict[str, Dict],
+        routing_rules: Dict[str, Dict],
+        collection_schemas: Optional[Dict[str, Dict]] = None,
     ) -> None:
         """
         Load federation configuration from saved state.
@@ -337,9 +399,11 @@ class FederationService:
         Args:
             clusters_config: Saved cluster configurations
             routing_rules: Saved routing rules
+            collection_schemas: Desired collection schemas to reconcile across clusters
         """
         self.clusters_config.update(clusters_config)
         self.routing_rules.update(routing_rules)
+        self.collection_schemas.update(collection_schemas or {})
 
         for name, config in clusters_config.items():
             port = config.get("port", 8108)
@@ -360,7 +424,10 @@ class FederationService:
         logger.info(f"Loaded {len(clusters_config)} federated cluster(s) from state.")
 
     def reload_from_state(
-        self, clusters_config: Dict[str, Dict], routing_rules: Dict[str, Dict]
+        self,
+        clusters_config: Dict[str, Dict],
+        routing_rules: Dict[str, Dict],
+        collection_schemas: Optional[Dict[str, Dict]] = None,
     ) -> None:
         """
         Reload federation configuration from saved state.
@@ -371,12 +438,14 @@ class FederationService:
         Args:
             clusters_config: Fresh cluster configurations
             routing_rules: Fresh routing rules
+            collection_schemas: Fresh desired collection schemas
         """
         # Clear existing state
         self.clusters_config.clear()
         self.clients.clear()
         self.routing_rules.clear()
+        self.collection_schemas.clear()
 
         # Load fresh state
-        self.load_from_state(clusters_config, routing_rules)
+        self.load_from_state(clusters_config, routing_rules, collection_schemas)
         logger.info("Configuration reloaded from state store.")

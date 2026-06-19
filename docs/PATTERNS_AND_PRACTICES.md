@@ -45,7 +45,8 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 ### 1.6 State and consistency
 
-- **State store**: Federation config and routing rules are persisted in the internal Typesense cluster (`StateManager`). All admin changes are saved and then broadcast via Redis Pub/Sub so other API instances reload config.
+- **State store**: Federation config, desired collection schemas, and routing rules are persisted in the internal Typesense cluster (`StateManager`). All admin changes are saved and then broadcast via Redis Pub/Sub so other API instances reload config.
+- **Schema reconciliation**: `FederationService.collection_schemas` is the desired schema state. Creating a collection records the schema, registering a new cluster backfills those schemas, and `POST /admin/collections/reconcile` idempotently recreates missing schemas after operational recovery.
 - **Smart Producer**: The Query API decides the target cluster for each document and puts it in the Kafka message; the indexing service only executes that decision. Routing logic lives in one place.
 - **Global search merge**: Gateway-side merge must use the same comparator for sorting and deduplication. Complex shard-local sorts should be rejected until the gateway can merge them exactly.
 

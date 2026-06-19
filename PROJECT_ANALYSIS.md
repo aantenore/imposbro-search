@@ -54,6 +54,7 @@ Implication: the product should not compete as “another search engine.” It s
 10. **Delivery gates**: root `npm test` runs API and indexing tests; Admin UI has explicit lint/build/audit commands. A GitHub Actions workflow is recommended next, but was not committed because the current OAuth token cannot create workflow files without the `workflow` scope.
 11. **Runtime hardening**: Python Docker images use Python 3.11 and non-root users.
 12. **Data-plane auth and auditability**: `/ingest/*` and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
+13. **Schema reconciliation**: desired collection schemas are persisted in control-plane state; new clusters are backfilled automatically, and operators can trigger an idempotent `/admin/collections/reconcile`.
 
 ### Fixes
 

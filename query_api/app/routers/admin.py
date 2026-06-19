@@ -55,6 +55,7 @@ def _persist_state_or_500(
     saved = state_manager.save_state(
         federation.clusters_config,
         federation.routing_rules,
+        federation.collection_schemas,
     )
     if not saved:
         raise HTTPException(
@@ -119,7 +120,7 @@ def get_admin_stats(
     For full Prometheus metrics use GET /metrics.
     """
     clusters = len(federation.clients) if federation else 0
-    collections = len(federation.routing_rules) if federation else 0
+    collections = len(federation.collection_schemas) if federation else 0
     return {
         "clusters": clusters,
         "collections": collections,
@@ -214,6 +215,27 @@ def register_cluster(
             port=cluster.port,
             api_key=cluster.api_key,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    try:
+        created_collections = federation.backfill_collection_schemas(cluster.name)
+    except Exception as e:
+        logger.error("Failed to backfill schemas on cluster '%s': %s", cluster.name, e)
+        try:
+            federation.unregister_cluster(cluster.name)
+        except Exception as rollback_error:
+            logger.error(
+                "Failed to roll back cluster '%s' after backfill failure: %s",
+                cluster.name,
+                rollback_error,
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to backfill collection schemas on cluster '{cluster.name}': {e}",
+        )
+
+    try:
         _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"cluster_registered:{cluster.name}")
         _record_admin_audit(
@@ -222,11 +244,13 @@ def register_cluster(
             action="cluster_registered",
             resource_type="cluster",
             resource_id=cluster.name,
-            details={"host": cluster.host, "port": cluster.port},
+            details={
+                "host": cluster.host,
+                "port": cluster.port,
+                "collections_backfilled": len(created_collections),
+            },
         )
         return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to register cluster: {e}")
         raise HTTPException(
@@ -274,6 +298,48 @@ def delete_cluster(
 # ----- Collection Management -----
 
 
+@router.post(
+    "/collections/reconcile",
+    summary="Reconcile desired collection schemas across all clusters",
+)
+def reconcile_collections(
+    request: Request,
+    federation: FederationService = Depends(get_federation_service),
+    state_manager: StateManager = Depends(get_state_manager),
+) -> Dict[str, Any]:
+    """
+    Idempotently create missing desired collections on registered clusters.
+
+    This is useful after operational recovery or when a cluster was restored
+    without all schemas. It never deletes collections or modifies stored schemas.
+    """
+    try:
+        report = federation.reconcile_collection_schemas()
+    except Exception as e:
+        logger.error("Collection schema reconciliation failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    created_count = sum(len(cluster["created"]) for cluster in report.values())
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="collections_reconciled",
+        resource_type="collection_schema",
+        resource_id="*",
+        details={
+            "clusters_checked": len(report),
+            "collections_desired": len(federation.collection_schemas),
+            "collections_created": created_count,
+        },
+    )
+    return {
+        "status": "ok",
+        "message": "Collection schema reconciliation completed.",
+        "collections_desired": len(federation.collection_schemas),
+        "clusters": report,
+    }
+
+
 @router.get(
     "/collections/{collection_name}",
     summary="Get collection schema",
@@ -287,6 +353,17 @@ def get_collection_schema(
 
     Queries the first available cluster to get schema information.
     """
+    stored_schema = federation.collection_schemas.get(collection_name)
+    if stored_schema:
+        return {
+            "fields": stored_schema.get("fields", []),
+            **(
+                {"default_sorting_field": stored_schema["default_sorting_field"]}
+                if stored_schema.get("default_sorting_field")
+                else {}
+            ),
+        }
+
     clients = list(federation.clients.values())
     if not clients:
         raise HTTPException(status_code=500, detail="No clusters available.")
@@ -339,6 +416,8 @@ async def create_collection(
     ]
     await asyncio.gather(*tasks)
 
+    federation.collection_schemas[schema.name] = schema_dict
+
     # Initialize default routing for this collection
     if schema.name not in federation.routing_rules:
         federation.routing_rules[schema.name] = {
@@ -388,6 +467,7 @@ async def delete_collection(
 
     if collection_name in federation.routing_rules:
         del federation.routing_rules[collection_name]
+    federation.collection_schemas.pop(collection_name, None)
 
     _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"collection_deleted:{collection_name}")
@@ -546,7 +626,7 @@ def set_routing_rules(
 
     # Verify collection exists
     clients = list(federation.clients.values())
-    if clients:
+    if collection_name not in federation.collection_schemas and clients:
         try:
             clients[0].collections[collection_name].retrieve()
         except typesense.exceptions.ObjectNotFound:

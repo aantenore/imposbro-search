@@ -259,6 +259,7 @@ Global merge supports simple `sort_by` expressions such as `price:asc` or `_text
 | `/admin/federation/clusters` | POST | Register a new cluster |
 | `/admin/federation/clusters/{name}` | DELETE | Remove a cluster |
 | `/admin/collections` | POST | Create a collection on all clusters |
+| `/admin/collections/reconcile` | POST | Create any missing desired collection schemas on registered clusters |
 | `/admin/collections/{name}` | GET | Get collection schema |
 | `/admin/collections/{name}` | DELETE | Delete a collection |
 | `/admin/routing-rules` | POST | Set routing rules for a collection |

@@ -147,7 +147,11 @@ def test_register_cluster_records_safe_audit_event(client, monkeypatch):
     assert audit_kwargs["actor"].startswith("api_key:")
     assert "admin-secret" not in audit_kwargs["actor"]
     assert "raw-cluster-secret" not in str(audit_kwargs["details"])
-    assert audit_kwargs["details"] == {"host": "typesense-a", "port": 8108}
+    assert audit_kwargs["details"] == {
+        "host": "typesense-a",
+        "port": 8108,
+        "collections_backfilled": 0,
+    }
 
 
 def test_get_audit_log_returns_recent_events(client):
@@ -175,3 +179,37 @@ def test_get_audit_log_returns_recent_events(client):
         action="collection_created",
         resource_type=None,
     )
+
+
+def test_get_collection_schema_prefers_stored_desired_schema(client):
+    """Schema reads use control-plane desired state when available."""
+    client.app.state.federation_service.collection_schemas = {
+        "products": {
+            "name": "products",
+            "fields": [{"name": "title", "type": "string", "facet": False}],
+        }
+    }
+
+    r = client.get("/admin/collections/products")
+
+    assert r.status_code == 200
+    assert r.json()["fields"] == [
+        {"name": "title", "type": "string", "facet": False}
+    ]
+
+
+def test_reconcile_collections_returns_cluster_report(client):
+    """POST /admin/collections/reconcile exposes the schema reconciliation report."""
+    client.app.state.federation_service.collection_schemas = {
+        "products": {"name": "products", "fields": []}
+    }
+    client.app.state.federation_service.reconcile_collection_schemas.return_value = {
+        "cluster-a": {"existing": [], "created": ["products"]}
+    }
+
+    r = client.post("/admin/collections/reconcile")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["collections_desired"] == 1
+    assert data["clusters"]["cluster-a"]["created"] == ["products"]
