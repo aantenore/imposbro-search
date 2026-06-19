@@ -409,6 +409,23 @@ def authorize_ingest_document(
     return document
 
 
+def authorize_delete_filter(
+    request: Request,
+    collection_name: str,
+    document_id: str,
+) -> Optional[str]:
+    """Return a tenant-safe Typesense delete filter when tenant policy applies."""
+    policy = _collection_policy(collection_name)
+    if _policy_mode(policy) == "off":
+        return None
+
+    tenants = _tenant_values_from_request(request, policy)
+    if tenants is None:
+        return None
+
+    return f"(id:={document_id}) && {_tenant_filter(_tenant_field(policy), tenants)}"
+
+
 def oidc_http_exception(exc: Exception) -> HTTPException:
     if isinstance(exc, OidcConfigError):
         return HTTPException(status_code=500, detail=str(exc))

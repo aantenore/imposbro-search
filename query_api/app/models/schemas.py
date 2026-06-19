@@ -10,7 +10,7 @@ import re
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Dict, List, Optional
 
-from constants import NAME_PATTERN, TYPESENSE_DEFAULT_PORT
+from constants import DOCUMENT_ID_PATTERN, NAME_PATTERN, TYPESENSE_DEFAULT_PORT
 
 try:
     from typing import Self, Annotated
@@ -197,6 +197,17 @@ class IngestResponse(BaseModel):
     status: str = Field(..., description="Operation status")
     document_id: str = Field(..., description="ID of ingested document")
     routed_to: str = Field(..., description="Target cluster name")
+
+
+class DeleteDocumentResponse(BaseModel):
+    """Response model for asynchronous document deletion."""
+    status: str = Field(..., description="Operation status")
+    document_id: str = Field(
+        ...,
+        pattern=DOCUMENT_ID_PATTERN,
+        description="ID of the document queued for deletion",
+    )
+    routed_to: str = Field(..., description="Comma-separated target cluster names")
 
 
 class SearchRequest(BaseModel):

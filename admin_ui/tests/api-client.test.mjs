@@ -251,6 +251,25 @@ test('ingest posts a JSON document to the encoded collection path', async () => 
   }
 });
 
+test('deleteDocument deletes by encoded collection and document id path', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ status: 'ok', document_id: 'doc-1', routed_to: 'cluster-a' });
+  };
+
+  try {
+    await api.search.deleteDocument('tenant/products', 'doc.1');
+
+    assert.equal(request.url, '/api/documents/tenant%2Fproducts/doc.1');
+    assert.equal(request.options.method, 'DELETE');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('request raises ApiError with backend detail on non-2xx responses', async () => {
   const originalFetch = globalThis.fetch;
 

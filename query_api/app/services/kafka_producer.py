@@ -123,6 +123,49 @@ class KafkaService:
             request_id or "-",
         )
 
+    def publish_delete_document(
+        self,
+        collection_name: str,
+        document_id: str,
+        target_cluster: str,
+        request_id: Optional[str] = None,
+        filter_by: Optional[str] = None,
+    ) -> None:
+        """
+        Publish a document deletion request.
+
+        Args:
+            collection_name: Target collection name
+            document_id: Document id to delete
+            target_cluster: Target cluster for this delete event
+            request_id: Optional support correlation id from the HTTP request
+            filter_by: Optional tenant-safe Typesense delete filter
+
+        Raises:
+            Exception: If publish fails
+        """
+        topic_name = f"{self.topic_prefix}_{collection_name}"
+        message = {
+            "action": "delete",
+            "target_cluster": target_cluster,
+            "collection": collection_name,
+            "document_id": document_id,
+        }
+        if filter_by:
+            message["filter_by"] = filter_by
+        if request_id:
+            message["request_id"] = request_id
+
+        self.producer.send(topic_name, key=str(document_id).encode("utf-8"), value=message)
+        self.producer.flush()
+
+        logger.debug(
+            "Published delete for document %s to topic %s request_id=%s",
+            document_id,
+            topic_name,
+            request_id or "-",
+        )
+
     def close(self) -> None:
         """Close the Kafka producer connection."""
         if self._producer:

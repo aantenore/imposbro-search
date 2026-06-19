@@ -202,7 +202,7 @@ export default function DashboardPage() {
           icon={Workflow}
           iconColor="text-sky-400"
           title="Search Workspace"
-          description="Ingest JSON documents and verify federated search results from the Admin UI."
+          description="Ingest, delete, and verify federated search results from the Admin UI."
         />
         <FeatureCard
           href={GRAFANA_URL}
