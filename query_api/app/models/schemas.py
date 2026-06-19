@@ -223,3 +223,25 @@ class AuditLogEntry(BaseModel):
 class AuditLogResponse(BaseModel):
     """Recent admin audit events."""
     entries: List[AuditLogEntry]
+
+
+class ControlPlaneStateSnapshot(BaseModel):
+    """Portable backup snapshot for the Query API control-plane state."""
+    version: str = Field(default="imposbro.state.v1", description="Snapshot format")
+    exported_at: Optional[str] = Field(default=None, description="UTC export timestamp")
+    secrets_included: bool = Field(
+        default=False,
+        description="Whether cluster API keys are raw secrets or masked placeholders",
+    )
+    federation_clusters_config: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Registered federated data clusters",
+    )
+    collection_routing_rules: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per-collection routing rules",
+    )
+    collection_schemas: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Desired Typesense collection schemas for reconciliation",
+    )

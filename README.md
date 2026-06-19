@@ -282,6 +282,8 @@ Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_m
 | `/admin/routing-rules/{collection}` | DELETE | Delete routing rules |
 | `/admin/routing-map` | GET | Get complete routing configuration |
 | `/admin/audit-log` | GET | List recent successful admin mutations without exposing secrets |
+| `/admin/state/export` | GET | Export control-plane state for backup; masks cluster API keys unless `include_secrets=true` |
+| `/admin/state/import` | POST | Validate or import a control-plane state snapshot; defaults to dry-run, apply with `?apply=true` |
 
 ### Health Checks
 
@@ -328,6 +330,36 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 
 Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials or scoped keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+
+### Control-plane backup and restore
+
+For a restore-ready backup, export with secrets into a secure location:
+
+```bash
+curl -H "X-API-Key: $ADMIN_API_KEY" \
+  "http://localhost:8000/admin/state/export?include_secrets=true" \
+  > imposbro-state-backup.json
+```
+
+Validate before applying:
+
+```bash
+curl -X POST "http://localhost:8000/admin/state/import" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  --data-binary @imposbro-state-backup.json
+```
+
+Apply only after validation:
+
+```bash
+curl -X POST "http://localhost:8000/admin/state/import?apply=true" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $ADMIN_API_KEY" \
+  --data-binary @imposbro-state-backup.json
+```
+
+Exports without `include_secrets=true` are safe for inspection but intentionally cannot be applied because cluster API keys are masked.
 
 ---
 

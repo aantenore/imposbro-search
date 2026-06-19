@@ -212,6 +212,172 @@ def test_get_audit_log_returns_recent_events(client):
     )
 
 
+def test_state_export_masks_cluster_api_keys_by_default(client):
+    """Control-plane state backups are inspectable without leaking cluster secrets."""
+    client.app.state.federation_service.clusters_config = {
+        "cluster-a": {
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "super-secret-key",
+        }
+    }
+    client.app.state.federation_service.routing_rules = {
+        "products": {"rules": [], "default_cluster": "default"}
+    }
+    client.app.state.federation_service.collection_schemas = {
+        "products": {"name": "products", "fields": []}
+    }
+
+    r = client.get("/admin/state/export")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["version"] == "imposbro.state.v1"
+    assert data["secrets_included"] is False
+    assert data["federation_clusters_config"]["cluster-a"]["api_key"] == (
+        "************-key"
+    )
+    assert "super-secret-key" not in json.dumps(data)
+
+
+def test_state_export_can_include_raw_secrets_when_requested(client):
+    """Restore-ready state exports require an explicit include_secrets opt-in."""
+    client.app.state.federation_service.clusters_config = {
+        "cluster-a": {
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "super-secret-key",
+        }
+    }
+
+    r = client.get("/admin/state/export?include_secrets=true")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["secrets_included"] is True
+    assert data["federation_clusters_config"]["cluster-a"]["api_key"] == (
+        "super-secret-key"
+    )
+    audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
+    assert audit_kwargs["action"] == "state_exported"
+    assert audit_kwargs["details"] == {
+        "clusters": 1,
+        "routing_rules": 0,
+        "collection_schemas": 0,
+        "secrets_included": True,
+    }
+    assert "super-secret-key" not in str(audit_kwargs["details"])
+
+
+def test_state_import_dry_run_validates_without_mutating(client):
+    """State import defaults to dry-run and does not persist or reload runtime state."""
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": False,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "api_key": "************-key",
+            }
+        },
+        "collection_routing_rules": {
+            "products": {"rules": [], "default_cluster": "default"}
+        },
+        "collection_schemas": {
+            "products": {"name": "products", "fields": []}
+        },
+    }
+
+    r = client.post("/admin/state/import", json=snapshot)
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["dry_run"] is True
+    assert data["importable"] is False
+    assert data["counts"] == {
+        "clusters": 1,
+        "routing_rules": 1,
+        "collection_schemas": 1,
+    }
+    client.app.state.state_manager.save_state.assert_not_called()
+    client.app.state.federation_service.reload_from_state.assert_not_called()
+
+
+def test_state_import_apply_rejects_masked_secrets(client):
+    """Applying a masked snapshot would break restored cluster clients, so reject it."""
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": False,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "api_key": "************-key",
+            }
+        },
+        "collection_routing_rules": {},
+        "collection_schemas": {},
+    }
+
+    r = client.post("/admin/state/import?apply=true", json=snapshot)
+
+    assert r.status_code == 400
+    assert "masked" in r.json().get("detail", "").lower()
+    client.app.state.state_manager.save_state.assert_not_called()
+
+
+def test_state_import_apply_persists_reloads_notifies_and_audits(client):
+    """A restore-ready snapshot is persisted, loaded into runtime, broadcast, and audited."""
+    client.app.state.state_manager.save_state.return_value = True
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": True,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "api_key": "raw-secret",
+            }
+        },
+        "collection_routing_rules": {
+            "products": {"rules": [], "default_cluster": "default"}
+        },
+        "collection_schemas": {
+            "products": {"name": "products", "fields": []}
+        },
+    }
+
+    r = client.post("/admin/state/import?apply=true", json=snapshot)
+
+    assert r.status_code == 200
+    assert r.json()["dry_run"] is False
+    client.app.state.state_manager.save_state.assert_called_once_with(
+        snapshot["federation_clusters_config"],
+        snapshot["collection_routing_rules"],
+        snapshot["collection_schemas"],
+    )
+    client.app.state.federation_service.reload_from_state.assert_called_once_with(
+        snapshot["federation_clusters_config"],
+        snapshot["collection_routing_rules"],
+        snapshot["collection_schemas"],
+    )
+    client.app.state.config_notifier.notify.assert_called_once_with("state_imported")
+    audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
+    assert audit_kwargs["action"] == "state_imported"
+    assert audit_kwargs["details"] == {
+        "clusters": 1,
+        "routing_rules": 1,
+        "collection_schemas": 1,
+    }
+    assert "raw-secret" not in str(audit_kwargs)
+
+
 def test_get_collection_schema_prefers_stored_desired_schema(client):
     """Schema reads use control-plane desired state when available."""
     client.app.state.federation_service.collection_schemas = {

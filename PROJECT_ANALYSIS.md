@@ -81,6 +81,7 @@ The market does validate the problem, but it also narrows the room for different
 19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, or `*` access while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
 20. **Repeatable runtime smoke**: `make smoke-docker` builds/starts the stack, creates a vector collection, ingests through Kafka, verifies federated vector ordering and the Admin UI proxy, then tears the stack down.
 21. **Partial outage smoke**: `make smoke-docker-outage` stops the secondary data cluster and verifies `/ready` degrades while federated search still returns healthy-cluster hits with `partial: true` and explicit `failed_clusters`.
+22. **Control-plane backup/restore**: Admin API can export state snapshots with masked secrets by default, create restore-ready exports with explicit secret opt-in, dry-run imports, and apply audited state restores.
 
 ### Fixes
 
@@ -138,7 +139,7 @@ The market does validate the problem, but it also narrows the room for different
 - **Enterprise identity model**: Scoped API keys reduce blast radius for self-hosted clients; public or multi-team deployments still need OAuth2/OIDC, tenant-aware RBAC, and admin role mapping.
 - **Operational scale proof**: local Docker, unit gates, vector smoke, and partial-outage smoke are strong; the next credibility step is a multi-instance/load test with Kafka lag and rolling restart scenarios.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
-- **Documentation depth**: horizontal scaling, disaster recovery, backup/restore, and production network topology need operator-grade docs before calling this “enterprise-ready.”
+- **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”
 
 ---
 
