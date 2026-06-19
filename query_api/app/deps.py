@@ -10,6 +10,7 @@ import secrets
 from typing import List, Optional, Set, Tuple
 
 from fastapi import Request, Header, HTTPException, Path
+from prometheus_client import Counter
 
 from auth import authenticate_oidc_bearer, oidc_enabled, oidc_http_exception
 from constants import NAME_PATTERN
@@ -26,6 +27,17 @@ from services import (
 
 
 logger = logging.getLogger(__name__)
+
+RATE_LIMIT_CHECKS = Counter(
+    "query_api_rate_limit_checks_total",
+    "Total Query API data-plane rate-limit decisions.",
+    ["action", "collection", "result"],
+)
+RATE_LIMIT_BACKEND_ERRORS = Counter(
+    "query_api_rate_limit_backend_errors_total",
+    "Total Query API data-plane rate-limit backend failures.",
+    ["action", "backend", "mode"],
+)
 
 
 def _extract_api_key(
@@ -438,6 +450,12 @@ def _enforce_data_plane_rate_limit(
     except RateLimitConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except RateLimitBackendError as exc:
+        mode = "fail_closed" if settings.RATE_LIMIT_FAIL_CLOSED else "fail_open"
+        RATE_LIMIT_BACKEND_ERRORS.labels(
+            action=action,
+            backend=settings.RATE_LIMIT_BACKEND,
+            mode=mode,
+        ).inc()
         if settings.RATE_LIMIT_FAIL_CLOSED:
             raise HTTPException(
                 status_code=503,
@@ -446,6 +464,11 @@ def _enforce_data_plane_rate_limit(
         logger.warning("Rate-limit backend unavailable; allowing request: %s", exc)
         return
 
+    RATE_LIMIT_CHECKS.labels(
+        action=action,
+        collection=collection_name,
+        result="allowed" if result.allowed else "blocked",
+    ).inc()
     if not result.allowed:
         raise HTTPException(
             status_code=429,

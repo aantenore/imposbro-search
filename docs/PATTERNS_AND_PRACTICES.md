@@ -136,6 +136,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 ### 5.4 Metrics
 
 - Prometheus metrics are exposed via `prometheus_fastapi_instrumentator`. Custom counters (e.g. `documents_ingested_total`) are defined in the router that performs the action.
+- Query API rate-limit metrics use only low-cardinality labels: action, collection, result, backend, and fail mode. Never label with actor IDs, IP addresses, API keys, raw queries, document IDs, or arbitrary error messages.
 - The indexing worker exposes Prometheus metrics on `INDEXING_METRICS_PORT` when `INDEXING_METRICS_ENABLED=true`. Worker metrics include config fetches, loaded clusters, successful indexes, retries, and DLQ publications.
 - Keep metric labels low-cardinality. Use collection, target cluster, source topic, and error type; never label metrics with document IDs, raw queries, API keys, or user-controlled free text.
 - Keep ServiceMonitor and PrometheusRule resources opt-in because not every cluster uses Prometheus Operator. When adding metrics that imply operational action, add or update alert rules with environment-tunable thresholds.

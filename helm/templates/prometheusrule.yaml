@@ -48,6 +48,30 @@ spec:
             description: "Query API p95 latency is above {{ .thresholdSeconds }}s."
         {{- end }}
         {{- end }}
+        {{- with .Values.monitoring.prometheusRule.rules.queryApiRateLimitBlocked }}
+        {{- if .enabled }}
+        - alert: ImposbroQueryApiRateLimitBlocked
+          expr: |
+            sum(increase(query_api_rate_limit_checks_total{result="blocked"}[{{ .window }}])) > {{ .threshold }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO Query API is rate-limiting data-plane traffic"
+            description: "Rate-limit blocks exceeded {{ .threshold }} over {{ .window }}. Check client budgets, collection traffic, and gateway/WAF policy."
+        {{- end }}
+        {{- end }}
+        {{- with .Values.monitoring.prometheusRule.rules.queryApiRateLimitBackendErrors }}
+        {{- if .enabled }}
+        - alert: ImposbroQueryApiRateLimitBackendErrors
+          expr: |
+            sum(increase(query_api_rate_limit_backend_errors_total[{{ .window }}])) > {{ .threshold }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO Query API rate-limit backend errors"
+            description: "Rate-limit backend errors exceeded {{ .threshold }} over {{ .window }}. Redis-backed limits may be failing open or blocking traffic when fail-closed is enabled."
+        {{- end }}
+        {{- end }}
         {{- with .Values.monitoring.prometheusRule.rules.indexingDlqMessages }}
         {{- if .enabled }}
         - alert: ImposbroIndexingDlqMessages
