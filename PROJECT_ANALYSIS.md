@@ -104,6 +104,7 @@ The market does validate the problem, but it also narrows the room for different
 42. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
 43. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
 44. **Collection-level data-plane RBAC**: API keys and OIDC claims can now grant search/ingest/data access to collection glob patterns, with server-side enforcement in the Query API.
+45. **Release gate reproducibility**: `make helm` now runs a Python chart validation suite that checks rendered resource counts, Query API/Admin UI Ingress permutations, and negative fail-fast guardrails; Compose Make targets use `.env` when present and `.env.example` as a clean-checkout fallback.
 
 ### Fixes
 

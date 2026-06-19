@@ -161,7 +161,7 @@ services:
       - typesense-data2-1
       - typesense-data2-2
       - typesense-data2-3
-    env_file: .env
+    env_file: ${COMPOSE_ENV_FILE:-.env}
 
   indexing_service:
     build: ./indexing_service
@@ -170,7 +170,7 @@ services:
     depends_on:
       query_api:
         condition: service_started
-    env_file: .env
+    env_file: ${COMPOSE_ENV_FILE:-.env}
 
   admin_ui:
     build:
@@ -181,7 +181,7 @@ services:
       - '${HOST_BIND_IP:-127.0.0.1}:3001:3000'
     depends_on:
       - query_api
-    env_file: .env
+    env_file: ${COMPOSE_ENV_FILE:-.env}
 
   prometheus:
     image: prom/prometheus:v3.6.0
