@@ -34,7 +34,12 @@ class ConfigSyncService:
         on_config_change: Async callback to invoke when config changes
     """
 
-    def __init__(self, redis_url: str, on_config_change: Callable[[], Awaitable[None]]):
+    def __init__(
+        self,
+        redis_url: str,
+        on_config_change: Callable[[], Awaitable[None]],
+        source_id: str = "api",
+    ):
         """
         Initialize the ConfigSyncService.
 
@@ -44,10 +49,15 @@ class ConfigSyncService:
         """
         self.redis_url = redis_url
         self.on_config_change = on_config_change
+        self.source_id = source_id
         self._redis_client: Optional[redis.Redis] = None
         self._pubsub: Optional[redis.client.PubSub] = None
         self._listener_task: Optional[asyncio.Task] = None
         self._running = False
+
+    def _is_self_notification(self, source: str) -> bool:
+        """Return whether a config notification originated from this process."""
+        return source == self.source_id
 
     async def start(self) -> None:
         """
@@ -109,6 +119,13 @@ class ConfigSyncService:
                     source = data.get("source", "unknown")
                     change_type = data.get("type", "unknown")
 
+                    if self._is_self_notification(source):
+                        logger.debug(
+                            "Ignoring self-originated config notification: %s",
+                            change_type,
+                        )
+                        continue
+
                     logger.info(
                         f"Config change notification received: {change_type} from {source}"
                     )
@@ -156,8 +173,9 @@ class SyncConfigNotifier:
     of configuration changes.
     """
 
-    def __init__(self, redis_url: str):
+    def __init__(self, redis_url: str, source_id: str = "api"):
         self.redis_url = redis_url
+        self.source_id = source_id
         self._sync_client: Optional[redis.Redis] = None
 
     def _get_client(self):
@@ -170,7 +188,7 @@ class SyncConfigNotifier:
             )
         return self._sync_client
 
-    def notify(self, change_type: str, source: str = "api") -> None:
+    def notify(self, change_type: str, source: Optional[str] = None) -> None:
         """
         Publish a configuration change notification synchronously.
 
@@ -183,7 +201,7 @@ class SyncConfigNotifier:
             message = json.dumps(
                 {
                     "type": change_type,
-                    "source": source,
+                    "source": source or self.source_id,
                 }
             )
             client.publish(CONFIG_CHANNEL, message)
