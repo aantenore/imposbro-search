@@ -116,11 +116,46 @@ def _token_grants(claims: Dict[str, Any]) -> Set[str]:
     return grants
 
 
-def _has_required_scope(claims: Dict[str, Any], required_scope: str) -> bool:
+def _resource_claim_matches(
+    token_grants: Set[str],
+    allowed_claims: Set[str],
+    resource_name: str,
+) -> bool:
+    resource = resource_name.casefold()
+    for allowed_claim in allowed_claims:
+        prefix = f"{allowed_claim}:"
+        for grant in token_grants:
+            if not grant.startswith(prefix):
+                continue
+            pattern = grant[len(prefix):].strip()
+            if pattern and fnmatch.fnmatchcase(resource, pattern):
+                return True
+    return False
+
+
+def _has_required_scope(
+    claims: Dict[str, Any],
+    required_scope: str,
+    resource_name: Optional[str] = None,
+) -> bool:
     mapping = _parse_scope_mapping()
     allowed_claims = mapping.get(required_scope, set())
     token_claims = _token_grants(claims)
-    return bool(allowed_claims.intersection(token_claims))
+    if allowed_claims.intersection(token_claims):
+        return True
+    if not resource_name:
+        return False
+    resource_scope_candidates = [required_scope]
+    if required_scope in {"search", "ingest"}:
+        resource_scope_candidates.append("data")
+    return any(
+        _resource_claim_matches(
+            token_claims,
+            mapping.get(scope, set()),
+            resource_name,
+        )
+        for scope in resource_scope_candidates
+    )
 
 
 def _static_public_key() -> str:
@@ -164,12 +199,16 @@ def _decode_oidc_token(token: str) -> Dict[str, Any]:
         raise OidcTokenError("Invalid OIDC bearer token") from exc
 
 
-def authenticate_oidc_bearer(token: str, required_scope: str) -> Optional[Dict[str, Any]]:
+def authenticate_oidc_bearer(
+    token: str,
+    required_scope: str,
+    resource_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Validate an OIDC bearer token and return actor metadata."""
     if not oidc_enabled():
         return None
     claims = _decode_oidc_token(token)
-    if not _has_required_scope(claims, required_scope):
+    if not _has_required_scope(claims, required_scope, resource_name):
         raise OidcTokenError("OIDC bearer token lacks required scope")
 
     subject_claim = settings.OIDC_SUBJECT_CLAIM.strip() or "sub"

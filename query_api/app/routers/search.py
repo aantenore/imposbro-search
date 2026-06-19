@@ -18,8 +18,8 @@ from constants import NAME_PATTERN
 from deps import (
     get_federation_service,
     get_kafka_service,
-    require_ingest_api_key,
-    require_search_api_key,
+    require_ingest_collection_api_key,
+    require_search_collection_api_key,
 )
 from models import IngestResponse, SearchRequest
 from services import FederationService, KafkaService
@@ -349,7 +349,7 @@ async def _perform_federated_search(
     "/ingest/{collection_name}",
     response_model=IngestResponse,
     summary="Ingest a document",
-    dependencies=[Depends(require_ingest_api_key)],
+    dependencies=[Depends(require_ingest_collection_api_key)],
 )
 def ingest_document(
     request: Request,
@@ -409,7 +409,7 @@ def ingest_document(
 @router.get(
     "/search/{collection_name}",
     summary="Federated search",
-    dependencies=[Depends(require_search_api_key)],
+    dependencies=[Depends(require_search_collection_api_key)],
 )
 async def search(
     http_request: Request,
@@ -509,7 +509,7 @@ async def search(
 @router.post(
     "/search/{collection_name}",
     summary="Federated search with JSON body",
-    dependencies=[Depends(require_search_api_key)],
+    dependencies=[Depends(require_search_collection_api_key)],
 )
 async def search_with_body(
     http_request: Request,

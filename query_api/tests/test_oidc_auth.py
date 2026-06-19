@@ -87,6 +87,49 @@ def test_oidc_search_scope_cannot_ingest(client, monkeypatch):
     assert ingest.status_code == 401
 
 
+def test_oidc_collection_scoped_claim_only_grants_matching_collection(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    headers = {
+        "Authorization": f"Bearer {_token(scope='imposbro:search:products_*')}"
+    }
+
+    matching = client.get(
+        "/search/products_2026?q=test&query_by=name",
+        headers=headers,
+    )
+    denied = client.get(
+        "/search/orders_2026?q=test&query_by=name",
+        headers=headers,
+    )
+
+    assert matching.status_code == 404
+    assert denied.status_code == 401
+
+
+def test_oidc_collection_scoped_data_claim_grants_matching_ingest(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+    headers = {
+        "Authorization": f"Bearer {_token(scope='imposbro:data:events_*')}"
+    }
+
+    matching = client.post(
+        "/ingest/events_2026",
+        headers=headers,
+        json={"id": "doc-1", "name": "Event"},
+    )
+    denied = client.post(
+        "/ingest/orders_2026",
+        headers=headers,
+        json={"id": "doc-2", "name": "Order"},
+    )
+
+    assert matching.status_code == 200
+    assert denied.status_code == 401
+
+
 def test_oidc_nested_role_mapping_can_grant_admin_access(client, monkeypatch):
     _configure_oidc(
         monkeypatch,

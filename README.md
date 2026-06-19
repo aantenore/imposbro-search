@@ -330,7 +330,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
-| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, `search`, `ingest`, `data`, and `*` |
+| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, `search`, `ingest`, `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
 | `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
@@ -351,6 +351,25 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
 Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+
+Example collection-scoped API key:
+
+```json
+[
+  {
+    "name": "catalog-reader",
+    "key": "secret",
+    "scopes": ["search:products_*"]
+  },
+  {
+    "name": "orders-writer",
+    "key": "secret",
+    "scopes": ["ingest:orders_*"]
+  }
+]
+```
+
+OIDC tokens can use the same resource suffix after the configured claim value, for example `imposbro:search:products_*` or `imposbro:data:tenant_a_*`.
 
 Example tenant policy:
 
@@ -594,10 +613,11 @@ indexingService:
 * [x] Horizontal scaling runbook and multi-instance Docker rolling smoke with Kafka lag budget
 * [x] Persisted collection aliases in control-plane backup/restore snapshots
 * [x] Helm HPA/KEDA autoscaling controls for Query API, Admin UI, and Kafka indexing workers
+* [x] Collection-scoped data-plane RBAC for API keys and OIDC claims
 
 ### 🚧 Future
 
-* [ ] Richer per-collection RBAC and Admin UI OIDC login/session flow
+* [ ] Admin UI OIDC login/session flow and richer admin role mapping
 
 ---
 
