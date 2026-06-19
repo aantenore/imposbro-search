@@ -394,13 +394,13 @@ The Helm chart deploys pre-built images. You must first build the images and pus
 
 ```bash
 # 1. Build the application images
-docker-compose build admin-ui query-api indexing-service
+docker compose build admin_ui query_api indexing_service
 
 # 2. Tag the images for your registry
 # Replace 'your-registry-user' with your registry's username/organization
-docker tag imposbro-search-admin-ui your-registry-user/imposbro-admin-ui:latest
-docker tag imposbro-search-query-api your-registry-user/imposbro-query-api:latest
-docker tag imposbro-search-indexing-service your-registry-user/imposbro-indexing-service:latest
+docker tag imposbro-search-admin_ui your-registry-user/imposbro-admin-ui:latest
+docker tag imposbro-search-query_api your-registry-user/imposbro-query-api:latest
+docker tag imposbro-search-indexing_service your-registry-user/imposbro-indexing-service:latest
 
 # 3. Push the images
 docker push your-registry-user/imposbro-admin-ui:latest
@@ -412,6 +412,7 @@ docker push your-registry-user/imposbro-indexing-service:latest
 
 1.  **Update `values.yaml`:** Open `helm/values.yaml` and update the `image` repository values for `queryApi`, `adminUi`, and `indexingService` to match the image names you just pushed.
     For production, set `config.useSecret: true`, provide all API keys through a secure values file or external secret manager, and keep `ALLOW_UNAUTHENTICATED_ADMIN` set to `"false"`.
+    The chart also exposes per-workload `replicaCount`, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
     helm install imposbro-release ./helm

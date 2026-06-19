@@ -49,10 +49,10 @@ Implication: the product should not compete as “another search engine.” It s
 5. **State consistency**: startup distinguishes empty routing config from missing state, and admin mutations fail if state persistence fails.
 6. **Kafka reliability**: indexing consumer now uses manual offset commits after successful upsert and fails missing target-cluster messages instead of silently dropping them.
 7. **Search relevance and honesty**: federated merge preserves Typesense `_text_match:desc` semantics, supports simple global `sort_by`, deduplicates using the same comparator, exposes partial failures, and returns `503` when every target cluster fails.
-8. **Helm deployment**: chart metadata is now `Chart.yaml`; ConfigMap/Secret env vars match the app settings; Admin UI service defaults to `ClusterIP`.
+8. **Helm deployment**: chart metadata is now `Chart.yaml`; ConfigMap/Secret env vars match the app settings; Admin UI service defaults to `ClusterIP`; workloads expose configurable probes, resources, service account, pod scheduling, and security contexts.
 9. **Dependency/security**: Admin UI upgraded to Next.js 16.2.9 and ESLint 9; production audit gate has no high/critical findings.
 10. **Delivery gates**: root `npm test` runs API and indexing tests; Admin UI has explicit lint/build/audit commands. A GitHub Actions workflow is recommended next, but was not committed because the current OAuth token cannot create workflow files without the `workflow` scope.
-11. **Runtime hardening**: Python Docker images use Python 3.11 and non-root users.
+11. **Runtime hardening**: Python and Admin UI Docker images run as numeric non-root users, aligning with Kubernetes `runAsNonRoot` policies.
 12. **Data-plane auth and auditability**: `/ingest/*` and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
 13. **Schema reconciliation**: desired collection schemas are persisted in control-plane state; new clusters are backfilled automatically, and operators can trigger an idempotent `/admin/collections/reconcile`.
 
@@ -70,7 +70,7 @@ Implication: the product should not compete as “another search engine.” It s
 ### Improvements
 
 1. **Health/readiness**: `/health` now exposes Redis, Kafka, and per-data-cluster readiness; `/ready` returns HTTP 503 until all required dependencies and data clusters are ready.
-2. **Helm**: Added indexing-service deployment (values + template).
+2. **Helm**: Added indexing-service deployment (values + template) and production-oriented defaults for probes, resources, non-root security context, service account token mounting, and scheduling overrides.
 3. **Tests**: Pytest suite for Query API (root, health, ingest without `id`, valid ingest), with test lifespan (`TESTING=1`) and minimal env in `conftest`.
 4. **Documentation**: `.env.example` commented; `PROJECT_ANALYSIS.md` (this file).
 5. **Root tooling**: `Makefile` and `package.json` at repo root with `test` / `npm run test` to run Query API tests from root; extended `.gitignore` (pytest cache, coverage, OS); added `LICENSE` (MIT).

@@ -4,29 +4,116 @@
 replicaCount: 1
 imagePullPolicy: IfNotPresent
 
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
 # Configuration for the query-api service
 queryApi:
   name: query-api
   image: "your-registry/imposbro-query-api:latest" # <-- IMPORTANT: Replace with your Docker image name
+  replicaCount: 1
   port: 8000
   service:
     type: ClusterIP
     port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  startupProbe:
+    httpGet:
+      path: /ready
+      port: http
+    failureThreshold: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 20
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
 
 # Configuration for the admin-ui service
 adminUi:
   name: admin-ui
   image: "your-registry/imposbro-admin-ui:latest" # <-- IMPORTANT: Replace with your Docker image name
+  replicaCount: 1
   port: 3000
   service:
     type: ClusterIP # Expose through an authenticated Ingress or gateway in production
     port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 20
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
 
 # Configuration for the indexing-service (Kafka consumer)
 indexingService:
   name: indexing-service
   image: "your-registry/imposbro-indexing-service:latest" # <-- IMPORTANT: Replace with your Docker image name
   replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  # Workers do not expose an HTTP health endpoint by default.
+  # Provide probes here if you wrap the worker with a process-level healthcheck.
+  livenessProbe: {}
 
 # Configuration for backend services (Kafka, Typesense, Redis)
 # For a production setup, these should come from external Helm charts (as dependencies)
