@@ -184,6 +184,22 @@ def test_process_message_upserts_to_target_cluster():
     assert sample_value("indexing_documents_indexed_total", labels) == before + 1
 
 
+def test_process_message_accepts_request_id_metadata():
+    client = FakeTypesenseClient()
+
+    consumer.process_message(
+        {
+            "collection": "products",
+            "target_cluster": "cluster-a",
+            "request_id": "trace-123",
+            "document": {"id": "doc-1", "name": "Product"},
+        },
+        {"cluster-a": client},
+    )
+
+    assert client.documents.upserted == [{"id": "doc-1", "name": "Product"}]
+
+
 def test_process_message_without_target_cluster_uses_default_data_cluster():
     client = FakeTypesenseClient()
 

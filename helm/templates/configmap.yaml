@@ -19,6 +19,7 @@ data:
   DEFAULT_DATA2_CLUSTER_NODES: {{ .Values.config.DEFAULT_DATA2_CLUSTER_NODES | quote }}
   INTERNAL_QUERY_API_URL: {{ .Values.config.INTERNAL_QUERY_API_URL | quote }}
   CORS_ORIGINS: {{ .Values.config.CORS_ORIGINS | quote }}
+  REQUEST_ID_HEADER: {{ .Values.config.REQUEST_ID_HEADER | quote }}
   ALLOW_UNAUTHENTICATED_ADMIN: {{ .Values.config.ALLOW_UNAUTHENTICATED_ADMIN | quote }}
   ALLOW_UNAUTHENTICATED_DATA: {{ .Values.config.ALLOW_UNAUTHENTICATED_DATA | quote }}
   RATE_LIMIT_ENABLED: {{ .Values.config.RATE_LIMIT_ENABLED | quote }}

@@ -84,7 +84,11 @@ class KafkaService:
         )
 
     def publish_document(
-        self, collection_name: str, document: Dict[str, Any], target_cluster: str
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        target_cluster: str,
+        request_id: Optional[str] = None,
     ) -> None:
         """
         Publish a document for indexing.
@@ -93,6 +97,7 @@ class KafkaService:
             collection_name: Target collection name
             document: Document to index
             target_cluster: Target cluster for this document
+            request_id: Optional support correlation id from the HTTP request
 
         Raises:
             Exception: If publish fails
@@ -105,11 +110,18 @@ class KafkaService:
             "collection": collection_name,
             "document": document,
         }
+        if request_id:
+            message["request_id"] = request_id
 
         self.producer.send(topic_name, key=str(doc_id).encode("utf-8"), value=message)
         self.producer.flush()
 
-        logger.debug(f"Published document {doc_id} to topic {topic_name}")
+        logger.debug(
+            "Published document %s to topic %s request_id=%s",
+            doc_id,
+            topic_name,
+            request_id or "-",
+        )
 
     def close(self) -> None:
         """Close the Kafka producer connection."""

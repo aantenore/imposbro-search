@@ -70,6 +70,7 @@ Validate required external service and secret configuration.
 {{- $_ := required "config.INTERNAL_STATE_NODES is required; deploy Typesense state nodes separately and provide hostnames" .Values.config.INTERNAL_STATE_NODES -}}
 {{- $_ := required "config.DEFAULT_DATA_CLUSTER_NODES is required; deploy Typesense data nodes separately and provide hostnames" .Values.config.DEFAULT_DATA_CLUSTER_NODES -}}
 {{- $_ := required "config.INTERNAL_QUERY_API_URL is required for Admin UI and indexing service discovery" .Values.config.INTERNAL_QUERY_API_URL -}}
+{{- $_ := required "config.REQUEST_ID_HEADER is required for HTTP/Kafka request correlation" .Values.config.REQUEST_ID_HEADER -}}
 {{- if not .Values.config.useSecret -}}
 {{- fail "config.useSecret must be true unless you customize the chart to inject required API keys from an external secret manager" -}}
 {{- end -}}

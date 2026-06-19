@@ -22,6 +22,7 @@ from deps import (
     require_search_collection_api_key,
 )
 from models import IngestResponse, SearchRequest
+from observability import get_request_id
 from services import FederationService, KafkaService
 
 logger = logging.getLogger(__name__)
@@ -394,6 +395,7 @@ def ingest_document(
                 collection_name=collection_name,
                 document=document,
                 target_cluster=target_cluster_name,
+                request_id=get_request_id(request),
             )
         routed_to = ",".join(name for _, name in targets)
         documents_ingested.labels(collection=collection_name).inc()
@@ -402,7 +404,11 @@ def ingest_document(
             status="ok", document_id=str(doc_id), routed_to=routed_to
         )
     except Exception as e:
-        logger.error(f"Failed to publish document to Kafka: {e}")
+        logger.error(
+            "Failed to publish document to Kafka request_id=%s: %s",
+            get_request_id(request),
+            e,
+        )
         raise HTTPException(status_code=500, detail=f"Kafka producer error: {str(e)}")
 
 

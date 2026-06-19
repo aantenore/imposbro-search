@@ -121,6 +121,8 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 - Ingress class, TLS secrets, hosts, and authentication annotations configured
   for every browser-facing endpoint.
 - `CORS_ORIGINS` set to explicit browser origins.
+- `REQUEST_ID_HEADER` aligned with the ingress/gateway tracing convention
+  (default `X-Request-ID`).
 - HPA enabled for Query API/Admin UI when CPU or memory tracks request load.
 - KEDA enabled for indexing workers when Kafka lag is the scaling signal.
 - PodDisruptionBudget enabled for replicated workloads after choosing
@@ -131,6 +133,17 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 - `monitoring.serviceMonitor.enabled=true` and
   `monitoring.prometheusRule.enabled=true` when Prometheus Operator is used.
 - `make ci`, runtime smoke, and benchmark evidence captured for the release.
+
+## Support Diagnostics
+
+Query API echoes the configured request-correlation header on every response
+and propagates the same value into Kafka ingest messages as `request_id`.
+When investigating a failed ingest, capture the HTTP response
+`X-Request-ID` (or the configured equivalent), then search Query API and
+indexing-service logs for `request_id=<value>`.
+
+Keep request ids out of Prometheus labels and dashboards. They are intentionally
+log-only metadata so high-cardinality traffic cannot destabilize monitoring.
 
 ## Alerting
 
