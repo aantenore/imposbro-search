@@ -1,0 +1,75 @@
+{{- if and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.queryApi.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-query-api
+  {{- with .Values.monitoring.serviceMonitor.namespace }}
+  namespace: {{ . | quote }}
+  {{- end }}
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: query-api
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: query-api
+  {{- with .Values.monitoring.serviceMonitor.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.targetLabels }}
+  targetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.podTargetLabels }}
+  podTargetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  endpoints:
+    - port: http
+      path: {{ .Values.monitoring.serviceMonitor.queryApi.path | quote }}
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+---
+{{ end }}
+{{- if and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.indexingService.enabled .Values.indexingService.metrics.enabled .Values.indexingService.metrics.service.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-indexing-service
+  {{- with .Values.monitoring.serviceMonitor.namespace }}
+  namespace: {{ . | quote }}
+  {{- end }}
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: indexing-service
+  {{- with .Values.monitoring.serviceMonitor.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.targetLabels }}
+  targetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.podTargetLabels }}
+  podTargetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  endpoints:
+    - port: metrics
+      path: {{ .Values.monitoring.serviceMonitor.indexingService.path | quote }}
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{ end }}

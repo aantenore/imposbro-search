@@ -154,7 +154,7 @@ imposbro-search/
 
 * **Kafka**: A durable message broker that acts as a buffer for ingestion requests, ensuring data integrity and decoupling document submission from indexing.
 
-* **Prometheus & Grafana**: A standard observability stack for metrics collection, health monitoring, and performance visualization of the full system.
+* **Prometheus & Grafana**: A standard observability stack for metrics collection, health monitoring, performance visualization, and optional Prometheus Operator alerting of the full system.
 
 ---
 
@@ -629,6 +629,7 @@ indexingService:
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
 * [x] Kubernetes ingest/search benchmark harness with JSON output and configurable SLO thresholds
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
+* [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting
 
 ### 🚧 Future
 

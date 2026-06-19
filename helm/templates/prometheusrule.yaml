@@ -1,0 +1,87 @@
+{{- if .Values.monitoring.prometheusRule.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}
+  {{- with .Values.monitoring.prometheusRule.namespace }}
+  namespace: {{ . | quote }}
+  {{- end }}
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: imposbro-search.rules
+      rules:
+        {{- with .Values.monitoring.prometheusRule.rules.queryApiHigh5xxRate }}
+        {{- if .enabled }}
+        - alert: ImposbroQueryApiHigh5xxRate
+          expr: |
+            (
+              sum(rate(fastapi_requests_total{status=~"5.."}[5m]))
+              /
+              clamp_min(sum(rate(fastapi_requests_total[5m])), 1)
+            ) > {{ .threshold }}
+          for: {{ .duration }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO Query API 5xx rate is above threshold"
+            description: "More than {{ .threshold }} of Query API requests are returning 5xx responses."
+        {{- end }}
+        {{- end }}
+        {{- with .Values.monitoring.prometheusRule.rules.queryApiHighP95Latency }}
+        {{- if .enabled }}
+        - alert: ImposbroQueryApiHighP95Latency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum(rate(fastapi_requests_latency_seconds_bucket[5m])) by (le, app_name)
+            ) > {{ .thresholdSeconds }}
+          for: {{ .duration }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO Query API p95 latency is high"
+            description: "Query API p95 latency is above {{ .thresholdSeconds }}s."
+        {{- end }}
+        {{- end }}
+        {{- with .Values.monitoring.prometheusRule.rules.indexingDlqMessages }}
+        {{- if .enabled }}
+        - alert: ImposbroIndexingDlqMessages
+          expr: |
+            sum(increase(indexing_dlq_messages_total[{{ .window }}])) > {{ .threshold }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO indexing messages reached the DLQ"
+            description: "At least one indexing message was moved to the dead-letter topic."
+        {{- end }}
+        {{- end }}
+        {{- with .Values.monitoring.prometheusRule.rules.indexingRetryBurst }}
+        {{- if .enabled }}
+        - alert: ImposbroIndexingRetryBurst
+          expr: |
+            sum(increase(indexing_processing_retries_total[{{ .window }}])) > {{ .threshold }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO indexing retry volume is elevated"
+            description: "Indexing retries exceeded {{ .threshold }} attempts over {{ .window }}."
+        {{- end }}
+        {{- end }}
+        {{- with .Values.monitoring.prometheusRule.rules.indexingNoLoadedClusters }}
+        {{- if .enabled }}
+        - alert: ImposbroIndexingNoLoadedClusters
+          expr: max(indexing_loaded_clusters) < 1
+          for: {{ .duration }}
+          labels:
+            severity: {{ .severity | quote }}
+          annotations:
+            summary: "IMPOSBRO indexing workers have no loaded data clusters"
+            description: "Indexing workers are running but report no loaded Typesense data clusters."
+        {{- end }}
+        {{- end }}
+{{- end }}

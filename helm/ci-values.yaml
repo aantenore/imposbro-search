@@ -44,6 +44,16 @@ networkPolicy:
           matchLabels:
             app.kubernetes.io/name: prometheus
 
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus
+  prometheusRule:
+    enabled: true
+    labels:
+      release: prometheus
+
 config:
   useSecret: true
   KAFKA_BROKER_URL: kafka:9092
