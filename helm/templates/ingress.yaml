@@ -1,0 +1,77 @@
+{{- if .Values.queryApi.ingress.enabled }}
+{{- if not .Values.queryApi.ingress.hosts -}}
+{{- fail "queryApi.ingress.hosts must contain at least one host when queryApi.ingress.enabled is true" -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-query-api
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: query-api
+  {{- with .Values.queryApi.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.queryApi.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.queryApi.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.queryApi.ingress.hosts }}
+    {{- $host := required "queryApi.ingress.hosts[].host is required when queryApi.ingress.enabled is true" .host }}
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: {{ default "/" .path | quote }}
+            pathType: {{ default "Prefix" .pathType }}
+            backend:
+              service:
+                name: {{ include "imposbro-search.fullname" $ }}-query-api
+                port:
+                  number: {{ $.Values.queryApi.service.port }}
+    {{- end }}
+{{- end }}
+{{- if .Values.adminUi.ingress.enabled }}
+---
+{{ if not .Values.adminUi.ingress.hosts }}
+{{ fail "adminUi.ingress.hosts must contain at least one host when adminUi.ingress.enabled is true" }}
+{{ end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-admin-ui
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-ui
+  {{- with .Values.adminUi.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.adminUi.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.adminUi.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.adminUi.ingress.hosts }}
+    {{- $host := required "adminUi.ingress.hosts[].host is required when adminUi.ingress.enabled is true" .host }}
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: {{ default "/" .path | quote }}
+            pathType: {{ default "Prefix" .pathType }}
+            backend:
+              service:
+                name: {{ include "imposbro-search.fullname" $ }}-admin-ui
+                port:
+                  number: {{ $.Values.adminUi.service.port }}
+    {{- end }}
+{{- end }}
