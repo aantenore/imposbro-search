@@ -6,7 +6,9 @@ metadata:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: admin-ui
 spec:
+  {{- if not .Values.adminUi.autoscaling.enabled }}
   replicas: {{ .Values.adminUi.replicaCount | default .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "imposbro-search.selectorLabels" . | nindent 6 }}

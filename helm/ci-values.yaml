@@ -1,12 +1,29 @@
 # Values used only to validate Helm rendering in CI/local release gates.
 queryApi:
   image: registry.example.com/imposbro-query-api:1.0.0
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
 
 adminUi:
   image: registry.example.com/imposbro-admin-ui:1.0.0
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
 
 indexingService:
   image: registry.example.com/imposbro-indexing-service:1.0.0
+  keda:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 5
+    kafka:
+      lagThreshold: "25"
+      ensureEvenDistributionOfPartitions: "true"
 
 config:
   useSecret: true

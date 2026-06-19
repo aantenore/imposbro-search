@@ -95,7 +95,8 @@ The market does validate the problem, but it also narrows the room for different
 33. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
 34. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search filters and validate or inject ingest tenant fields.
 35. **Alias state portability**: Collection alias bindings are persisted in control-plane state, included in backup/restore snapshots, restored through import apply, and covered by DR smoke.
-35. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
+36. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
+37. **Kubernetes autoscaling controls**: Helm chart now supports optional `autoscaling/v2` HPA for Query API/Admin UI/workers and optional KEDA Kafka `ScaledObject` for indexing workers, rendered in CI values.
 
 ### Fixes
 
@@ -152,7 +153,7 @@ The market does validate the problem, but it also narrows the room for different
 ### Remaining Product Risks
 
 - **Enterprise authorization depth**: OIDC and tenant policies cover API-level identity and tenant isolation; future enterprise deployments may still need richer per-collection RBAC, admin role mapping, and UI login/session flows.
-- **Operational scale proof**: local Docker now covers multi-instance rolling smoke and lag budget; the next credibility step is a real Kubernetes benchmark with production-sized topics, KEDA/HPA decisions, and sustained traffic.
+- **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, and Helm autoscaling manifests; the next credibility step is a real Kubernetes benchmark with production-sized topics and sustained traffic.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”
 

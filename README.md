@@ -512,7 +512,7 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 ### Step 2: Configure and Deploy the Helm Chart
 
 1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header.
-    The chart also exposes per-workload `replicaCount`, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
+    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
     helm install imposbro-release ./helm -f production-values.yaml
@@ -524,7 +524,7 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 
 ### Step 3: Scaling Services in Kubernetes
 
-Kubernetes makes it easy to scale your stateless application services.
+Kubernetes makes it easy to scale your stateless application services. For manual scaling:
 
 * **Scaling the `query-api`:**
     ```bash
@@ -534,6 +534,30 @@ Kubernetes makes it easy to scale your stateless application services.
     ```bash
     kubectl scale deployment imposbro-release-imposbro-search-indexing-service --replicas=5
     ```
+
+For automatic scaling, enable HPA for the Query API or Admin UI:
+
+```yaml
+queryApi:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+```
+
+For Kafka-driven indexing workers, install KEDA in the cluster and enable the Kafka ScaledObject:
+
+```yaml
+indexingService:
+  keda:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 10
+    kafka:
+      lagThreshold: "50"
+      ensureEvenDistributionOfPartitions: "true"
+```
 
 **Note on Stateful Services:** This Helm chart only deploys the custom applications. For a production Kubernetes deployment, you should deploy Kafka and the Typesense HA cluster using their own dedicated, official Helm charts (e.g., from Bitnami) or a Kubernetes Operator. These tools are specifically designed to manage the complexities of scaling and operating stateful services on Kubernetes.
 
@@ -569,6 +593,7 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] OIDC/JWT bearer-token auth with configurable scope mapping, hashed OIDC audit actors, and optional tenant policy for search/ingest
 * [x] Horizontal scaling runbook and multi-instance Docker rolling smoke with Kafka lag budget
 * [x] Persisted collection aliases in control-plane backup/restore snapshots
+* [x] Helm HPA/KEDA autoscaling controls for Query API, Admin UI, and Kafka indexing workers
 
 ### 🚧 Future
 
