@@ -7,6 +7,10 @@ metadata:
 data:
   KAFKA_BROKER_URL: {{ .Values.config.KAFKA_BROKER_URL | quote }}
   KAFKA_TOPIC_PREFIX: {{ .Values.config.KAFKA_TOPIC_PREFIX | quote }}
+  KAFKA_METADATA_MAX_AGE_MS: {{ .Values.config.KAFKA_METADATA_MAX_AGE_MS | quote }}
+  INDEXING_MAX_PROCESSING_ATTEMPTS: {{ .Values.config.INDEXING_MAX_PROCESSING_ATTEMPTS | quote }}
+  INDEXING_METRICS_ENABLED: {{ .Values.config.INDEXING_METRICS_ENABLED | quote }}
+  INDEXING_METRICS_PORT: {{ .Values.config.INDEXING_METRICS_PORT | quote }}
   REDIS_URL: {{ .Values.config.REDIS_URL | quote }}
   INTERNAL_STATE_NODES: {{ .Values.config.INTERNAL_STATE_NODES | quote }}
   DEFAULT_DATA_CLUSTER_NODES: {{ .Values.config.DEFAULT_DATA_CLUSTER_NODES | quote }}

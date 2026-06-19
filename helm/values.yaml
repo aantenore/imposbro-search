@@ -104,6 +104,13 @@ indexingService:
   name: indexing-service
   image: "your-registry/imposbro-indexing-service:latest" # <-- IMPORTANT: Replace with your Docker image name
   replicaCount: 1
+  metrics:
+    enabled: true
+    port: 9108
+    service:
+      enabled: true
+      type: ClusterIP
+      port: 9108
   resources:
     requests:
       cpu: 100m
@@ -139,6 +146,10 @@ config:
   useSecret: false  # Set to true and provide secret.* values (e.g. via --set) to use a Secret for credentials
   KAFKA_BROKER_URL: "kafka:9092"
   KAFKA_TOPIC_PREFIX: "imposbro_search_sharded"
+  KAFKA_METADATA_MAX_AGE_MS: "5000"
+  INDEXING_MAX_PROCESSING_ATTEMPTS: "3"
+  INDEXING_METRICS_ENABLED: "true"
+  INDEXING_METRICS_PORT: "9108"
   REDIS_URL: "redis://redis:6379"
   INTERNAL_STATE_NODES: "typesense-state-1,typesense-state-2,typesense-state-3"
   DEFAULT_DATA_CLUSTER_NODES: "typesense-data-1,typesense-data-2,typesense-data-3"

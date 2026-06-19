@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -9,6 +10,7 @@ if str(_app_dir) not in sys.path:
 
 import main
 import consumer
+import metrics
 
 
 class FakeResponse:
@@ -69,6 +71,39 @@ def test_build_admin_headers_omits_empty_admin_key(monkeypatch):
     assert main.build_admin_headers() == {}
 
 
+def test_start_metrics_server_respects_disabled_env(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("INDEXING_METRICS_ENABLED", "false")
+    monkeypatch.setattr(metrics, "start_http_server", lambda port: calls.append(port))
+
+    assert metrics.start_metrics_server_from_env() is False
+    assert calls == []
+
+
+def test_start_metrics_server_uses_configured_port(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("INDEXING_METRICS_ENABLED", "true")
+    monkeypatch.setenv("INDEXING_METRICS_PORT", "19108")
+    monkeypatch.setattr(metrics, "start_http_server", lambda port: calls.append(port))
+
+    assert metrics.start_metrics_server_from_env() is True
+    assert calls == [19108]
+
+
+def test_start_metrics_server_is_best_effort(monkeypatch):
+    monkeypatch.setenv("INDEXING_METRICS_ENABLED", "true")
+    monkeypatch.setenv("INDEXING_METRICS_PORT", "19108")
+
+    def fail_to_start(_port):
+        raise OSError("already in use")
+
+    monkeypatch.setattr(metrics, "start_http_server", fail_to_start)
+
+    assert metrics.start_metrics_server_from_env() is False
+
+
 def test_create_kafka_consumer_refreshes_metadata_for_dynamic_topics(monkeypatch):
     created_kwargs = {}
 
@@ -90,7 +125,14 @@ def test_create_kafka_consumer_refreshes_metadata_for_dynamic_topics(monkeypatch
     assert created_kwargs["bootstrap_servers"] == "kafka:29092"
     assert created_kwargs["metadata_max_age_ms"] == 7000
     assert created_kwargs["enable_auto_commit"] is False
-    assert kafka_consumer.pattern == "^imposbro_search_sharded_.*"
+    assert kafka_consumer.pattern == "^imposbro_search_sharded_(?!dlq$).*"
+
+
+def test_topic_subscription_pattern_excludes_dlq_topic():
+    pattern = consumer.build_topic_subscription_pattern("imposbro_search_sharded")
+
+    assert re.match(pattern, "imposbro_search_sharded_products")
+    assert not re.match(pattern, "imposbro_search_sharded_dlq")
 
 
 class FakeDocumentOperations:
@@ -120,8 +162,14 @@ class FakeTypesenseClient:
         self.collections = FakeCollections(self.documents)
 
 
+def sample_value(name, labels):
+    return metrics.REGISTRY.get_sample_value(name, labels) or 0
+
+
 def test_process_message_upserts_to_target_cluster():
     client = FakeTypesenseClient()
+    labels = {"collection": "products", "target_cluster": "cluster-a"}
+    before = sample_value("indexing_documents_indexed_total", labels)
 
     consumer.process_message(
         {
@@ -133,6 +181,7 @@ def test_process_message_upserts_to_target_cluster():
     )
 
     assert client.documents.upserted == [{"id": "doc-1", "name": "Product"}]
+    assert sample_value("indexing_documents_indexed_total", labels) == before + 1
 
 
 def test_process_message_raises_when_target_cluster_is_missing():
@@ -155,6 +204,12 @@ def test_process_message_with_retries_refreshes_missing_cluster():
     client = FakeTypesenseClient()
     clients = {}
     refresh_calls = []
+    labels = {
+        "collection": "products",
+        "target_cluster": "cluster-a",
+        "error": "MissingTargetClusterError",
+    }
+    before = sample_value("indexing_processing_retries_total", labels)
 
     def refresh_clients():
         refresh_calls.append(True)
@@ -177,10 +232,22 @@ def test_process_message_with_retries_refreshes_missing_cluster():
     assert refresh_calls == [True]
     assert clients == {"cluster-a": client}
     assert client.documents.upserted == [{"id": "doc-1", "name": "Product"}]
+    assert sample_value("indexing_processing_retries_total", labels) == before + 1
 
 
 def test_process_message_with_retries_quarantines_poison_message_to_dlq(monkeypatch):
     sent = []
+    retry_labels = {
+        "collection": "products",
+        "target_cluster": "missing",
+        "error": "MissingTargetClusterError",
+    }
+    dlq_labels = {
+        "source_topic": "imposbro_search_sharded_products",
+        "error": "MissingTargetClusterError",
+    }
+    retry_before = sample_value("indexing_processing_retries_total", retry_labels)
+    dlq_before = sample_value("indexing_dlq_messages_total", dlq_labels)
 
     class FakeDlqProducer:
         def send(self, topic, value):
@@ -209,3 +276,5 @@ def test_process_message_with_retries_quarantines_poison_message_to_dlq(monkeypa
     assert sent[0]["value"]["source_topic"] == "imposbro_search_sharded_products"
     assert sent[0]["value"]["error"] == "MissingTargetClusterError"
     assert sent[1] == {"flushed": True}
+    assert sample_value("indexing_processing_retries_total", retry_labels) == retry_before + 1
+    assert sample_value("indexing_dlq_messages_total", dlq_labels) == dlq_before + 1

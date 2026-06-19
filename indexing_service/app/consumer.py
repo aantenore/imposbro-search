@@ -12,6 +12,7 @@ This ensures consistency and avoids routing logic duplication.
 
 import os
 import json
+import re
 import signal
 import logging
 import sys
@@ -19,6 +20,8 @@ from typing import Dict, Optional
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.structs import OffsetAndMetadata, TopicPartition
 import time
+
+import metrics
 
 # Configure logging
 logging.basicConfig(
@@ -82,14 +85,22 @@ def create_kafka_consumer(kafka_broker_url: str, topic_prefix: str) -> KafkaCons
         enable_auto_commit=False,
         metadata_max_age_ms=metadata_max_age_ms,
     )
-    consumer.subscribe(pattern=f"^{topic_prefix}_.*")
+    pattern = build_topic_subscription_pattern(topic_prefix)
+    consumer.subscribe(pattern=pattern)
     logger.info(
-        "Kafka Consumer connected and subscribed to pattern '%s_*' "
+        "Kafka Consumer connected and subscribed to pattern '%s' "
         "(metadata refresh: %sms)",
-        topic_prefix,
+        pattern,
         metadata_max_age_ms,
     )
     return consumer
+
+
+def build_topic_subscription_pattern(topic_prefix: str) -> str:
+    """Build a collection-topic regex that excludes the worker DLQ topic."""
+    escaped_prefix = re.escape(topic_prefix)
+    dlq_topic_name = re.escape(DLQ_TOPIC_SUFFIX.lstrip("_"))
+    return rf"^{escaped_prefix}_(?!{dlq_topic_name}$).*"
 
 
 def run_consumer(typesense_clients: Dict, refresh_clients=None) -> None:
@@ -210,6 +221,12 @@ def process_message_with_retries(
             return
         except MissingTargetClusterError as exc:
             last_error = exc
+            collection, target_cluster = metrics.message_labels(message)
+            metrics.PROCESSING_RETRIES.labels(
+                collection=collection,
+                target_cluster=target_cluster,
+                error=type(exc).__name__,
+            ).inc()
             if refresh_clients:
                 logger.warning("%s Refreshing cluster configuration...", exc)
                 refreshed_clients = refresh_clients()
@@ -219,6 +236,12 @@ def process_message_with_retries(
             break
         except Exception as exc:
             last_error = exc
+            collection, target_cluster = metrics.message_labels(message)
+            metrics.PROCESSING_RETRIES.labels(
+                collection=collection,
+                target_cluster=target_cluster,
+                error=type(exc).__name__,
+            ).inc()
             logger.warning(
                 "Indexing attempt %s/%s failed: %s",
                 attempt,
@@ -259,6 +282,10 @@ def publish_to_dlq(
     }
     dlq_producer.send(dlq_topic, value=payload)
     dlq_producer.flush()
+    metrics.DLQ_MESSAGES.labels(
+        source_topic=source_topic,
+        error=type(error).__name__,
+    ).inc()
     logger.error(
         "Published failed message from %s to DLQ %s: %s",
         source_topic,
@@ -309,6 +336,10 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
     # Upsert the document
     try:
         client.collections[collection_name].documents.upsert(document)
+        metrics.INDEXED_DOCUMENTS.labels(
+            collection=collection_name,
+            target_cluster=target_cluster,
+        ).inc()
         logger.info(
             f"Indexed document {doc_id} into '{collection_name}' "
             f"on cluster '{target_cluster}'"
