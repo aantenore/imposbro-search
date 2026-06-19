@@ -39,9 +39,9 @@ export default function RootLayout({ children }) {
     <html lang="en" className={plusJakarta.variable}>
       <body className="font-sans min-h-screen">
         <style dangerouslySetInnerHTML={{ __html: criticalStyles }} />
-        <div className="flex min-h-screen">
+        <div className="flex min-h-screen flex-col lg:flex-row">
           <Sidebar />
-          <main className="flex-1 overflow-auto bg-background p-6 sm:p-8 md:p-10">{children}</main>
+          <main className="min-w-0 flex-1 overflow-auto bg-background p-4 sm:p-8 md:p-10">{children}</main>
         </div>
       </body>
     </html>

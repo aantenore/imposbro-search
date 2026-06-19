@@ -80,3 +80,30 @@ export const Checkbox = forwardRef(function Checkbox(
     </label>
   );
 });
+
+export const Textarea = forwardRef(function Textarea(
+  { className, label, error, ...props },
+  ref
+) {
+  return (
+    <div className="w-full">
+      {label && (
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          {label}
+        </label>
+      )}
+      <textarea
+        className={cn(
+          'flex min-h-32 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+          error && 'border-destructive focus-visible:ring-destructive',
+          className
+        )}
+        ref={ref}
+        {...props}
+      />
+      {error && (
+        <p className="mt-1.5 text-sm text-destructive">{error}</p>
+      )}
+    </div>
+  );
+});
