@@ -154,6 +154,28 @@ export const api = {
         }),
     },
 
+    // ===== Operations =====
+    state: {
+        /**
+         * Export control-plane state. Secrets are masked unless explicitly requested.
+         */
+        exportSnapshot: ({ includeSecrets = false } = {}) => {
+            const query = includeSecrets ? '?include_secrets=true' : '';
+            return request(`/admin/state/export${query}`);
+        },
+
+        /**
+         * Validate or apply a control-plane state snapshot.
+         */
+        importSnapshot: (snapshot, { apply = false } = {}) => {
+            const query = apply ? '?apply=true' : '';
+            return request(`/admin/state/import${query}`, {
+                method: 'POST',
+                body: JSON.stringify(snapshot),
+            });
+        },
+    },
+
     // ===== Search & Ingestion =====
     search: {
         /**

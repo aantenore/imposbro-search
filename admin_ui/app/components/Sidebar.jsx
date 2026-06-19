@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, Database, GitBranch, Search, Workflow } from 'lucide-react';
+import { ArchiveRestore, LayoutDashboard, Server, Database, GitBranch, Search, Workflow } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const navItems = [
@@ -11,6 +11,7 @@ const navItems = [
   { href: '/collections', label: 'Collections', icon: Database },
   { href: '/routing', label: 'Routing', icon: GitBranch },
   { href: '/workspace', label: 'Workspace', icon: Workflow },
+  { href: '/operations', label: 'Operations', icon: ArchiveRestore },
 ];
 
 export default function Sidebar() {
