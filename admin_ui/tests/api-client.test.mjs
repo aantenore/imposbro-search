@@ -128,6 +128,32 @@ test('state import posts snapshot JSON and apply flag', async () => {
   }
 });
 
+test('audit list builds sanitized filter query parameters', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ entries: [] });
+  };
+
+  try {
+    await api.audit.list({
+      limit: 10,
+      action: 'state_imported',
+      resourceType: 'control_plane_state',
+    });
+
+    assert.equal(
+      request.url,
+      '/api/admin/audit-log?limit=10&action=state_imported&resource_type=control_plane_state'
+    );
+    assert.equal(request.options.headers['Content-Type'], 'application/json');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('ingest posts a JSON document to the encoded collection path', async () => {
   const originalFetch = globalThis.fetch;
   let request;

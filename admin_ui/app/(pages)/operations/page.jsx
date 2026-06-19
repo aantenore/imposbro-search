@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArchiveRestore,
@@ -9,6 +9,8 @@ import {
   FileCheck2,
   FileJson,
   FileUp,
+  History,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
   Upload,
@@ -157,6 +159,74 @@ function ImportResult({ result, validationIsCurrent }) {
   );
 }
 
+function formatAuditTime(entry) {
+  if (!entry?.timestamp) return 'unknown time';
+  const date = new Date(entry.timestamp);
+  return Number.isNaN(date.getTime()) ? entry.timestamp : date.toLocaleString();
+}
+
+function AuditLogCard({ entries, isLoading, onRefresh }) {
+  return (
+    <Card className="mt-6">
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <History className="h-5 w-5 text-primary" />
+            Recent audit events
+          </CardTitle>
+          <CardDescription>
+            Sanitized admin mutations recorded by the control plane.
+          </CardDescription>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          leftIcon={<RefreshCw size={16} />}
+          loading={isLoading}
+          onClick={onRefresh}
+        >
+          Refresh
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {entries.length > 0 ? (
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {entries.map((entry) => (
+              <div key={entry.id} className="grid gap-3 p-4 lg:grid-cols-[1fr,auto]">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge variant={entry.status === 'success' ? 'success' : 'warning'}>
+                      {entry.status || 'unknown'}
+                    </StatusBadge>
+                    <span className="font-mono text-sm font-semibold text-foreground">
+                      {entry.action}
+                    </span>
+                    <span className="text-sm text-muted-foreground">
+                      {entry.resource_type}/{entry.resource_id}
+                    </span>
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {formatAuditTime(entry)} · {entry.actor || 'unknown actor'}
+                  </p>
+                  {entry.details && Object.keys(entry.details).length > 0 && (
+                    <pre className="max-h-28 overflow-auto rounded-md bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+                      {stringifyJson(entry.details)}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border bg-muted/10 p-4 text-sm text-muted-foreground">
+            No audit events returned.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function OperationsPage() {
   const [exportMode, setExportMode] = useState(null);
   const [lastExport, setLastExport] = useState(null);
@@ -169,8 +239,26 @@ export default function OperationsPage() {
   const [applyConfirmed, setApplyConfirmed] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [auditEntries, setAuditEntries] = useState([]);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
   const fileInputRef = useRef(null);
   const { notification, showSuccess, showError, showInfo } = useNotification();
+
+  const fetchAudit = useCallback(async () => {
+    setIsLoadingAudit(true);
+    try {
+      const data = await api.audit.list({ limit: 12 });
+      setAuditEntries(data.entries || []);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  }, [showError]);
+
+  useEffect(() => {
+    fetchAudit();
+  }, [fetchAudit]);
 
   const importPreview = useMemo(() => {
     if (!importText.trim()) return null;
@@ -204,6 +292,7 @@ export default function OperationsPage() {
       setLastExport(snapshot);
       setExportText(stringifyJson(snapshot));
       showSuccess(includeSecrets ? 'Restore-ready snapshot exported.' : 'Masked snapshot exported.');
+      fetchAudit();
     } catch (err) {
       showError(err.message);
     } finally {
@@ -312,6 +401,7 @@ export default function OperationsPage() {
       setValidatedSnapshotText(trimmed);
       setApplyConfirmed(false);
       showSuccess(result.message || 'State snapshot imported.');
+      fetchAudit();
     } catch (err) {
       showError(err.message);
     } finally {
@@ -482,6 +572,12 @@ export default function OperationsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <AuditLogCard
+        entries={auditEntries}
+        isLoading={isLoadingAudit}
+        onRefresh={fetchAudit}
+      />
     </div>
   );
 }

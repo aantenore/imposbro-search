@@ -176,6 +176,20 @@ export const api = {
         },
     },
 
+    audit: {
+        /**
+         * List recent sanitized admin audit events.
+         */
+        list: ({ limit = 25, action = '', resourceType = '' } = {}) => {
+            const params = new URLSearchParams();
+            if (limit) params.set('limit', String(limit));
+            if (action) params.set('action', action);
+            if (resourceType) params.set('resource_type', resourceType);
+            const query = params.toString();
+            return request(`/admin/audit-log${query ? `?${query}` : ''}`);
+        },
+    },
+
     // ===== Search & Ingestion =====
     search: {
         /**
