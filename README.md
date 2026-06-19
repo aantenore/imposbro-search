@@ -626,10 +626,12 @@ indexingService:
 * [x] Collection-scoped data-plane RBAC for API keys and OIDC claims
 * [x] Admin UI OIDC Authorization Code + PKCE login/session flow
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
+* [x] Kubernetes ingest/search benchmark harness with JSON output and configurable SLO thresholds
 
 ### 🚧 Future
 
 * [ ] Hosted CI workflow once GitHub credentials include the `workflow` scope
+* [ ] Publish benchmark results from a production-sized Kubernetes run
 
 ---
 
@@ -663,6 +665,9 @@ make smoke-docker-alias
 # Scale smoke: multi-replica Query API + indexing workers, rolling restarts, lag budget
 make smoke-docker-scale
 
+# Kubernetes or port-forward benchmark: sustained ingest/search with optional SLOs
+make benchmark-k8s
+
 # Against an already running stack
 make smoke-vector
 make smoke-outage
@@ -682,6 +687,7 @@ Both `make test` and `npm run test` run the Query API and indexing service pytes
 
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to run tests, code style, and PR process.
 - **[docs/RUNBOOK_SCALING.md](docs/RUNBOOK_SCALING.md)** – Horizontal scaling, lag budget, rolling restart, rollback, and incident checks.
+- **[docs/RUNBOOK_BENCHMARKING.md](docs/RUNBOOK_BENCHMARKING.md)** – Kubernetes ingest/search benchmark, JSON artifacts, and release SLO examples.
 - **[docs/PATTERNS_AND_PRACTICES.md](docs/PATTERNS_AND_PRACTICES.md)** – Architectural patterns, dependency injection, security (API key masking, path validation, CORS), error handling, and checklist for new changes.
 - **[PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md)** – Project analysis, improvements log, and roadmap.
 
