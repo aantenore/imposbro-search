@@ -21,4 +21,14 @@ data:
   CORS_ORIGINS: {{ .Values.config.CORS_ORIGINS | quote }}
   ALLOW_UNAUTHENTICATED_ADMIN: {{ .Values.config.ALLOW_UNAUTHENTICATED_ADMIN | quote }}
   ALLOW_UNAUTHENTICATED_DATA: {{ .Values.config.ALLOW_UNAUTHENTICATED_DATA | quote }}
+  OIDC_ENABLED: {{ .Values.config.OIDC_ENABLED | quote }}
+  OIDC_ISSUER: {{ .Values.config.OIDC_ISSUER | quote }}
+  OIDC_AUDIENCE: {{ .Values.config.OIDC_AUDIENCE | quote }}
+  OIDC_JWKS_URL: {{ .Values.config.OIDC_JWKS_URL | quote }}
+  OIDC_PUBLIC_KEY: {{ .Values.config.OIDC_PUBLIC_KEY | quote }}
+  OIDC_ALGORITHMS: {{ .Values.config.OIDC_ALGORITHMS | quote }}
+  OIDC_LEEWAY_SECONDS: {{ .Values.config.OIDC_LEEWAY_SECONDS | quote }}
+  OIDC_SCOPE_CLAIMS: {{ .Values.config.OIDC_SCOPE_CLAIMS | quote }}
+  OIDC_SCOPE_MAPPING: {{ .Values.config.OIDC_SCOPE_MAPPING | quote }}
+  OIDC_SUBJECT_CLAIM: {{ .Values.config.OIDC_SUBJECT_CLAIM | quote }}
   ADMIN_UI_PROXY_TRUSTED_HEADER: {{ .Values.config.ADMIN_UI_PROXY_TRUSTED_HEADER | quote }}

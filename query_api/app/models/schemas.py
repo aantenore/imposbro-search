@@ -5,7 +5,9 @@ This module contains all the data models used for request/response validation
 and serialization throughout the API.
 """
 
-from pydantic import BaseModel, Field, model_validator
+import re
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Dict, List, Optional
 
 from constants import NAME_PATTERN, TYPESENSE_DEFAULT_PORT
@@ -17,6 +19,25 @@ except ImportError:
 
 
 NameString = Annotated[str, Field(pattern=NAME_PATTERN)]
+FIELD_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+TYPESENSE_FIELD_TYPES = {
+    "string",
+    "int32",
+    "int64",
+    "float",
+    "bool",
+    "string[]",
+    "int32[]",
+    "int64[]",
+    "float[]",
+    "bool[]",
+    "geopoint",
+    "geopoint[]",
+    "object",
+    "object[]",
+    "auto",
+}
+DEFAULT_SORTING_TYPES = {"int32", "int64", "float"}
 
 
 class Cluster(BaseModel):
@@ -66,6 +87,31 @@ class CollectionField(BaseModel):
         description="Typesense auto-embedding configuration for float[] fields",
     )
 
+    @field_validator("name")
+    @classmethod
+    def validate_field_name(cls, value: str) -> str:
+        if not FIELD_NAME_PATTERN.fullmatch(value):
+            raise ValueError(
+                "Field names may contain only letters, numbers, underscore, hyphen, and dot"
+            )
+        return value
+
+    @field_validator("type")
+    @classmethod
+    def validate_field_type(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in TYPESENSE_FIELD_TYPES:
+            raise ValueError(f"Unsupported Typesense field type '{value}'")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_vector_metadata(self) -> Self:
+        if self.num_dim is not None and self.type != "float[]":
+            raise ValueError("num_dim is supported only for float[] vector fields")
+        if self.embed is not None and self.type != "float[]":
+            raise ValueError("embed is supported only for float[] vector fields")
+        return self
+
 
 class CollectionSchema(BaseModel):
     """
@@ -77,11 +123,27 @@ class CollectionSchema(BaseModel):
         default_sorting_field: Optional field to sort by default
     """
     name: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
-    fields: List[CollectionField] = Field(..., description="Collection field definitions")
+    fields: List[CollectionField] = Field(
+        ...,
+        min_length=1,
+        description="Collection field definitions",
+    )
     default_sorting_field: Optional[str] = Field(
-        default=None, 
+        default=None,
         description="Default field for sorting results"
     )
+
+    @model_validator(mode="after")
+    def validate_default_sorting_field(self) -> Self:
+        if not self.default_sorting_field:
+            return self
+        fields_by_name = {field.name: field for field in self.fields}
+        sort_field = fields_by_name.get(self.default_sorting_field)
+        if sort_field is None:
+            raise ValueError("default_sorting_field must reference a declared field")
+        if sort_field.type not in DEFAULT_SORTING_TYPES:
+            raise ValueError("default_sorting_field must reference a numeric field")
+        return self
 
 
 class FieldRule(BaseModel):

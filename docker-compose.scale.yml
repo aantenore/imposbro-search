@@ -1,0 +1,16 @@
+services:
+  query_api:
+    ports: !reset []
+
+  indexing_service:
+    ports: !reset []
+
+  query_api_lb:
+    image: nginx:1.29-alpine
+    ports:
+      - '${HOST_BIND_IP:-127.0.0.1}:8000:8000'
+    depends_on:
+      - query_api
+    volumes:
+      - ./ops/nginx-query-api.conf:/etc/nginx/nginx.conf:ro
+
