@@ -2,6 +2,7 @@
 Dependency injection: read services from app.state (set in lifespan).
 Allows tests and production to use the same code path without mutating router modules.
 """
+import logging
 import json
 import hashlib
 import fnmatch
@@ -13,7 +14,18 @@ from fastapi import Request, Header, HTTPException, Path
 from auth import authenticate_oidc_bearer, oidc_enabled, oidc_http_exception
 from constants import NAME_PATTERN
 from settings import settings
-from services import FederationService, StateManager, KafkaService, SyncConfigNotifier
+from services import (
+    FederationService,
+    StateManager,
+    KafkaService,
+    SyncConfigNotifier,
+    FixedWindowRateLimiter,
+    RateLimitBackendError,
+    RateLimitConfigError,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_api_key(
@@ -324,6 +336,7 @@ def require_search_api_key(
         x_api_key=x_api_key,
         authorization=authorization,
     )
+    _enforce_data_plane_rate_limit(request, "search")
 
 
 def require_ingest_api_key(
@@ -340,6 +353,7 @@ def require_ingest_api_key(
         x_api_key=x_api_key,
         authorization=authorization,
     )
+    _enforce_data_plane_rate_limit(request, "ingest")
 
 
 def require_search_collection_api_key(
@@ -358,6 +372,7 @@ def require_search_collection_api_key(
         x_api_key=x_api_key,
         authorization=authorization,
     )
+    _enforce_data_plane_rate_limit(request, "search", collection_name)
 
 
 def require_ingest_collection_api_key(
@@ -376,6 +391,72 @@ def require_ingest_collection_api_key(
         x_api_key=x_api_key,
         authorization=authorization,
     )
+    _enforce_data_plane_rate_limit(request, "ingest", collection_name)
+
+
+def _get_rate_limiter(request: Request) -> FixedWindowRateLimiter:
+    if not hasattr(request.app.state, "rate_limiter"):
+        request.app.state.rate_limiter = FixedWindowRateLimiter(settings.REDIS_URL)
+    return request.app.state.rate_limiter
+
+
+def _rate_limit_identity(request: Request) -> str:
+    actor = getattr(request.state, "auth_actor", "")
+    if actor:
+        return str(actor)
+    if request.client and request.client.host:
+        return f"ip:{request.client.host}"
+    return "unknown"
+
+
+def _data_plane_limit_for_action(action: str) -> int:
+    if action == "search":
+        return settings.RATE_LIMIT_SEARCH_REQUESTS
+    if action == "ingest":
+        return settings.RATE_LIMIT_INGEST_REQUESTS
+    raise RateLimitConfigError(f"Unsupported rate-limit action '{action}'")
+
+
+def _enforce_data_plane_rate_limit(
+    request: Request,
+    action: str,
+    collection_name: str = "*",
+) -> None:
+    if not settings.RATE_LIMIT_ENABLED:
+        return
+
+    try:
+        result = _get_rate_limiter(request).check(
+            identity=_rate_limit_identity(request),
+            action=action,
+            collection=collection_name,
+            limit=_data_plane_limit_for_action(action),
+            window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
+            backend=settings.RATE_LIMIT_BACKEND,
+            key_prefix=settings.RATE_LIMIT_REDIS_PREFIX,
+        )
+    except RateLimitConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except RateLimitBackendError as exc:
+        if settings.RATE_LIMIT_FAIL_CLOSED:
+            raise HTTPException(
+                status_code=503,
+                detail="Rate-limit backend unavailable",
+            ) from exc
+        logger.warning("Rate-limit backend unavailable; allowing request: %s", exc)
+        return
+
+    if not result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={
+                "Retry-After": str(result.reset_seconds),
+                "X-RateLimit-Limit": str(result.limit),
+                "X-RateLimit-Remaining": str(result.remaining),
+                "X-RateLimit-Reset": str(result.reset_seconds),
+            },
+        )
 
 
 def get_federation_service(request: Request) -> FederationService:

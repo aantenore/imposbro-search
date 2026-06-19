@@ -21,6 +21,13 @@ data:
   CORS_ORIGINS: {{ .Values.config.CORS_ORIGINS | quote }}
   ALLOW_UNAUTHENTICATED_ADMIN: {{ .Values.config.ALLOW_UNAUTHENTICATED_ADMIN | quote }}
   ALLOW_UNAUTHENTICATED_DATA: {{ .Values.config.ALLOW_UNAUTHENTICATED_DATA | quote }}
+  RATE_LIMIT_ENABLED: {{ .Values.config.RATE_LIMIT_ENABLED | quote }}
+  RATE_LIMIT_BACKEND: {{ .Values.config.RATE_LIMIT_BACKEND | quote }}
+  RATE_LIMIT_WINDOW_SECONDS: {{ .Values.config.RATE_LIMIT_WINDOW_SECONDS | quote }}
+  RATE_LIMIT_SEARCH_REQUESTS: {{ .Values.config.RATE_LIMIT_SEARCH_REQUESTS | quote }}
+  RATE_LIMIT_INGEST_REQUESTS: {{ .Values.config.RATE_LIMIT_INGEST_REQUESTS | quote }}
+  RATE_LIMIT_FAIL_CLOSED: {{ .Values.config.RATE_LIMIT_FAIL_CLOSED | quote }}
+  RATE_LIMIT_REDIS_PREFIX: {{ .Values.config.RATE_LIMIT_REDIS_PREFIX | quote }}
   OIDC_ENABLED: {{ .Values.config.OIDC_ENABLED | quote }}
   OIDC_ISSUER: {{ .Values.config.OIDC_ISSUER | quote }}
   OIDC_AUDIENCE: {{ .Values.config.OIDC_AUDIENCE | quote }}

@@ -317,6 +317,13 @@ config:
   CORS_ORIGINS: ""
   ALLOW_UNAUTHENTICATED_ADMIN: "false"
   ALLOW_UNAUTHENTICATED_DATA: "false"
+  RATE_LIMIT_ENABLED: "false"
+  RATE_LIMIT_BACKEND: "redis"
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+  RATE_LIMIT_SEARCH_REQUESTS: "120"
+  RATE_LIMIT_INGEST_REQUESTS: "60"
+  RATE_LIMIT_FAIL_CLOSED: "false"
+  RATE_LIMIT_REDIS_PREFIX: "imposbro:rate_limit"
   # For production: use Secrets (config.useSecret: true) and set these via --set or a secure values file
   INTERNAL_STATE_API_KEY: ""
   DEFAULT_DATA_CLUSTER_API_KEY: ""

@@ -1,3 +1,4 @@
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +51,25 @@ class Settings(BaseSettings):
 
     # Local-development escape hatch. Keep false in shared, exposed, or production environments.
     ALLOW_UNAUTHENTICATED_DATA: bool = False
+
+    # Optional fixed-window data-plane rate limiting for /search/* and /ingest/*.
+    # Use Redis backend for multi-replica deployments; memory is for tests or
+    # single-process local runs only.
+    RATE_LIMIT_ENABLED: bool = False
+    RATE_LIMIT_BACKEND: str = "redis"
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1)
+    RATE_LIMIT_SEARCH_REQUESTS: int = Field(default=120, ge=1)
+    RATE_LIMIT_INGEST_REQUESTS: int = Field(default=60, ge=1)
+    RATE_LIMIT_FAIL_CLOSED: bool = False
+    RATE_LIMIT_REDIS_PREFIX: str = "imposbro:rate_limit"
+
+    @field_validator("RATE_LIMIT_BACKEND")
+    @classmethod
+    def validate_rate_limit_backend(cls, value: str) -> str:
+        backend = value.strip().lower()
+        if backend not in {"redis", "memory"}:
+            raise ValueError("RATE_LIMIT_BACKEND must be either 'redis' or 'memory'")
+        return backend
 
     # Optional OIDC/JWT bearer-token authentication for enterprise gateways.
     # Tokens are accepted in Authorization: Bearer after API-key checks fail.
