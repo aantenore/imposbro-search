@@ -80,6 +80,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 - Kafka connection and consumer loop use retries and a `shutdown_requested` flag for graceful shutdown (SIGTERM/SIGINT).
 - If a cluster is missing (e.g. removed after message was produced), the consumer refreshes cluster config and retries. Persistent poison messages are published to a dead-letter topic before the source offset is committed.
+- The consumer subscription pattern must exclude `<KAFKA_TOPIC_PREFIX>_dlq`. DLQ topics contain wrapper payloads, not normal ingest payloads, and must not be recursively consumed by the indexing worker.
 
 ### 3.3 Configuration
 
@@ -109,6 +110,8 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 ### 4.4 Metrics
 
 - Prometheus metrics are exposed via `prometheus_fastapi_instrumentator`. Custom counters (e.g. `documents_ingested_total`) are defined in the router that performs the action.
+- The indexing worker exposes Prometheus metrics on `INDEXING_METRICS_PORT` when `INDEXING_METRICS_ENABLED=true`. Worker metrics include config fetches, loaded clusters, successful indexes, retries, and DLQ publications.
+- Keep metric labels low-cardinality. Use collection, target cluster, source topic, and error type; never label metrics with document IDs, raw queries, API keys, or user-controlled free text.
 
 ### 4.5 Documentation
 

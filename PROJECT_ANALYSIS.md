@@ -55,6 +55,7 @@ Implication: the product should not compete as “another search engine.” It s
 11. **Runtime hardening**: Python and Admin UI Docker images run as numeric non-root users, aligning with Kubernetes `runAsNonRoot` policies.
 12. **Data-plane auth and auditability**: `/ingest/*` and `/search/*` can require `DATA_API_KEY`, and successful admin mutations are persisted to a safe audit log.
 13. **Schema reconciliation**: desired collection schemas are persisted in control-plane state; new clusters are backfilled automatically, and operators can trigger an idempotent `/admin/collections/reconcile`.
+14. **Worker observability and DLQ safety**: indexing service exposes configurable Prometheus metrics for cluster config fetches, loaded clusters, successful indexing, retries, and DLQ publications; the Kafka subscription pattern excludes the DLQ topic so poison messages are not recursively consumed.
 
 ### Fixes
 
@@ -71,12 +72,13 @@ Implication: the product should not compete as “another search engine.” It s
 
 1. **Health/readiness**: `/health` now exposes Redis, Kafka, and per-data-cluster readiness; `/ready` returns HTTP 503 until all required dependencies and data clusters are ready.
 2. **Helm**: Added indexing-service deployment (values + template) and production-oriented defaults for probes, resources, non-root security context, service account token mounting, and scheduling overrides.
-3. **Tests**: Pytest suite for Query API (root, health, ingest without `id`, valid ingest), with test lifespan (`TESTING=1`) and minimal env in `conftest`.
-4. **Documentation**: `.env.example` commented; `PROJECT_ANALYSIS.md` (this file).
-5. **Root tooling**: `Makefile` and `package.json` at repo root with `test` / `npm run test` to run Query API tests from root; extended `.gitignore` (pytest cache, coverage, OS); added `LICENSE` (MIT).
-6. **Extra tests**: `test_search.py` (404 collection not found, 422 invalid collection name), `test_admin.py` (400 delete default cluster, GET clusters with default).
-7. **README**: Fixed variable name from `TYPESENSE_NODES` to `INTERNAL_STATE_NODES` in the HA scaling section.
-8. **Patterns and best practices** (see also `docs/PATTERNS_AND_PRACTICES.md`):
+3. **Observability**: Prometheus now scrapes Query API and indexing worker metrics in Compose, Typesense scrape targets use the declared service names, and Grafana includes panels for worker indexing, retry, and DLQ signals.
+4. **Tests**: Pytest suite for Query API (root, health, ingest without `id`, valid ingest), with test lifespan (`TESTING=1`) and minimal env in `conftest`.
+5. **Documentation**: `.env.example` commented; `PROJECT_ANALYSIS.md` (this file).
+6. **Root tooling**: `Makefile` and `package.json` at repo root with `test` / `npm run test` to run Query API tests from root; extended `.gitignore` (pytest cache, coverage, OS); added `LICENSE` (MIT).
+7. **Extra tests**: `test_search.py` (404 collection not found, 422 invalid collection name), `test_admin.py` (400 delete default cluster, GET clusters with default).
+8. **README**: Fixed variable name from `TYPESENSE_NODES` to `INTERNAL_STATE_NODES` in the HA scaling section.
+9. **Patterns and best practices** (see also `docs/PATTERNS_AND_PRACTICES.md`):
    - **Constants**: `constants.py` (version, Typesense port, name pattern); no magic numbers.
    - **CORS**: CORS middleware added only when `CORS_ORIGINS` is set; explicit origins for production.
    - **Path validation**: `collection_name` and `cluster_name` validated with regex (`NAME_PATTERN`: alphanumeric, hyphen, underscore).
@@ -103,7 +105,7 @@ Implication: the product should not compete as “another search engine.” It s
 
 ### Low priority
 
-- ~~**Grafana**~~: **Done.** Overview dashboard extended with "Documents by Collection (1h)" and "Error Rate (5xx)" panels.
+- ~~**Grafana**~~: **Done.** Overview dashboard extended with documents by collection, Query API error rate, indexing throughput, retry, and DLQ panels.
 
 ---
 
