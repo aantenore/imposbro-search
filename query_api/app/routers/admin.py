@@ -7,10 +7,11 @@ via Redis Pub/Sub for multi-instance synchronization.
 """
 
 import asyncio
+import hashlib
 import logging
 import typesense
-from fastapi import APIRouter, HTTPException, Depends, Path, Query
-from typing import Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, Path, Query, Request
+from typing import Dict, Any, Optional
 
 from constants import NAME_PATTERN
 from deps import (
@@ -19,8 +20,15 @@ from deps import (
     get_config_notifier,
     require_admin_api_key,
 )
-from models import Cluster, CollectionSchema, RoutingRules, OperationResponse
+from models import (
+    Cluster,
+    CollectionSchema,
+    RoutingRules,
+    OperationResponse,
+    AuditLogResponse,
+)
 from services import FederationService, StateManager, SyncConfigNotifier
+from settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +70,41 @@ def _mask_api_key(api_key: str, visible: int = 4) -> str:
     if len(api_key) <= visible:
         return "***"
     return "*" * (len(api_key) - visible) + api_key[-visible:]
+
+
+def _admin_actor_from_request(request: Request) -> str:
+    """Return a non-sensitive actor id for audit events."""
+    provided = request.headers.get("X-API-Key")
+    authorization = request.headers.get("Authorization", "")
+    if not provided and authorization.startswith("Bearer "):
+        provided = authorization[7:].strip()
+    if provided:
+        digest = hashlib.sha256(provided.encode("utf-8")).hexdigest()[:12]
+        return f"api_key:{digest}"
+    if settings.ALLOW_UNAUTHENTICATED_ADMIN:
+        return "unauthenticated-dev"
+    return "unknown"
+
+
+def _record_admin_audit(
+    state_manager: StateManager,
+    request: Request,
+    *,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Best-effort admin audit logging for successful control-plane mutations."""
+    if not settings.AUDIT_LOG_ENABLED:
+        return
+    state_manager.record_admin_audit(
+        actor=_admin_actor_from_request(request),
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        details=details or {},
+    )
 
 
 # ----- Cluster Management -----
@@ -108,6 +151,31 @@ def get_all_clusters(
 
 
 @router.get(
+    "/audit-log",
+    summary="List recent admin audit events",
+    response_model=AuditLogResponse,
+)
+def get_audit_log(
+    limit: int = Query(
+        min(50, settings.AUDIT_LOG_MAX_RESULTS),
+        ge=1,
+        le=settings.AUDIT_LOG_MAX_RESULTS,
+    ),
+    action: Optional[str] = Query(None, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    resource_type: Optional[str] = Query(None, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    state_manager: StateManager = Depends(get_state_manager),
+) -> Dict[str, Any]:
+    """Return recent successful admin mutations without exposing secrets."""
+    return {
+        "entries": state_manager.list_admin_audit(
+            limit=limit,
+            action=action,
+            resource_type=resource_type,
+        )
+    }
+
+
+@router.get(
     "/federation/clusters/internal",
     summary="List raw cluster config for internal services",
     include_in_schema=False,
@@ -127,6 +195,7 @@ def get_internal_clusters(
 
 @router.post("/federation/clusters", status_code=201, summary="Register a new cluster")
 def register_cluster(
+    request: Request,
     cluster: Cluster,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
@@ -147,6 +216,14 @@ def register_cluster(
         )
         _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"cluster_registered:{cluster.name}")
+        _record_admin_audit(
+            state_manager,
+            request,
+            action="cluster_registered",
+            resource_type="cluster",
+            resource_id=cluster.name,
+            details={"host": cluster.host, "port": cluster.port},
+        )
         return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -159,6 +236,7 @@ def register_cluster(
 
 @router.delete("/federation/clusters/{cluster_name}", summary="Remove a cluster")
 def delete_cluster(
+    request: Request,
     cluster_name: str = Path(..., pattern=NAME_PATTERN, description="Cluster name"),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
@@ -179,6 +257,13 @@ def delete_cluster(
         federation.unregister_cluster(cluster_name)
         _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"cluster_deleted:{cluster_name}")
+        _record_admin_audit(
+            state_manager,
+            request,
+            action="cluster_deleted",
+            resource_type="cluster",
+            resource_id=cluster_name,
+        )
         return OperationResponse(message=f"Cluster '{cluster_name}' deleted.")
     except ValueError as e:
         if "not found" in str(e).lower():
@@ -222,6 +307,7 @@ def get_collection_schema(
 
 @router.post("/collections", status_code=201, summary="Create a collection")
 async def create_collection(
+    request: Request,
     schema: CollectionSchema,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
@@ -262,12 +348,25 @@ async def create_collection(
 
     _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"collection_created:{schema.name}")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="collection_created",
+        resource_type="collection",
+        resource_id=schema.name,
+        details={
+            "fields": [field.model_dump() for field in schema.fields],
+            "default_sorting_field": schema.default_sorting_field,
+            "cluster_count": len(federation.clients),
+        },
+    )
 
     return OperationResponse(message="Collection created successfully on all clusters.")
 
 
 @router.delete("/collections/{collection_name}", summary="Delete a collection")
 async def delete_collection(
+    request: Request,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
@@ -292,6 +391,13 @@ async def delete_collection(
 
     _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"collection_deleted:{collection_name}")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="collection_deleted",
+        resource_type="collection",
+        resource_id=collection_name,
+    )
 
     return OperationResponse(message=f"Collection '{collection_name}' deleted.")
 
@@ -304,6 +410,7 @@ async def delete_collection(
     summary="Create or update collection alias",
 )
 async def upsert_alias(
+    request: Request,
     alias_name: str = Path(..., pattern=NAME_PATTERN, description="Alias name"),
     collection_name: str = Query(
         ..., pattern=NAME_PATTERN, description="Target collection name"
@@ -312,6 +419,7 @@ async def upsert_alias(
         "default", pattern=NAME_PATTERN, description="Cluster where the alias is created"
     ),
     federation: FederationService = Depends(get_federation_service),
+    state_manager: StateManager = Depends(get_state_manager),
 ) -> OperationResponse:
     """
     Create or update an alias pointing to a collection (Typesense alias).
@@ -327,6 +435,14 @@ async def upsert_alias(
         await asyncio.to_thread(
             client.aliases[alias_name].upsert,
             {"collection_name": collection_name},
+        )
+        _record_admin_audit(
+            state_manager,
+            request,
+            action="alias_upserted",
+            resource_type="alias",
+            resource_id=alias_name,
+            details={"collection_name": collection_name, "cluster_name": cluster_name},
         )
         return OperationResponse(
             message=f"Alias '{alias_name}' -> '{collection_name}' on cluster '{cluster_name}'."
@@ -364,11 +480,13 @@ def list_aliases(
     summary="Delete collection alias",
 )
 async def delete_alias(
+    request: Request,
     alias_name: str = Path(..., pattern=NAME_PATTERN),
     cluster_name: str = Query(
         "default", pattern=NAME_PATTERN, description="Cluster where the alias lives"
     ),
     federation: FederationService = Depends(get_federation_service),
+    state_manager: StateManager = Depends(get_state_manager),
 ) -> OperationResponse:
     """Remove an alias from the cluster."""
     client = federation.get_client_for_cluster(cluster_name)
@@ -379,6 +497,14 @@ async def delete_alias(
         )
     try:
         await asyncio.to_thread(client.aliases[alias_name].delete)
+        _record_admin_audit(
+            state_manager,
+            request,
+            action="alias_deleted",
+            resource_type="alias",
+            resource_id=alias_name,
+            details={"cluster_name": cluster_name},
+        )
         return OperationResponse(message=f"Alias '{alias_name}' deleted.")
     except typesense.exceptions.ObjectNotFound:
         raise HTTPException(status_code=404, detail=f"Alias '{alias_name}' not found.")
@@ -404,6 +530,7 @@ def get_routing_map(
 
 @router.post("/routing-rules", status_code=201, summary="Set routing rules")
 def set_routing_rules(
+    request: Request,
     rules_config: RoutingRules,
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
@@ -437,6 +564,17 @@ def set_routing_rules(
         )
         _persist_state_or_500(state_manager, federation)
         _notify_config_change(notifier, f"routing_updated:{collection_name}")
+        _record_admin_audit(
+            state_manager,
+            request,
+            action="routing_updated",
+            resource_type="routing_rule",
+            resource_id=collection_name,
+            details={
+                "rules_count": len(rules_list),
+                "default_cluster": rules_config.default_cluster,
+            },
+        )
         return OperationResponse(
             message=f"Routing rules for '{collection_name}' have been updated."
         )
@@ -449,6 +587,7 @@ def set_routing_rules(
     summary="Delete routing rules",
 )
 def delete_routing_rule(
+    request: Request,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     federation: FederationService = Depends(get_federation_service),
     state_manager: StateManager = Depends(get_state_manager),
@@ -461,6 +600,13 @@ def delete_routing_rule(
     federation.delete_routing_rules(collection_name)
     _persist_state_or_500(state_manager, federation)
     _notify_config_change(notifier, f"routing_deleted:{collection_name}")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="routing_deleted",
+        resource_type="routing_rule",
+        resource_id=collection_name,
+    )
     return OperationResponse(
         message=f"Routing rules for '{collection_name}' have been deleted."
     )

@@ -120,3 +120,58 @@ def test_admin_stats_returns_200(client):
     assert "clusters" in data
     assert "collections" in data
     assert "metrics_url" in data
+
+
+def test_register_cluster_records_safe_audit_event(client, monkeypatch):
+    """Admin mutations record an audit event without storing raw credentials."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "admin-secret")
+
+    r = client.post(
+        "/admin/federation/clusters",
+        headers={"X-API-Key": "admin-secret"},
+        json={
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        },
+    )
+
+    assert r.status_code == 201
+    audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
+    assert audit_kwargs["action"] == "cluster_registered"
+    assert audit_kwargs["resource_type"] == "cluster"
+    assert audit_kwargs["resource_id"] == "cluster-a"
+    assert audit_kwargs["actor"].startswith("api_key:")
+    assert "admin-secret" not in audit_kwargs["actor"]
+    assert "raw-cluster-secret" not in str(audit_kwargs["details"])
+    assert audit_kwargs["details"] == {"host": "typesense-a", "port": 8108}
+
+
+def test_get_audit_log_returns_recent_events(client):
+    """GET /admin/audit-log exposes sanitized audit entries."""
+    client.app.state.state_manager.list_admin_audit.return_value = [
+        {
+            "id": "audit-1",
+            "timestamp_ms": 1,
+            "timestamp": "2026-06-19T00:00:00+00:00",
+            "actor": "api_key:abc123",
+            "action": "collection_created",
+            "resource_type": "collection",
+            "resource_id": "products",
+            "status": "success",
+            "details": {"cluster_count": 2},
+        }
+    ]
+
+    r = client.get("/admin/audit-log?limit=1&action=collection_created")
+
+    assert r.status_code == 200
+    assert r.json()["entries"][0]["resource_id"] == "products"
+    client.app.state.state_manager.list_admin_audit.assert_called_once_with(
+        limit=1,
+        action="collection_created",
+        resource_type=None,
+    )

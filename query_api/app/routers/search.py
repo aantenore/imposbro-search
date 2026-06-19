@@ -12,13 +12,16 @@ from typing import Dict, Any, Optional, List
 from prometheus_client import Counter
 
 from constants import NAME_PATTERN
-from deps import get_federation_service, get_kafka_service
+from deps import get_federation_service, get_kafka_service, require_data_api_key
 from models import IngestResponse
 from services import FederationService, KafkaService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Search & Ingestion"])
+router = APIRouter(
+    tags=["Search & Ingestion"],
+    dependencies=[Depends(require_data_api_key)],
+)
 
 # Metrics
 documents_ingested = Counter(

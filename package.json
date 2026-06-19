@@ -4,8 +4,9 @@
   "private": true,
   "description": "Enterprise federated search on Typesense – root workspace",
   "scripts": {
-    "test": "npm run test:api",
-    "test:api": "node scripts/run-pytest.js"
+    "test": "npm run test:api && npm run test:ui",
+    "test:api": "node scripts/run-pytest.js",
+    "test:ui": "npm --prefix admin_ui test"
   },
   "keywords": ["search", "typesense", "federated", "kafka"],
   "license": "MIT"
