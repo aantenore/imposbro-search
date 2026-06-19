@@ -153,7 +153,7 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, and Admin UI login/session flows now cover API identity, tenant isolation, collection access, and browser operator login. Future enterprise deployments may still need richer admin role mapping.
+- **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, and Helm autoscaling manifests; the next credibility step is a real Kubernetes benchmark with production-sized topics and sustained traffic.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”

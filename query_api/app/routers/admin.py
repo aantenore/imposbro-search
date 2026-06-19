@@ -22,7 +22,11 @@ from deps import (
     get_federation_service,
     get_state_manager,
     get_config_notifier,
-    require_admin_api_key,
+    require_admin_backup_key,
+    require_admin_internal_key,
+    require_admin_read_key,
+    require_admin_restore_key,
+    require_admin_write_key,
 )
 from models import (
     Cluster,
@@ -40,7 +44,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin",
     tags=["Administration"],
-    dependencies=[Depends(require_admin_api_key)],
 )
 
 
@@ -347,7 +350,11 @@ def _resolved_alias_cluster_name(
 # ----- Cluster Management -----
 
 
-@router.get("/stats", summary="Metrics summary for dashboard")
+@router.get(
+    "/stats",
+    summary="Metrics summary for dashboard",
+    dependencies=[Depends(require_admin_read_key)],
+)
 def get_admin_stats(
     federation: FederationService = Depends(get_federation_service),
 ) -> Dict[str, Any]:
@@ -364,7 +371,11 @@ def get_admin_stats(
     }
 
 
-@router.get("/federation/clusters", summary="List all registered clusters")
+@router.get(
+    "/federation/clusters",
+    summary="List all registered clusters",
+    dependencies=[Depends(require_admin_read_key)],
+)
 def get_all_clusters(
     federation: FederationService = Depends(get_federation_service),
 ) -> Dict[str, Any]:
@@ -391,6 +402,7 @@ def get_all_clusters(
     "/audit-log",
     summary="List recent admin audit events",
     response_model=AuditLogResponse,
+    dependencies=[Depends(require_admin_read_key)],
 )
 def get_audit_log(
     limit: int = Query(
@@ -416,6 +428,7 @@ def get_audit_log(
     "/state/export",
     summary="Export control-plane state for backup",
     response_model=ControlPlaneStateSnapshot,
+    dependencies=[Depends(require_admin_backup_key)],
 )
 def export_control_plane_state(
     request: Request,
@@ -453,6 +466,7 @@ def export_control_plane_state(
 @router.post(
     "/state/import",
     summary="Validate or import control-plane state",
+    dependencies=[Depends(require_admin_restore_key)],
 )
 def import_control_plane_state(
     request: Request,
@@ -532,6 +546,7 @@ def import_control_plane_state(
     "/federation/clusters/internal",
     summary="List raw cluster config for internal services",
     include_in_schema=False,
+    dependencies=[Depends(require_admin_internal_key)],
 )
 def get_internal_clusters(
     federation: FederationService = Depends(get_federation_service),
@@ -546,7 +561,12 @@ def get_internal_clusters(
     return {name: dict(cfg) for name, cfg in federation.clusters_config.items()}
 
 
-@router.post("/federation/clusters", status_code=201, summary="Register a new cluster")
+@router.post(
+    "/federation/clusters",
+    status_code=201,
+    summary="Register a new cluster",
+    dependencies=[Depends(require_admin_write_key)],
+)
 def register_cluster(
     request: Request,
     cluster: Cluster,
@@ -598,7 +618,11 @@ def register_cluster(
     return OperationResponse(message=f"Cluster '{cluster.name}' registered.")
 
 
-@router.delete("/federation/clusters/{cluster_name}", summary="Remove a cluster")
+@router.delete(
+    "/federation/clusters/{cluster_name}",
+    summary="Remove a cluster",
+    dependencies=[Depends(require_admin_write_key)],
+)
 def delete_cluster(
     request: Request,
     cluster_name: str = Path(..., pattern=NAME_PATTERN, description="Cluster name"),
@@ -642,6 +666,7 @@ def delete_cluster(
 @router.post(
     "/collections/reconcile",
     summary="Reconcile desired collection schemas across all clusters",
+    dependencies=[Depends(require_admin_write_key)],
 )
 def reconcile_collections(
     request: Request,
@@ -684,6 +709,7 @@ def reconcile_collections(
 @router.get(
     "/collections/{collection_name}",
     summary="Get collection schema",
+    dependencies=[Depends(require_admin_read_key)],
 )
 def get_collection_schema(
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
@@ -723,7 +749,12 @@ def get_collection_schema(
         )
 
 
-@router.post("/collections", status_code=201, summary="Create a collection")
+@router.post(
+    "/collections",
+    status_code=201,
+    summary="Create a collection",
+    dependencies=[Depends(require_admin_write_key)],
+)
 async def create_collection(
     request: Request,
     schema: CollectionSchema,
@@ -783,7 +814,11 @@ async def create_collection(
     return OperationResponse(message="Collection created successfully on all clusters.")
 
 
-@router.delete("/collections/{collection_name}", summary="Delete a collection")
+@router.delete(
+    "/collections/{collection_name}",
+    summary="Delete a collection",
+    dependencies=[Depends(require_admin_write_key)],
+)
 async def delete_collection(
     request: Request,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
@@ -833,6 +868,7 @@ async def delete_collection(
 @router.put(
     "/aliases/{alias_name}",
     summary="Create or update collection alias",
+    dependencies=[Depends(require_admin_write_key)],
 )
 async def upsert_alias(
     request: Request,
@@ -891,6 +927,7 @@ async def upsert_alias(
 @router.get(
     "/aliases",
     summary="List aliases on a cluster",
+    dependencies=[Depends(require_admin_read_key)],
 )
 def list_aliases(
     cluster_name: str = Query(
@@ -915,6 +952,7 @@ def list_aliases(
 @router.delete(
     "/aliases/{alias_name}",
     summary="Delete collection alias",
+    dependencies=[Depends(require_admin_write_key)],
 )
 async def delete_alias(
     request: Request,
@@ -963,7 +1001,11 @@ async def delete_alias(
 # ----- Routing Rules Management -----
 
 
-@router.get("/routing-map", summary="Get complete routing configuration")
+@router.get(
+    "/routing-map",
+    summary="Get complete routing configuration",
+    dependencies=[Depends(require_admin_read_key)],
+)
 def get_routing_map(
     federation: FederationService = Depends(get_federation_service),
 ) -> Dict[str, Any]:
@@ -976,7 +1018,12 @@ def get_routing_map(
     }
 
 
-@router.post("/routing-rules", status_code=201, summary="Set routing rules")
+@router.post(
+    "/routing-rules",
+    status_code=201,
+    summary="Set routing rules",
+    dependencies=[Depends(require_admin_write_key)],
+)
 def set_routing_rules(
     request: Request,
     rules_config: RoutingRules,
@@ -1034,6 +1081,7 @@ def set_routing_rules(
 @router.delete(
     "/routing-rules/{collection_name}",
     summary="Delete routing rules",
+    dependencies=[Depends(require_admin_write_key)],
 )
 def delete_routing_rule(
     request: Request,

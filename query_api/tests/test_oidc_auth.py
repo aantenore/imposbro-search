@@ -72,6 +72,44 @@ def test_oidc_admin_scope_grants_admin_access(client, monkeypatch):
     assert r.status_code == 200
 
 
+def test_oidc_admin_operation_scopes_are_least_privilege(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    read_headers = {
+        "Authorization": f"Bearer {_token(scope='imposbro:admin:read')}"
+    }
+    write_headers = {
+        "Authorization": f"Bearer {_token(scope='imposbro:admin:write')}"
+    }
+
+    read_allowed = client.get("/admin/stats", headers=read_headers)
+    read_denied_write = client.post(
+        "/admin/federation/clusters",
+        headers=read_headers,
+        json={
+            "name": "oidc-read-denied",
+            "host": "typesense-oidc",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        },
+    )
+    write_allowed = client.post(
+        "/admin/federation/clusters",
+        headers=write_headers,
+        json={
+            "name": "oidc-write-cluster",
+            "host": "typesense-oidc",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        },
+    )
+    write_denied_backup = client.get("/admin/state/export", headers=write_headers)
+
+    assert read_allowed.status_code == 200
+    assert read_denied_write.status_code == 401
+    assert write_allowed.status_code == 201
+    assert write_denied_backup.status_code == 401
+
+
 def test_oidc_search_scope_cannot_ingest(client, monkeypatch):
     _configure_oidc(monkeypatch)
     headers = {"Authorization": f"Bearer {_token(scope='imposbro:search')}"}

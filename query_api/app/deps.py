@@ -99,6 +99,10 @@ def _scope_matches(
         return True
     if required_scope == "admin" and "admin:*" in scopes:
         return True
+    if required_scope.startswith("admin:") and (
+        "admin" in scopes or "admin:*" in scopes
+    ):
+        return True
     if resource_name:
         if required_scope == "search":
             return any(
@@ -125,7 +129,10 @@ def _candidate_keys_for_scope(
     resource_name: Optional[str] = None,
 ) -> List[str]:
     candidates: List[str] = []
-    if required_scope == "admin" and settings.ADMIN_API_KEY:
+    if (
+        (required_scope == "admin" or required_scope.startswith("admin:"))
+        and settings.ADMIN_API_KEY
+    ):
         candidates.append(settings.ADMIN_API_KEY)
     if required_scope in {"search", "ingest", "data"} and settings.DATA_API_KEY:
         candidates.append(settings.DATA_API_KEY)
@@ -193,6 +200,93 @@ def require_admin_api_key(
     _require_api_key_for_scope(
         request=request,
         required_scope="admin",
+        allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_ADMIN,
+        missing_detail="Admin API key is required",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_admin_read_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require permission to inspect non-sensitive admin state."""
+    _require_admin_operation_key(
+        request=request,
+        required_scope="admin:read",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_admin_write_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require permission to mutate clusters, collections, aliases, or routing."""
+    _require_admin_operation_key(
+        request=request,
+        required_scope="admin:write",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_admin_backup_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require permission to export control-plane backup material."""
+    _require_admin_operation_key(
+        request=request,
+        required_scope="admin:backup",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_admin_restore_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require permission to validate or apply control-plane restore material."""
+    _require_admin_operation_key(
+        request=request,
+        required_scope="admin:restore",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def require_admin_internal_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require permission to read raw internal service configuration."""
+    _require_admin_operation_key(
+        request=request,
+        required_scope="admin:internal",
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+
+def _require_admin_operation_key(
+    *,
+    request: Request,
+    required_scope: str,
+    x_api_key: Optional[str],
+    authorization: Optional[str],
+) -> None:
+    _require_api_key_for_scope(
+        request=request,
+        required_scope=required_scope,
         allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_ADMIN,
         missing_detail="Admin API key is required",
         x_api_key=x_api_key,
