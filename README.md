@@ -247,6 +247,10 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 | `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` unless local dev bypass is enabled) |
 | `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` unless local dev bypass is enabled) |
 
+Search responses include `clusters_queried`, `clusters_responded`, `failed_clusters`, and `partial`.
+If at least one cluster responds, partial failures return `200` with `partial: true`; if every target cluster fails, the API returns `503`.
+Global merge supports simple `sort_by` expressions such as `price:asc` or `_text_match:desc`; complex geo/function sorts are rejected until they can be merged exactly across clusters.
+
 ### Administration
 
 | Endpoint | Method | Description |

@@ -23,7 +23,9 @@ Dependencies (FederationService, StateManager, KafkaService, SyncConfigNotifier)
 - **API keys**: Never logged in full. The admin endpoint `GET /admin/federation/clusters` returns **masked** API keys (e.g. `****key`); full keys are only sent when registering a cluster (POST body).
 - **Path parameters**: Collection and cluster names are validated with `Path(..., pattern=NAME_PATTERN)` so only alphanumeric, hyphen, and underscore are allowed (Typesense-compatible, reduces injection risk).
 - **CORS**: Enabled only when `CORS_ORIGINS` is set; use explicit origins in production (e.g. `https://admin.example.com`).
-- **Admin API key**: If `ADMIN_API_KEY` is set, all `/admin/*` requests must include `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, admin endpoints are unprotected (suitable for dev or behind a gateway).
+- **Admin API key**: If `ADMIN_API_KEY` is set, all `/admin/*` requests must include `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, admin endpoints are available only if `ALLOW_UNAUTHENTICATED_ADMIN=true`.
+- **Data-plane API key**: If `DATA_API_KEY` is set, `/ingest/*` and `/search/*` require `X-API-Key: <value>` or `Authorization: Bearer <value>`. When unset, data endpoints are available only if `ALLOW_UNAUTHENTICATED_DATA=true`.
+- **Audit log**: Successful admin mutations are recorded in `_imposbro_audit_log` with hashed actor identifiers and safe metadata only.
 
 ### 1.4 Error handling and HTTP status
 
@@ -33,6 +35,7 @@ Dependencies (FederationService, StateManager, KafkaService, SyncConfigNotifier)
 - **503**: Service unavailable (e.g. no target cluster for document, dependency down). Used when the operation cannot be fulfilled right now.
 
 Routers catch service-level `ValueError` and map to appropriate status codes; unexpected exceptions are logged and returned as 500.
+Search returns `503` when every target cluster fails. If at least one cluster responds, the response remains `200` but includes `partial: true` and `failed_clusters` so clients can display degraded results honestly.
 
 ### 1.5 Logging
 
@@ -44,6 +47,7 @@ Routers catch service-level `ValueError` and map to appropriate status codes; un
 
 - **State store**: Federation config and routing rules are persisted in the internal Typesense cluster (`StateManager`). All admin changes are saved and then broadcast via Redis Pub/Sub so other API instances reload config.
 - **Smart Producer**: The Query API decides the target cluster for each document and puts it in the Kafka message; the indexing service only executes that decision. Routing logic lives in one place.
+- **Global search merge**: Gateway-side merge must use the same comparator for sorting and deduplication. Complex shard-local sorts should be rejected until the gateway can merge them exactly.
 
 ---
 
@@ -74,7 +78,7 @@ Routers catch service-level `ValueError` and map to appropriate status codes; un
 ### 3.2 Resilience
 
 - Kafka connection and consumer loop use retries and a `shutdown_requested` flag for graceful shutdown (SIGTERM/SIGINT).
-- If a cluster is missing (e.g. removed after message was produced), the document is logged as failed and the consumer continues with the next message.
+- If a cluster is missing (e.g. removed after message was produced), the consumer refreshes cluster config and retries. Persistent poison messages are published to a dead-letter topic before the source offset is committed.
 
 ### 3.3 Configuration
 
