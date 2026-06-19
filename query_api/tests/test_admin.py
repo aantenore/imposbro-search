@@ -49,6 +49,125 @@ def test_scoped_non_admin_key_cannot_access_admin(client, monkeypatch):
     assert r.status_code == 401
 
 
+def test_admin_read_scope_cannot_mutate_control_plane(client, monkeypatch):
+    """admin:read can inspect non-sensitive admin routes but cannot mutate."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "viewer", "key": "viewer-secret", "scopes": ["admin:read"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_ADMIN", False)
+
+    headers = {"X-API-Key": "viewer-secret"}
+    read = client.get("/admin/stats", headers=headers)
+    write = client.post(
+        "/admin/federation/clusters",
+        headers=headers,
+        json={
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        },
+    )
+
+    assert read.status_code == 200
+    assert write.status_code == 401
+
+
+def test_admin_write_scope_can_mutate_but_not_export_backups(client, monkeypatch):
+    """admin:write grants control-plane mutation without backup export access."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "operator", "key": "writer-secret", "scopes": ["admin:write"]}
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_ADMIN", False)
+
+    headers = {"Authorization": "Bearer writer-secret"}
+    write = client.post(
+        "/admin/federation/clusters",
+        headers=headers,
+        json={
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        },
+    )
+    backup = client.get("/admin/state/export", headers=headers)
+
+    assert write.status_code == 201
+    assert backup.status_code == 401
+
+
+def test_admin_backup_restore_and_internal_scopes_are_separate(client, monkeypatch):
+    """Sensitive backup, restore, and internal-service reads use distinct scopes."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "backup", "key": "backup-secret", "scopes": ["admin:backup"]},
+        {"name": "restore", "key": "restore-secret", "scopes": ["admin:restore"]},
+        {"name": "worker", "key": "internal-secret", "scopes": ["admin:internal"]},
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_ADMIN", False)
+    client.app.state.federation_service.clusters_config = {
+        "cluster-a": {
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        }
+    }
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": False,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "api_key": "************cret",
+            }
+        },
+        "collection_routing_rules": {},
+        "collection_schemas": {},
+    }
+
+    backup = client.get(
+        "/admin/state/export",
+        headers={"X-API-Key": "backup-secret"},
+    )
+    backup_cannot_restore = client.post(
+        "/admin/state/import",
+        headers={"X-API-Key": "backup-secret"},
+        json=snapshot,
+    )
+    restore = client.post(
+        "/admin/state/import",
+        headers={"X-API-Key": "restore-secret"},
+        json=snapshot,
+    )
+    internal = client.get(
+        "/admin/federation/clusters/internal",
+        headers={"X-API-Key": "internal-secret"},
+    )
+    internal_cannot_read_public = client.get(
+        "/admin/stats",
+        headers={"X-API-Key": "internal-secret"},
+    )
+
+    assert backup.status_code == 200
+    assert backup_cannot_restore.status_code == 401
+    assert restore.status_code == 200
+    assert internal.status_code == 200
+    assert internal.json()["cluster-a"]["api_key"] == "raw-cluster-secret"
+    assert internal_cannot_read_public.status_code == 401
+
+
 def test_admin_requires_api_key_when_no_dev_bypass(client, monkeypatch):
     """Admin endpoints are not public-by-default when no bypass is configured."""
     from settings import settings

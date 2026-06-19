@@ -12,9 +12,46 @@ from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
 from settings import settings
 
 
-VALID_INTERNAL_SCOPES = {"admin", "search", "ingest", "data"}
+ADMIN_OPERATION_SCOPES = {
+    "admin:read",
+    "admin:write",
+    "admin:backup",
+    "admin:restore",
+    "admin:internal",
+}
+VALID_INTERNAL_SCOPES = {"admin", "search", "ingest", "data"} | ADMIN_OPERATION_SCOPES
 DEFAULT_OIDC_SCOPE_MAPPING: Dict[str, List[str]] = {
     "admin": ["imposbro:admin", "imposbro:*"],
+    "admin:read": [
+        "imposbro:admin:read",
+        "imposbro:admin:*",
+        "imposbro:admin",
+        "imposbro:*",
+    ],
+    "admin:write": [
+        "imposbro:admin:write",
+        "imposbro:admin:*",
+        "imposbro:admin",
+        "imposbro:*",
+    ],
+    "admin:backup": [
+        "imposbro:admin:backup",
+        "imposbro:admin:*",
+        "imposbro:admin",
+        "imposbro:*",
+    ],
+    "admin:restore": [
+        "imposbro:admin:restore",
+        "imposbro:admin:*",
+        "imposbro:admin",
+        "imposbro:*",
+    ],
+    "admin:internal": [
+        "imposbro:admin:internal",
+        "imposbro:admin:*",
+        "imposbro:admin",
+        "imposbro:*",
+    ],
     "search": ["imposbro:search", "imposbro:data", "imposbro:*"],
     "ingest": ["imposbro:ingest", "imposbro:data", "imposbro:*"],
     "data": ["imposbro:data", "imposbro:*"],
@@ -139,7 +176,9 @@ def _has_required_scope(
     resource_name: Optional[str] = None,
 ) -> bool:
     mapping = _parse_scope_mapping()
-    allowed_claims = mapping.get(required_scope, set())
+    allowed_claims = set(mapping.get(required_scope, set()))
+    if required_scope.startswith("admin:"):
+        allowed_claims.update(mapping.get("admin", set()))
     token_claims = _token_grants(claims)
     if allowed_claims.intersection(token_claims):
         return True

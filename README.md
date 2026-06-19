@@ -330,7 +330,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
-| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, `search`, `ingest`, `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
+| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search`, `ingest`, `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
 | `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
@@ -350,7 +350,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` | Expected JWT `iss` and `aud` values |
 | `OIDC_JWKS_URL` / `OIDC_PUBLIC_KEY` | Exactly one signing-key source for JWT verification; asymmetric algorithms only |
 | `OIDC_SCOPE_CLAIMS` | Comma-separated claim paths inspected for scopes/roles/groups (default `scope,scp,roles,groups,realm_access.roles`) |
-| `OIDC_SCOPE_MAPPING` | Optional JSON map from internal scopes (`admin`, `search`, `ingest`, `data`) to JWT claim values |
+| `OIDC_SCOPE_MAPPING` | Optional JSON map from internal scopes (`admin`, `admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`, `search`, `ingest`, `data`) to JWT claim values |
 | `OIDC_SUBJECT_CLAIM` | Claim used to derive the hashed audit actor, default `sub` |
 | `AUTHZ_COLLECTION_POLICIES` | Optional JSON tenant policy per collection/pattern; can inject search filters and validate/inject ingest tenant fields |
 | `AUTHZ_API_KEY_TENANT_BYPASS` | Lets legacy API-key clients bypass tenant policy by default; set `false` when all clients use OIDC tenant claims |
@@ -378,6 +378,8 @@ Example collection-scoped API key:
 ```
 
 OIDC tokens can use the same resource suffix after the configured claim value, for example `imposbro:search:products_*` or `imposbro:data:tenant_a_*`.
+
+Admin scopes are hierarchical for compatibility: `admin`, `admin:*`, `imposbro:admin`, `imposbro:admin:*`, and `imposbro:*` grant all admin operations. Use `admin:read` for non-sensitive dashboard/config reads, `admin:write` for clusters/collections/aliases/routing mutations, `admin:backup` for state export, `admin:restore` for state import validation/apply, and `admin:internal` for raw service-to-service cluster config.
 
 Example tenant policy:
 
@@ -623,10 +625,11 @@ indexingService:
 * [x] Helm HPA/KEDA autoscaling controls for Query API, Admin UI, and Kafka indexing workers
 * [x] Collection-scoped data-plane RBAC for API keys and OIDC claims
 * [x] Admin UI OIDC Authorization Code + PKCE login/session flow
+* [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
 
 ### 🚧 Future
 
-* [ ] Richer admin role mapping for enterprise operator permissions
+* [ ] Hosted CI workflow once GitHub credentials include the `workflow` scope
 
 ---
 
