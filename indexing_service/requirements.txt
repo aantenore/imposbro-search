@@ -1,4 +1,4 @@
-kafka-python-ng
-typesense
-typing-extensions
-requests
+kafka-python-ng==2.2.3
+typesense==2.0.0
+typing-extensions==4.15.0
+requests==2.32.5
