@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, Server, Database, GitBranch, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, Server, Database, GitBranch, ExternalLink, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { api } from '../../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/Card';
@@ -126,7 +126,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-5">
         <FeatureCard
           href="/clusters"
           icon={Server}
@@ -147,6 +147,13 @@ export default function DashboardPage() {
           iconColor="text-violet-500"
           title="Configure Routing"
           description="Define document-level sharding rules to distribute data across clusters."
+        />
+        <FeatureCard
+          href="/workspace"
+          icon={Workflow}
+          iconColor="text-sky-400"
+          title="Search Workspace"
+          description="Ingest JSON documents and verify federated search results from the Admin UI."
         />
         <FeatureCard
           href={GRAFANA_URL}
