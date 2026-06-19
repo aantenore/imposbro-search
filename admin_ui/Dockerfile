@@ -1,11 +1,11 @@
 # Stage 1: Base - A common base for all stages
-FROM node:18-alpine AS base
+FROM node:22-alpine AS base
 WORKDIR /app
 
 # Stage 2: Dependencies - Install dependencies in a separate layer
 FROM base AS deps
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Stage 3: Builder - Build the Next.js application
 FROM base AS builder
