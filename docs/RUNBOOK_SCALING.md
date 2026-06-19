@@ -125,6 +125,11 @@ docker compose exec -T kafka \
   --group imposbro_federated_indexing_group
 ```
 
+For Kubernetes capacity validation, use the benchmark harness in
+[RUNBOOK_BENCHMARKING.md](RUNBOOK_BENCHMARKING.md). It turns lag and indexing
+convergence into release evidence by measuring ingest throughput, visibility
+time, search latency, and partial-response rate against a deployed Query API.
+
 ## Rolling Restart
 
 Preferred order:
