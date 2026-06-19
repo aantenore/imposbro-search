@@ -51,6 +51,26 @@ class Settings(BaseSettings):
     # Local-development escape hatch. Keep false in shared, exposed, or production environments.
     ALLOW_UNAUTHENTICATED_DATA: bool = False
 
+    # Optional OIDC/JWT bearer-token authentication for enterprise gateways.
+    # Tokens are accepted in Authorization: Bearer after API-key checks fail.
+    OIDC_ENABLED: bool = False
+    OIDC_ISSUER: str = ""
+    OIDC_AUDIENCE: str = ""
+    OIDC_JWKS_URL: str = ""
+    OIDC_PUBLIC_KEY: str = ""
+    OIDC_ALGORITHMS: str = "RS256"
+    OIDC_LEEWAY_SECONDS: int = 30
+    OIDC_SCOPE_CLAIMS: str = "scope,scp,roles,groups,realm_access.roles"
+    OIDC_SCOPE_MAPPING: str = ""
+    OIDC_SUBJECT_CLAIM: str = "sub"
+
+    # Optional per-collection tenant policy JSON. Example:
+    # {"collections":{"orders":{"mode":"required","tenant_field":"tenant_id","tenant_claim":"tenant_id"}}}
+    # mode=required injects a tenant filter into search and rejects cross-tenant ingest.
+    # mode=inject also writes a missing tenant field during ingest when the token has one tenant.
+    AUTHZ_COLLECTION_POLICIES: str = ""
+    AUTHZ_API_KEY_TENANT_BYPASS: bool = True
+
     # Admin audit log. Records successful control-plane mutations to the
     # internal state cluster without storing raw API keys or cluster secrets.
     AUDIT_LOG_ENABLED: bool = True

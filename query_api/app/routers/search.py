@@ -8,11 +8,12 @@ Implements industry-standard scatter-gather search with correct deep pagination.
 import asyncio
 import logging
 from functools import cmp_to_key
-from fastapi import APIRouter, HTTPException, Query, Depends, Response, Path, Body
+from fastapi import APIRouter, HTTPException, Query, Depends, Response, Path, Body, Request
 from typing import Dict, Any, Optional, List, Tuple
 from pydantic import ValidationError
 from prometheus_client import Counter
 
+from auth import authorize_ingest_document, authorize_search_request
 from constants import NAME_PATTERN
 from deps import (
     get_federation_service,
@@ -351,6 +352,7 @@ async def _perform_federated_search(
     dependencies=[Depends(require_ingest_api_key)],
 )
 def ingest_document(
+    request: Request,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     document: Dict[str, Any] = Body(...),
     federation: FederationService = Depends(get_federation_service),
@@ -372,6 +374,7 @@ def ingest_document(
     doc_id = document.get("id")
     if not doc_id:
         raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
+    document = authorize_ingest_document(request, collection_name, document)
 
     # Get all targets (single or fan-out to multiple clusters)
     targets = federation.get_targets_for_document(collection_name, document)
@@ -409,6 +412,7 @@ def ingest_document(
     dependencies=[Depends(require_search_api_key)],
 )
 async def search(
+    http_request: Request,
     response: Response,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     q: str = Query(..., min_length=1, description="Search query"),
@@ -421,8 +425,14 @@ async def search(
     exclude_fields: Optional[str] = Query(None, description="Fields to exclude"),
     highlight_fields: Optional[str] = Query(None, description="Fields to highlight"),
     highlight_full_fields: Optional[str] = Query(None, description="Fields to fully highlight"),
+    highlight_start_tag: Optional[str] = Query(None, description="Highlight start tag"),
+    highlight_end_tag: Optional[str] = Query(None, description="Highlight end tag"),
     remote_embedding_timeout_ms: Optional[int] = Query(None, ge=1),
     remote_embedding_num_tries: Optional[int] = Query(None, ge=1),
+    limit_hits: Optional[int] = Query(None, ge=1),
+    search_cutoff_ms: Optional[int] = Query(None, ge=1),
+    max_candidates: Optional[int] = Query(None, ge=1),
+    exhaustive_search: Optional[bool] = Query(None),
     page: int = Query(1, ge=1, description="Page number (ignored if offset is set)"),
     per_page: int = Query(10, ge=1, le=250, description="Results per page"),
     offset: Optional[int] = Query(None, ge=0, description="Cursor-style offset (use with limit for deep pagination)"),
@@ -456,7 +466,7 @@ async def search(
         Merged search results from all clusters
     """
     try:
-        request = SearchRequest(
+        search_request = SearchRequest(
             q=q,
             query_by=query_by,
             filter_by=filter_by,
@@ -467,8 +477,14 @@ async def search(
             exclude_fields=exclude_fields,
             highlight_fields=highlight_fields,
             highlight_full_fields=highlight_full_fields,
+            highlight_start_tag=highlight_start_tag,
+            highlight_end_tag=highlight_end_tag,
             remote_embedding_timeout_ms=remote_embedding_timeout_ms,
             remote_embedding_num_tries=remote_embedding_num_tries,
+            limit_hits=limit_hits,
+            search_cutoff_ms=search_cutoff_ms,
+            max_candidates=max_candidates,
+            exhaustive_search=exhaustive_search,
             page=page,
             per_page=per_page,
             offset=offset,
@@ -477,10 +493,15 @@ async def search(
     except ValidationError as exc:
         message = exc.errors()[0].get("msg", str(exc)) if exc.errors() else str(exc)
         raise HTTPException(status_code=400, detail=message)
+    search_request = authorize_search_request(
+        http_request,
+        collection_name,
+        search_request,
+    )
     return await _perform_federated_search(
         response,
         collection_name,
-        request,
+        search_request,
         federation,
     )
 
@@ -491,6 +512,7 @@ async def search(
     dependencies=[Depends(require_search_api_key)],
 )
 async def search_with_body(
+    http_request: Request,
     response: Response,
     collection_name: str = Path(..., pattern=NAME_PATTERN, description="Collection name"),
     request: SearchRequest = Body(...),
@@ -502,6 +524,7 @@ async def search_with_body(
     Prefer this endpoint for semantic, vector, or hybrid searches where
     `vector_query` can be too long or too sensitive for URL query strings.
     """
+    request = authorize_search_request(http_request, collection_name, request)
     return await _perform_federated_search(
         response,
         collection_name,

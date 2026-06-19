@@ -93,6 +93,8 @@ The market does validate the problem, but it also narrows the room for different
 31. **Local release gate**: `make ci` runs the API/worker tests, Admin UI tests, lint, production build, Docker Compose config validation, and Helm lint/render with CI values.
 32. **Release hardening**: Admin mutations roll runtime state back when persistence fails, cluster registration probes all declared nodes, search pagination fetches one extra hit for `next_offset`, fan-out search exposes deduplicated counts, legacy worker messages resolve `default` to a real cluster, Compose binds dev ports to localhost, Helm fails on placeholder/mutable images or missing service/secret values, and local Docker smoke targets cover runtime paths.
 33. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
+34. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search filters and validate or inject ingest tenant fields.
+35. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
 
 ### Fixes
 
@@ -147,8 +149,9 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Enterprise identity model**: Scoped API keys reduce blast radius for self-hosted clients; public or multi-team deployments still need OAuth2/OIDC, tenant-aware RBAC, and admin role mapping.
-- **Operational scale proof**: local Docker, unit gates, vector/outage/load/DR smokes are strong; the next credibility step is a multi-instance benchmark with Kafka lag budgets and rolling restart scenarios.
+- **Enterprise authorization depth**: OIDC and tenant policies cover API-level identity and tenant isolation; future enterprise deployments may still need richer per-collection RBAC, admin role mapping, and UI login/session flows.
+- **Alias state portability**: aliases are operationally supported and smoke-tested, but they are still live Typesense objects rather than first-class persisted control-plane state in backup/restore snapshots.
+- **Operational scale proof**: local Docker now covers multi-instance rolling smoke and lag budget; the next credibility step is a real Kubernetes benchmark with production-sized topics, KEDA/HPA decisions, and sustained traffic.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”
 

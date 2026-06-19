@@ -338,11 +338,40 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DATA_API_KEY` | Coarse legacy data-plane API key; grants both `/ingest/*` and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
+| `OIDC_ENABLED` | Enables OIDC/JWT Bearer-token auth after API-key checks fail; requires issuer, audience, algorithms, and either JWKS URL or static public key |
+| `OIDC_ISSUER` / `OIDC_AUDIENCE` | Expected JWT `iss` and `aud` values |
+| `OIDC_JWKS_URL` / `OIDC_PUBLIC_KEY` | Exactly one signing-key source for JWT verification; asymmetric algorithms only |
+| `OIDC_SCOPE_CLAIMS` | Comma-separated claim paths inspected for scopes/roles/groups (default `scope,scp,roles,groups,realm_access.roles`) |
+| `OIDC_SCOPE_MAPPING` | Optional JSON map from internal scopes (`admin`, `search`, `ingest`, `data`) to JWT claim values |
+| `OIDC_SUBJECT_CLAIM` | Claim used to derive the hashed audit actor, default `sub` |
+| `AUTHZ_COLLECTION_POLICIES` | Optional JSON tenant policy per collection/pattern; can inject search filters and validate/inject ingest tenant fields |
+| `AUTHZ_API_KEY_TENANT_BYPASS` | Lets legacy API-key clients bypass tenant policy by default; set `false` when all clients use OIDC tenant claims |
 | `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials or scoped keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+
+Example tenant policy:
+
+```json
+{
+  "collections": {
+    "orders_*": {
+      "mode": "required",
+      "tenant_field": "tenant_id",
+      "tenant_claim": "tenant_id"
+    },
+    "events": {
+      "mode": "inject",
+      "tenant_field": "tenant_id",
+      "tenant_claim": "tenant_id"
+    }
+  }
+}
+```
+
+`required` injects a server-side tenant filter into searches and rejects cross-tenant ingest. `inject` also writes a missing tenant field during ingest when the token has exactly one tenant.
 
 ### Control-plane backup and restore
 
@@ -481,7 +510,7 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required API keys. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, `ADMIN_API_KEY`, `DATA_API_KEY` or scoped keys, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header.
+1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header.
     The chart also exposes per-workload `replicaCount`, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
@@ -536,11 +565,13 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] Admin UI schema reconciliation workflow with per-cluster report
 * [x] Helm release validation for immutable images, required external services, required secrets, and trusted Admin UI proxy key injection
 * [x] Admin UI fan-out routing editor, search pagination, advanced search tuning fields, cluster health details, and audit filters
+* [x] OIDC/JWT bearer-token auth with configurable scope mapping, hashed OIDC audit actors, and optional tenant policy for search/ingest
+* [x] Horizontal scaling runbook and multi-instance Docker rolling smoke with Kafka lag budget
 
 ### 🚧 Future
 
-* [ ] Horizontal scaling documentation and best practices
-* [ ] OAuth2/OIDC for public API (optional)
+* [ ] Richer per-collection RBAC and Admin UI OIDC login/session flow
+* [ ] Persist collection aliases in control-plane backup/restore snapshots
 
 ---
 
@@ -571,12 +602,16 @@ make smoke-docker-state
 # Alias smoke: create versioned collections, switch alias, verify search follows it
 make smoke-docker-alias
 
+# Scale smoke: multi-replica Query API + indexing workers, rolling restarts, lag budget
+make smoke-docker-scale
+
 # Against an already running stack
 make smoke-vector
 make smoke-outage
 make smoke-load
 make smoke-state
 make smoke-alias
+make smoke-scale
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
@@ -588,6 +623,7 @@ Both `make test` and `npm run test` run the Query API and indexing service pytes
 ## 📐 Patterns & documentation
 
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to run tests, code style, and PR process.
+- **[docs/RUNBOOK_SCALING.md](docs/RUNBOOK_SCALING.md)** – Horizontal scaling, lag budget, rolling restart, rollback, and incident checks.
 - **[docs/PATTERNS_AND_PRACTICES.md](docs/PATTERNS_AND_PRACTICES.md)** – Architectural patterns, dependency injection, security (API key masking, path validation, CORS), error handling, and checklist for new changes.
 - **[PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md)** – Project analysis, improvements log, and roadmap.
 

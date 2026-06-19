@@ -172,6 +172,17 @@ config:
   INTERNAL_QUERY_API_ADMIN_API_KEY: ""
   INTERNAL_QUERY_API_DATA_API_KEY: ""
   SCOPED_API_KEYS: ""
+  # Optional OIDC/JWT bearer-token auth. API keys and scoped keys remain supported.
+  OIDC_ENABLED: "false"
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  OIDC_PUBLIC_KEY: ""
+  OIDC_ALGORITHMS: "RS256"
+  OIDC_LEEWAY_SECONDS: "30"
+  OIDC_SCOPE_CLAIMS: "scope,scp,roles,groups,realm_access.roles"
+  OIDC_SCOPE_MAPPING: ""
+  OIDC_SUBJECT_CLAIM: "sub"
   # Required when the Admin UI proxy injects server-side API keys in production.
   # Configure your authenticated ingress/gateway to set this header.
   ADMIN_UI_PROXY_TRUSTED_HEADER: ""

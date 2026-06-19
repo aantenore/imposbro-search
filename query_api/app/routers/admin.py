@@ -14,6 +14,7 @@ import re
 import typesense
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Path, Query, Request
+from pydantic import ValidationError
 from typing import Dict, Any, Optional
 
 from constants import NAME_PATTERN
@@ -107,6 +108,8 @@ def _mask_api_key(api_key: str, visible: int = 4) -> str:
 
 def _admin_actor_from_request(request: Request) -> str:
     """Return a non-sensitive actor id for audit events."""
+    if hasattr(request.state, "auth_actor"):
+        return str(request.state.auth_actor)
     provided = request.headers.get("X-API-Key")
     authorization = request.headers.get("Authorization", "")
     if not provided and authorization.startswith("Bearer "):
@@ -187,6 +190,12 @@ def _validate_name_map(name: str, values: Dict[str, Any]) -> None:
             )
 
 
+def _validation_400(context: str, exc: ValidationError) -> None:
+    first = exc.errors()[0] if exc.errors() else {}
+    message = first.get("msg", str(exc))
+    raise HTTPException(status_code=400, detail=f"Invalid {context}: {message}")
+
+
 def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: bool) -> None:
     if snapshot.version != "imposbro.state.v1":
         raise HTTPException(status_code=400, detail="Unsupported state snapshot version.")
@@ -196,6 +205,17 @@ def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: boo
     _validate_name_map("collection", snapshot.collection_schemas)
 
     cluster_names = set(snapshot.federation_clusters_config.keys())
+    for collection, schema_config in snapshot.collection_schemas.items():
+        try:
+            schema = CollectionSchema.model_validate(schema_config)
+        except ValidationError as exc:
+            _validation_400(f"schema for '{collection}'", exc)
+        if schema.name != collection:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Collection schema name mismatch for '{collection}'.",
+            )
+
     for cluster_name, config in snapshot.federation_clusters_config.items():
         if config.get("name", cluster_name) != cluster_name:
             raise HTTPException(
@@ -218,14 +238,25 @@ def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: boo
             )
 
     for collection, rules_config in snapshot.collection_routing_rules.items():
-        default_cluster = rules_config.get("default_cluster", "default")
+        rules_payload = dict(rules_config)
+        rules_payload.setdefault("collection", collection)
+        try:
+            routing_rules = RoutingRules.model_validate(rules_payload)
+        except ValidationError as exc:
+            _validation_400(f"routing rules for '{collection}'", exc)
+        if routing_rules.collection != collection:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Routing rules collection mismatch for '{collection}'.",
+            )
+        default_cluster = routing_rules.default_cluster
         if default_cluster != "default" and default_cluster not in cluster_names:
             raise HTTPException(
                 status_code=400,
                 detail=f"Routing default for '{collection}' references unknown cluster '{default_cluster}'.",
             )
-        for rule in rules_config.get("rules", []):
-            targets = rule.get("clusters") or [rule.get("cluster")]
+        for rule in routing_rules.rules:
+            targets = rule.clusters or [rule.cluster]
             for target in targets:
                 if target != "default" and target not in cluster_names:
                     raise HTTPException(

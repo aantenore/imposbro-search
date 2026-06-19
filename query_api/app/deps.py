@@ -3,11 +3,13 @@ Dependency injection: read services from app.state (set in lifespan).
 Allows tests and production to use the same code path without mutating router modules.
 """
 import json
+import hashlib
 import secrets
 from typing import List, Optional, Set, Tuple
 
 from fastapi import Request, Header, HTTPException
 
+from auth import authenticate_oidc_bearer, oidc_enabled, oidc_http_exception
 from settings import settings
 from services import FederationService, StateManager, KafkaService, SyncConfigNotifier
 
@@ -97,6 +99,7 @@ def _candidate_keys_for_scope(required_scope: str) -> List[str]:
 
 def _require_api_key_for_scope(
     *,
+    request: Request,
     required_scope: str,
     allow_unauthenticated: bool,
     missing_detail: str,
@@ -104,8 +107,11 @@ def _require_api_key_for_scope(
     authorization: Optional[str],
 ) -> None:
     candidates = _candidate_keys_for_scope(required_scope)
-    if not candidates:
+    oidc_is_enabled = oidc_enabled()
+    if not candidates and not oidc_is_enabled:
         if allow_unauthenticated:
+            request.state.auth_actor = "unauthenticated-dev"
+            request.state.auth_scheme = "none"
             return
         raise HTTPException(status_code=401, detail=missing_detail)
 
@@ -113,8 +119,26 @@ def _require_api_key_for_scope(
     if provided and any(
         secrets.compare_digest(provided, candidate) for candidate in candidates
     ):
+        request.state.auth_actor = _api_key_actor(provided)
+        request.state.auth_scheme = "api_key"
         return
+    if authorization and authorization.startswith("Bearer ") and oidc_is_enabled:
+        token = authorization[7:].strip()
+        try:
+            auth_result = authenticate_oidc_bearer(token, required_scope)
+        except Exception as exc:
+            raise oidc_http_exception(exc) from exc
+        if auth_result:
+            request.state.auth_actor = auth_result["actor"]
+            request.state.auth_scheme = "oidc"
+            request.state.auth_claims = auth_result["claims"]
+            return
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def _api_key_actor(api_key: str) -> str:
+    digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+    return f"api_key:{digest}"
 
 
 def require_admin_api_key(
@@ -124,6 +148,7 @@ def require_admin_api_key(
 ) -> None:
     """Require admin scope unless the local-development bypass is enabled."""
     _require_api_key_for_scope(
+        request=request,
         required_scope="admin",
         allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_ADMIN,
         missing_detail="Admin API key is required",
@@ -139,6 +164,7 @@ def require_data_api_key(
 ) -> None:
     """Backward-compatible data-plane guard for search and ingestion."""
     _require_api_key_for_scope(
+        request=request,
         required_scope="data",
         allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_DATA,
         missing_detail="Data API key is required",
@@ -154,6 +180,7 @@ def require_search_api_key(
 ) -> None:
     """Require search scope unless the local-development bypass is enabled."""
     _require_api_key_for_scope(
+        request=request,
         required_scope="search",
         allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_DATA,
         missing_detail="Search API key is required",
@@ -169,6 +196,7 @@ def require_ingest_api_key(
 ) -> None:
     """Require ingest scope unless the local-development bypass is enabled."""
     _require_api_key_for_scope(
+        request=request,
         required_scope="ingest",
         allow_unauthenticated=settings.ALLOW_UNAUTHENTICATED_DATA,
         missing_detail="Ingest API key is required",
