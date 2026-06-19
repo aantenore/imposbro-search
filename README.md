@@ -653,14 +653,14 @@ indexingService:
 * [x] Fine-grained admin role mapping for read, write, backup, restore, and internal service access
 * [x] Configurable data-plane rate limiting for search and ingest with Redis-backed multi-replica counters
 * [x] Rate-limit Prometheus metrics, Grafana panels, and PrometheusRule alerts for blocked traffic and backend failures
-* [x] Kubernetes ingest/search benchmark harness with JSON output and configurable SLO thresholds
+* [x] Kubernetes ingest/search benchmark harness with JSON/Markdown output and configurable SLO thresholds
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
 * [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting
 * [x] Opt-in Helm PodDisruptionBudget for Query API, Admin UI, and indexing workers
 * [x] Per-workload Helm topology spread constraints for multi-node availability
 * [x] Opt-in Helm Ingress for Query API and Admin UI with TLS, class, host, path, and annotation controls
 * [x] Helm chart validation harness covering rendered resource counts, Ingress permutations, and fail-fast guardrails
-* [x] Docker benchmark target that starts the local stack, runs sustained ingest/search, and writes a JSON artifact
+* [x] Docker benchmark target that starts the local stack, runs sustained ingest/search, and writes JSON/Markdown artifacts
 
 ### 🚧 Future
 
