@@ -87,6 +87,7 @@ class StateManager:
         self,
         federation_clusters_config: Dict[str, Dict],
         collection_routing_rules: Dict[str, Dict],
+        collection_schemas: Optional[Dict[str, Dict]] = None,
     ) -> bool:
         """
         Save the current application state to Typesense.
@@ -94,6 +95,7 @@ class StateManager:
         Args:
             federation_clusters_config: Dictionary of cluster configurations
             collection_routing_rules: Dictionary of collection routing rules
+            collection_schemas: Desired collection schemas for reconciliation
 
         Returns:
             True if save was successful, False otherwise
@@ -102,6 +104,7 @@ class StateManager:
             state = {
                 "federation_clusters_config": federation_clusters_config,
                 "collection_routing_rules": collection_routing_rules,
+                "collection_schemas": collection_schemas or {},
             }
             state_document = {"id": STATE_DOCUMENT_ID, "state_data": json.dumps(state)}
             self.client.collections[STATE_COLLECTION_NAME].documents.upsert(
@@ -113,13 +116,13 @@ class StateManager:
             logger.error(f"Failed to save state: {e}")
             return False
 
-    def load_state(self) -> Tuple[Optional[Dict], Optional[Dict]]:
+    def load_state(self) -> Tuple[Optional[Dict], Optional[Dict], Optional[Dict]]:
         """
         Load application state from Typesense.
 
         Returns:
-            Tuple of (federation_clusters_config, collection_routing_rules)
-            Returns (None, None) if no state exists or an error occurs
+            Tuple of (federation_clusters_config, collection_routing_rules, collection_schemas)
+            Returns (None, None, None) if no state exists
         """
         try:
             state_document = (
@@ -131,15 +134,19 @@ class StateManager:
 
             clusters_config = state.get("federation_clusters_config", {})
             routing_rules = state.get("collection_routing_rules", {})
+            collection_schemas = state.get("collection_schemas", {})
 
             logger.info(
-                f"Loaded {len(clusters_config)} cluster(s) and {len(routing_rules)} routing rule(s) from state."
+                "Loaded %s cluster(s), %s routing rule(s), and %s collection schema(s) from state.",
+                len(clusters_config),
+                len(routing_rules),
+                len(collection_schemas),
             )
-            return clusters_config, routing_rules
+            return clusters_config, routing_rules, collection_schemas
 
         except typesense.exceptions.ObjectNotFound:
             logger.info("No saved state document found.")
-            return None, None
+            return None, None, None
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             logger.error("Persisted state document is invalid: %s", e)
             raise StateLoadError("Persisted state document is invalid") from e

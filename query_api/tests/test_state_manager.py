@@ -1,4 +1,5 @@
 """Tests for internal state and audit persistence helpers."""
+import json
 import sys
 from pathlib import Path
 
@@ -127,3 +128,52 @@ def test_load_state_raises_on_corrupt_persisted_state():
 
     with pytest.raises(StateLoadError):
         manager.load_state()
+
+
+def test_load_state_defaults_legacy_snapshots_without_collection_schemas():
+    client = FakeClient()
+    manager = StateManager(client)
+    state_documents = client.collections["_imposbro_state"].documents
+    state_documents.retrieved[STATE_DOCUMENT_ID] = {
+        "state_data": json.dumps(
+            {
+                "federation_clusters_config": {},
+                "collection_routing_rules": {},
+            }
+        )
+    }
+
+    clusters_config, routing_rules, collection_schemas = manager.load_state()
+
+    assert clusters_config == {}
+    assert routing_rules == {}
+    assert collection_schemas == {}
+
+
+def test_state_snapshot_round_trips_collection_schemas():
+    client = FakeClient()
+    manager = StateManager(client)
+    schema = {
+        "name": "products",
+        "fields": [{"name": "title", "type": "string", "facet": False}],
+    }
+
+    ok = manager.save_state(
+        {"cluster-a": {"host": "typesense-a", "port": 8108, "api_key": "secret"}},
+        {"products": {"rules": [], "default_cluster": "default"}},
+        {"products": schema},
+    )
+
+    assert ok is True
+    state_documents = client.collections["_imposbro_state"].documents
+    saved = json.loads(state_documents.upserted[-1]["state_data"])
+    assert saved["collection_schemas"] == {"products": schema}
+
+    state_documents.retrieved[STATE_DOCUMENT_ID] = {
+        "state_data": json.dumps(saved),
+    }
+    clusters_config, routing_rules, collection_schemas = manager.load_state()
+
+    assert "cluster-a" in clusters_config
+    assert "products" in routing_rules
+    assert collection_schemas == {"products": schema}
