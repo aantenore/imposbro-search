@@ -25,6 +25,7 @@ os.environ.setdefault("DEFAULT_DATA_CLUSTER_NODES", "localhost")
 os.environ.setdefault("DEFAULT_DATA_CLUSTER_API_KEY", "test-key")
 os.environ.setdefault("INTERNAL_QUERY_API_URL", "http://localhost:8000")
 os.environ.setdefault("ALLOW_UNAUTHENTICATED_ADMIN", "true")
+os.environ.setdefault("ALLOW_UNAUTHENTICATED_DATA", "true")
 
 from main import app
 

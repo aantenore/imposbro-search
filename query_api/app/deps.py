@@ -10,6 +10,18 @@ from settings import settings
 from services import FederationService, StateManager, KafkaService, SyncConfigNotifier
 
 
+def _extract_api_key(
+    x_api_key: Optional[str],
+    authorization: Optional[str],
+) -> Optional[str]:
+    """Read API keys from X-API-Key or Authorization: Bearer."""
+    if x_api_key:
+        return x_api_key
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:].strip()
+    return None
+
+
 def require_admin_api_key(
     request: Request,
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -20,10 +32,23 @@ def require_admin_api_key(
         if settings.ALLOW_UNAUTHENTICATED_ADMIN:
             return
         raise HTTPException(status_code=401, detail="Admin API key is required")
-    provided = x_api_key
-    if not provided and authorization and authorization.startswith("Bearer "):
-        provided = authorization[7:].strip()
+    provided = _extract_api_key(x_api_key, authorization)
     if not provided or provided != settings.ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def require_data_api_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require a data-plane API key for search and ingestion unless dev bypass is enabled."""
+    if not settings.DATA_API_KEY:
+        if settings.ALLOW_UNAUTHENTICATED_DATA:
+            return
+        raise HTTPException(status_code=401, detail="Data API key is required")
+    provided = _extract_api_key(x_api_key, authorization)
+    if not provided or provided != settings.DATA_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 

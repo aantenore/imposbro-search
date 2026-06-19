@@ -149,3 +149,63 @@ def test_process_message_raises_when_target_cluster_is_missing():
         assert "No client found for cluster 'missing'" in str(exc)
     else:
         raise AssertionError("Expected missing target cluster to fail processing")
+
+
+def test_process_message_with_retries_refreshes_missing_cluster():
+    client = FakeTypesenseClient()
+    clients = {}
+    refresh_calls = []
+
+    def refresh_clients():
+        refresh_calls.append(True)
+        return {"cluster-a": client}
+
+    consumer.process_message_with_retries(
+        {
+            "collection": "products",
+            "target_cluster": "cluster-a",
+            "document": {"id": "doc-1", "name": "Product"},
+        },
+        clients,
+        refresh_clients=refresh_clients,
+        dlq_producer=None,
+        source_topic="imposbro_search_sharded_products",
+        topic_prefix="imposbro_search_sharded",
+        max_attempts=2,
+    )
+
+    assert refresh_calls == [True]
+    assert clients == {"cluster-a": client}
+    assert client.documents.upserted == [{"id": "doc-1", "name": "Product"}]
+
+
+def test_process_message_with_retries_quarantines_poison_message_to_dlq(monkeypatch):
+    sent = []
+
+    class FakeDlqProducer:
+        def send(self, topic, value):
+            sent.append({"topic": topic, "value": value})
+
+        def flush(self):
+            sent.append({"flushed": True})
+
+    monkeypatch.setattr(consumer.time, "sleep", lambda _seconds: None)
+
+    consumer.process_message_with_retries(
+        {
+            "collection": "products",
+            "target_cluster": "missing",
+            "document": {"id": "doc-1", "name": "Product"},
+        },
+        {},
+        refresh_clients=None,
+        dlq_producer=FakeDlqProducer(),
+        source_topic="imposbro_search_sharded_products",
+        topic_prefix="imposbro_search_sharded",
+        max_attempts=2,
+    )
+
+    assert sent[0]["topic"] == "imposbro_search_sharded_dlq"
+    assert sent[0]["value"]["source_topic"] == "imposbro_search_sharded_products"
+    assert sent[0]["value"]["error"] == "MissingTargetClusterError"
+    assert sent[1] == {"flushed": True}

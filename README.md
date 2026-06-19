@@ -218,17 +218,20 @@ docker-compose up --build
     # This document might be routed to your 'cluster-us'
     curl -X POST "http://localhost:8000/ingest/products" \
       -H "Content-Type: application/json" \
+      -H "X-API-Key: $DATA_API_KEY" \
       -d '{"id": "product-123", "name": "Standard Widget", "region": "USA"}'
 
     # This document might be routed to 'cluster-eu'
     curl -X POST "http://localhost:8000/ingest/products" \
       -H "Content-Type: application/json" \
+      -H "X-API-Key: $DATA_API_KEY" \
       -d '{"id": "product-456", "name": "European Widget", "region": "EU"}'
     ```
 
 6.  **Run a Federated Search:** This single query will hit all relevant external clusters and merge the results.
     ```bash
-    curl "http://localhost:8000/search/products?q=widget&query_by=name"
+    curl -H "X-API-Key: $DATA_API_KEY" \
+      "http://localhost:8000/search/products?q=widget&query_by=name"
     ```
 
 ---
@@ -241,8 +244,8 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/ingest/{collection}` | POST | Ingest a document (requires `id` field) |
-| `/search/{collection}` | GET | Federated search across clusters |
+| `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` unless local dev bypass is enabled) |
+| `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` unless local dev bypass is enabled) |
 
 ### Administration
 
@@ -257,6 +260,7 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 | `/admin/routing-rules` | POST | Set routing rules for a collection |
 | `/admin/routing-rules/{collection}` | DELETE | Delete routing rules |
 | `/admin/routing-map` | GET | Get complete routing configuration |
+| `/admin/audit-log` | GET | List recent successful admin mutations without exposing secrets |
 
 ### Health Checks
 
@@ -286,8 +290,13 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
+| `DATA_API_KEY` | Data-plane API key; `/ingest/*` and `/search/*` require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
+| `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
+| `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
+| `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
+| `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. For production Kubernetes, use the Helm Secret template (`config.useSecret: true`) for credentials and expose the Admin UI through an authenticated Ingress or gateway.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. For production Kubernetes, set both admin and data API keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
 
 ---
 
@@ -462,9 +471,12 @@ make test
 
 # Option 2: npm (any OS)
 npm run test
+
+# Full local release gate (tests, lint, UI build, Compose config, Helm render)
+make ci
 ```
 
-Both run the Query API and indexing service pytest suites (no Kafka/Redis/Typesense required). See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
+Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
 
 ---
 

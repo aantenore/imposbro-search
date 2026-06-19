@@ -6,7 +6,7 @@ and serialization throughout the API.
 """
 
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from constants import NAME_PATTERN, TYPESENSE_DEFAULT_PORT
 
@@ -145,3 +145,21 @@ class OperationResponse(BaseModel):
     """Generic response for admin operations."""
     status: str = Field(default="ok", description="Operation status")
     message: str = Field(..., description="Operation result message")
+
+
+class AuditLogEntry(BaseModel):
+    """A safe, user-visible admin audit event."""
+    id: str = Field(..., description="Audit event identifier")
+    timestamp_ms: int = Field(..., description="Unix timestamp in milliseconds")
+    timestamp: str = Field(..., description="UTC ISO-8601 timestamp")
+    actor: str = Field(..., description="Hashed or non-sensitive actor identifier")
+    action: str = Field(..., description="Admin action")
+    resource_type: str = Field(..., description="Resource type affected")
+    resource_id: str = Field(..., description="Resource identifier affected")
+    status: str = Field(default="success", description="Outcome status")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Safe metadata")
+
+
+class AuditLogResponse(BaseModel):
+    """Recent admin audit events."""
+    entries: List[AuditLogEntry]

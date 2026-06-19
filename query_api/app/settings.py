@@ -36,5 +36,17 @@ class Settings(BaseSettings):
     # Local-development escape hatch. Keep false in shared, exposed, or production environments.
     ALLOW_UNAUTHENTICATED_ADMIN: bool = False
 
+    # Optional API key for data-plane endpoints (/ingest and /search).
+    # Keep separate from ADMIN_API_KEY so operators can grant least-privilege access.
+    DATA_API_KEY: str = ""
+
+    # Local-development escape hatch. Keep false in shared, exposed, or production environments.
+    ALLOW_UNAUTHENTICATED_DATA: bool = False
+
+    # Admin audit log. Records successful control-plane mutations to the
+    # internal state cluster without storing raw API keys or cluster secrets.
+    AUDIT_LOG_ENABLED: bool = True
+    AUDIT_LOG_MAX_RESULTS: int = 100
+
 
 settings = Settings()
