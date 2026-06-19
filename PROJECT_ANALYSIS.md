@@ -41,7 +41,7 @@ The product is therefore not a generic “federated search” novelty. Its defen
 7. **Search relevance**: federated merge now preserves Typesense `_text_match:desc` semantics.
 8. **Helm deployment**: chart metadata is now `Chart.yaml`; ConfigMap/Secret env vars match the app settings; Admin UI service defaults to `ClusterIP`.
 9. **Dependency/security**: Admin UI upgraded to Next.js 16.2.9 and ESLint 9; production audit gate has no high/critical findings.
-10. **CI**: GitHub Actions runs Python service tests, Admin UI lint/build, and production dependency audit.
+10. **Delivery gates**: root `npm test` runs API and indexing tests; Admin UI has explicit lint/build/audit commands. A GitHub Actions workflow is recommended next, but was not committed because the current OAuth token cannot create workflow files without the `workflow` scope.
 11. **Runtime hardening**: Python Docker images use Python 3.11 and non-root users.
 
 ### Fixes
