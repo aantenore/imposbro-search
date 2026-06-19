@@ -37,3 +37,14 @@ Creates standard chart labels.
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
+
+{{/*
+Resolves the service account name used by workloads.
+*/}}
+{{- define "imposbro-search.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "imposbro-search.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}

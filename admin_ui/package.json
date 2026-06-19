@@ -2,6 +2,7 @@
   "name": "admin-ui",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "cross-env INTERNAL_QUERY_API_URL=http://localhost:8000 next dev",
     "build": "next build",
