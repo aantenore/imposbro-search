@@ -24,7 +24,7 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 * **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
 * **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
 * **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, and routing rules from your browser.
-* **Operational Backup/Restore:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows.
+* **Operational Backup/Restore & Audit:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows. Operators can inspect recent sanitized admin audit events from the Operations page.
 * **Enterprise-Ready:** Includes message ordering via Kafka, monitoring with a full Prometheus + Grafana stack, and a resilient, scalable architecture.
 
 ---
