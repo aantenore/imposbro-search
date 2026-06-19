@@ -634,6 +634,7 @@ indexingService:
 * [x] Opt-in Helm PodDisruptionBudget for Query API, Admin UI, and indexing workers
 * [x] Per-workload Helm topology spread constraints for multi-node availability
 * [x] Opt-in Helm Ingress for Query API and Admin UI with TLS, class, host, path, and annotation controls
+* [x] Helm chart validation harness covering rendered resource counts, Ingress permutations, and fail-fast guardrails
 
 ### 🚧 Future
 
@@ -686,7 +687,7 @@ make smoke-scale
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
 
-`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm lint/render. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, and the Admin UI proxy. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
+`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm chart validation scenarios. Make targets use `.env` when present and fall back to `.env.example` for reproducible config validation in clean checkouts. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, and the Admin UI proxy. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
 
 ---
 
