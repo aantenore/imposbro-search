@@ -115,6 +115,16 @@ queryApi:
   service:
     type: ClusterIP
     port: 80
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    # Example:
+    # - host: api.example.com
+    #   path: /
+    #   pathType: Prefix
+    tls: []
   autoscaling:
     enabled: false
     minReplicas: 2
@@ -167,6 +177,16 @@ adminUi:
   service:
     type: ClusterIP # Expose through an authenticated Ingress or gateway in production
     port: 80
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    # Example:
+    # - host: admin.example.com
+    #   path: /
+    #   pathType: Prefix
+    tls: []
   autoscaling:
     enabled: false
     minReplicas: 2
