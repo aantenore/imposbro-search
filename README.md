@@ -259,9 +259,9 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` unless local dev bypass is enabled) |
-| `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` unless local dev bypass is enabled) |
-| `/search/{collection}` | POST | Federated search with JSON body for semantic, vector, or hybrid Typesense parameters |
+| `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` or `ingest`/`data` scoped key unless local dev bypass is enabled) |
+| `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` or `search`/`data` scoped key unless local dev bypass is enabled) |
+| `/search/{collection}` | POST | Federated search with JSON body for semantic, vector, or hybrid Typesense parameters (same auth as GET search) |
 
 Search responses include `clusters_queried`, `clusters_responded`, `failed_clusters`, and `partial`.
 If at least one cluster responds, partial failures return `200` with `partial: true`; if every target cluster fails, the API returns `503`.
@@ -318,15 +318,16 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
+| `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, `search`, `ingest`, `data`, and `*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
-| `DATA_API_KEY` | Data-plane API key; `/ingest/*` and `/search/*` require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
+| `DATA_API_KEY` | Coarse legacy data-plane API key; grants both `/ingest/*` and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
 | `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set both admin and data API keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials or scoped keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
 
 ---
 

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # header X-API-Key: <value> or Authorization: Bearer <value>
     ADMIN_API_KEY: str = ""
 
+    # Optional JSON array of scoped API keys:
+    # [{"name":"ops","key":"secret","scopes":["admin","search","ingest"]}]
+    SCOPED_API_KEYS: str = ""
+
     # Local-development escape hatch. Keep false in shared, exposed, or production environments.
     ALLOW_UNAUTHENTICATED_ADMIN: bool = False
 
