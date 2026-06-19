@@ -55,6 +55,52 @@ networkPolicy:
         from: []
     egress: []
 
+monitoring:
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    labels: {}
+    namespaceSelector: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    targetLabels: []
+    podTargetLabels: []
+    queryApi:
+      enabled: true
+      path: /metrics
+    indexingService:
+      enabled: true
+      path: /metrics
+  prometheusRule:
+    enabled: false
+    namespace: ""
+    labels: {}
+    rules:
+      queryApiHigh5xxRate:
+        enabled: true
+        severity: warning
+        threshold: 0.05
+        duration: 10m
+      queryApiHighP95Latency:
+        enabled: true
+        severity: warning
+        thresholdSeconds: 1
+        duration: 10m
+      indexingDlqMessages:
+        enabled: true
+        severity: critical
+        threshold: 0
+        window: 5m
+      indexingRetryBurst:
+        enabled: true
+        severity: warning
+        threshold: 10
+        window: 10m
+      indexingNoLoadedClusters:
+        enabled: true
+        severity: critical
+        duration: 5m
+
 # Configuration for the query-api service
 queryApi:
   name: query-api

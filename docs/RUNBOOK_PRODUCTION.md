@@ -82,7 +82,31 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 - HPA enabled for Query API/Admin UI when CPU or memory tracks request load.
 - KEDA enabled for indexing workers when Kafka lag is the scaling signal.
 - NetworkPolicy enabled after ingress and monitoring selectors are known.
+- `monitoring.serviceMonitor.enabled=true` and
+  `monitoring.prometheusRule.enabled=true` when Prometheus Operator is used.
 - `make ci`, runtime smoke, and benchmark evidence captured for the release.
+
+## Alerting
+
+When Prometheus Operator is installed, enable chart-managed scrape and alert
+resources:
+
+```yaml
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus
+  prometheusRule:
+    enabled: true
+    labels:
+      release: prometheus
+```
+
+The default rules cover Query API 5xx rate, Query API p95 latency, indexing DLQ
+messages, indexing retry bursts, and indexing workers with no loaded data
+clusters. Tune thresholds per environment; production alert thresholds should
+be stricter than local Docker smoke expectations.
 
 ## Release Verification
 
