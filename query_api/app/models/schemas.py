@@ -8,10 +8,15 @@ and serialization throughout the API.
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 
+from constants import NAME_PATTERN, TYPESENSE_DEFAULT_PORT
+
 try:
-    from typing import Self
+    from typing import Self, Annotated
 except ImportError:
-    from typing_extensions import Self
+    from typing_extensions import Self, Annotated
+
+
+NameString = Annotated[str, Field(pattern=NAME_PATTERN)]
 
 
 class Cluster(BaseModel):
@@ -24,9 +29,18 @@ class Cluster(BaseModel):
         port: Port number (default: 8108 for Typesense)
         api_key: Authentication key for the cluster
     """
-    name: str = Field(..., description="Unique cluster identifier")
+    name: str = Field(
+        ...,
+        pattern=NAME_PATTERN,
+        description="Unique cluster identifier",
+    )
     host: str = Field(..., description="Cluster hostname or IP")
-    port: int = Field(default=8108, description="Cluster port")
+    port: int = Field(
+        default=TYPESENSE_DEFAULT_PORT,
+        ge=1,
+        le=65535,
+        description="Cluster port",
+    )
     api_key: str = Field(..., description="Cluster API key")
 
 
@@ -53,7 +67,7 @@ class CollectionSchema(BaseModel):
         fields: List of field definitions
         default_sorting_field: Optional field to sort by default
     """
-    name: str = Field(..., description="Collection name")
+    name: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
     fields: List[CollectionField] = Field(..., description="Collection field definitions")
     default_sorting_field: Optional[str] = Field(
         default=None, 
@@ -76,8 +90,10 @@ class FieldRule(BaseModel):
     """
     field: str = Field(..., description="Document field to check")
     value: str = Field(..., description="Value that triggers this routing rule")
-    cluster: Optional[str] = Field(None, description="Single target cluster")
-    clusters: Optional[List[str]] = Field(None, description="Target clusters for fan-out (replication)")
+    cluster: Optional[NameString] = Field(None, description="Single target cluster")
+    clusters: Optional[List[NameString]] = Field(
+        None, description="Target clusters for fan-out (replication)"
+    )
 
     @model_validator(mode="after")
     def require_cluster_or_clusters(self) -> Self:
@@ -100,9 +116,9 @@ class RoutingRules(BaseModel):
         rules: List of field-based routing rules
         default_cluster: Fallback cluster when no rules match
     """
-    collection: str = Field(..., description="Collection name")
+    collection: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
     rules: List[FieldRule] = Field(default_factory=list, description="Ordered list of routing rules")
-    default_cluster: str = Field(default="default", description="Fallback cluster")
+    default_cluster: NameString = Field(default="default", description="Fallback cluster")
 
 
 class IngestResponse(BaseModel):

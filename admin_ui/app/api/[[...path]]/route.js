@@ -4,6 +4,7 @@
  */
 
 const BACKEND_URL = process.env.INTERNAL_QUERY_API_URL || 'http://localhost:8000';
+const ADMIN_API_KEY = process.env.INTERNAL_QUERY_API_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
 
 export async function GET(request, { params }) {
   return proxyRequest(request, params);
@@ -41,6 +42,10 @@ async function proxyRequest(request, { params }) {
       headers.set(key, value);
     }
   });
+
+  if (ADMIN_API_KEY && path.startsWith('admin/') && !headers.has('x-api-key') && !headers.has('authorization')) {
+    headers.set('X-API-Key', ADMIN_API_KEY);
+  }
 
   let body = null;
   if (['POST', 'PUT', 'PATCH'].includes(request.method)) {

@@ -17,7 +17,9 @@ def require_admin_api_key(
 ) -> None:
     """If ADMIN_API_KEY is set, require X-API-Key or Authorization: Bearer to match."""
     if not settings.ADMIN_API_KEY:
-        return
+        if settings.ALLOW_UNAUTHENTICATED_ADMIN:
+            return
+        raise HTTPException(status_code=401, detail="Admin API key is required")
     provided = x_api_key
     if not provided and authorization and authorization.startswith("Bearer "):
         provided = authorization[7:].strip()

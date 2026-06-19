@@ -7,6 +7,10 @@
 
 const API_BASE = '/api';
 
+function encodeSegment(value) {
+    return encodeURIComponent(value);
+}
+
 /**
  * Custom error class for API errors
  */
@@ -89,7 +93,7 @@ export const api = {
         /**
          * Delete a cluster
          */
-        delete: (name) => request(`/admin/federation/clusters/${name}`, {
+        delete: (name) => request(`/admin/federation/clusters/${encodeSegment(name)}`, {
             method: 'DELETE',
         }),
     },
@@ -99,7 +103,7 @@ export const api = {
         /**
          * Get collection schema
          */
-        get: (name) => request(`/admin/collections/${name}`),
+        get: (name) => request(`/admin/collections/${encodeSegment(name)}`),
 
         /**
          * Create a new collection
@@ -112,7 +116,7 @@ export const api = {
         /**
          * Delete a collection
          */
-        delete: (name) => request(`/admin/collections/${name}`, {
+        delete: (name) => request(`/admin/collections/${encodeSegment(name)}`, {
             method: 'DELETE',
         }),
     },
@@ -145,7 +149,7 @@ export const api = {
         /**
          * Delete routing rules for a collection
          */
-        deleteRules: (collection) => request(`/admin/routing-rules/${collection}`, {
+        deleteRules: (collection) => request(`/admin/routing-rules/${encodeSegment(collection)}`, {
             method: 'DELETE',
         }),
     },
@@ -157,13 +161,13 @@ export const api = {
          */
         query: (collection, params) => {
             const queryString = new URLSearchParams(params).toString();
-            return request(`/search/${collection}?${queryString}`);
+            return request(`/search/${encodeSegment(collection)}?${queryString}`);
         },
 
         /**
          * Ingest a document
          */
-        ingest: (collection, document) => request(`/ingest/${collection}`, {
+        ingest: (collection, document) => request(`/ingest/${encodeSegment(collection)}`, {
             method: 'POST',
             body: JSON.stringify(document),
         }),
