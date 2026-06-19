@@ -90,3 +90,27 @@ def test_reconcile_collection_schemas_reports_existing_and_created():
 
     assert report["cluster-existing"] == {"existing": ["products"], "created": []}
     assert report["cluster-missing"] == {"existing": [], "created": ["products"]}
+
+
+def test_create_client_respects_configured_port(monkeypatch):
+    captured = {}
+
+    def fake_client(config):
+        captured.update(config)
+        return object()
+
+    monkeypatch.setattr(typesense, "Client", fake_client)
+
+    FederationService.create_client(
+        {
+            "host": "node-a, node-b",
+            "port": 9109,
+            "api_key": "test-key",
+        }
+    )
+
+    assert captured["nodes"] == [
+        {"host": "node-a", "port": "9109", "protocol": "http"},
+        {"host": "node-b", "port": "9109", "protocol": "http"},
+    ]
+    assert captured["api_key"] == "test-key"

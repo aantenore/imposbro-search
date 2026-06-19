@@ -2,6 +2,8 @@
 import pytest
 import typesense
 
+from services import FederationService
+
 
 class FailingCollections:
     def retrieve(self):
@@ -52,3 +54,42 @@ def test_ready_returns_503_when_data_cluster_is_not_ready(client, monkeypatch):
     data = r.json()
     assert data["status"] == "degraded"
     assert data["data_clusters"] == {"cluster-down": "error"}
+
+
+def test_ready_returns_503_when_any_declared_cluster_node_is_not_ready(
+    client, monkeypatch
+):
+    import main
+
+    monkeypatch.setattr(main, "_check_redis_ok", lambda: True)
+    monkeypatch.setattr(main, "_check_kafka_ok", lambda: True)
+
+    federation = FederationService()
+    federation.clients = {"cluster-a": object()}
+    federation.clusters_config = {
+        "cluster-a": {
+            "host": "node-a,node-b",
+            "port": 8108,
+            "api_key": "test-key",
+        }
+    }
+    monkeypatch.setattr(main, "federation_service", federation)
+    monkeypatch.setattr(
+        FederationService,
+        "cluster_node_statuses",
+        lambda self, cluster_name: [
+            {"host": "node-a", "status": "ok"},
+            {"host": "node-b", "status": "error", "error": "not ready"},
+        ],
+    )
+
+    r = client.get("/ready")
+
+    assert r.status_code == 503
+    data = r.json()
+    assert data["status"] == "degraded"
+    assert data["data_clusters"] == {"cluster-a": "error"}
+    assert data["data_cluster_nodes"]["cluster-a"] == [
+        {"host": "node-a", "status": "ok"},
+        {"host": "node-b", "status": "error", "error": "not ready"},
+    ]
