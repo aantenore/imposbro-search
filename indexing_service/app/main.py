@@ -26,6 +26,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def build_admin_headers() -> Dict[str, str]:
+    """Build service-to-service headers for Query API admin endpoints."""
+    admin_api_key = os.environ.get("ADMIN_API_KEY", "").strip()
+    return {"X-API-Key": admin_api_key} if admin_api_key else {}
+
+
 def create_typesense_client(cluster_info: Dict) -> typesense.Client:
     """
     Create a Typesense client from cluster configuration.
@@ -68,11 +74,12 @@ def fetch_cluster_configuration(query_api_url: str) -> Dict[str, typesense.Clien
     while True:
         try:
             # Fetch only cluster configuration (no routing rules needed)
-            logger.info(
-                f"Fetching cluster config from {query_api_url}/admin/federation/clusters..."
-            )
+            endpoint = f"{query_api_url}/admin/federation/clusters/internal"
+            logger.info("Fetching internal cluster config from %s...", endpoint)
             cluster_response = requests.get(
-                f"{query_api_url}/admin/federation/clusters", timeout=10
+                endpoint,
+                headers=build_admin_headers(),
+                timeout=10,
             )
             cluster_response.raise_for_status()
             cluster_data = cluster_response.json()

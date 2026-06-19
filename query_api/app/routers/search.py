@@ -214,10 +214,10 @@ async def search(
         if doc_id and doc_id not in unique_hits_map:
             unique_hits_map[doc_id] = hit
 
-    # Sort: Re-rank all unique hits by relevance score
-    # text_match in Typesense: lower = better match
+    # Sort: Re-rank all unique hits by relevance score.
+    # Typesense's default ranking uses _text_match:desc; keep that semantic.
     sorted_hits = sorted(
-        unique_hits_map.values(), key=lambda x: x.get("text_match", float("inf"))
+        unique_hits_map.values(), key=lambda x: x.get("text_match", 0), reverse=True
     )
 
     # Slice: Return only the requested page or offset window

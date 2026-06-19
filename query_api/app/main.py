@@ -177,7 +177,7 @@ async def lifespan(app: FastAPI):
     # Try to load existing state
     clusters_config, routing_rules = state_manager.load_state()
 
-    if clusters_config and routing_rules:
+    if clusters_config is not None and routing_rules is not None:
         federation_service.load_from_state(clusters_config, routing_rules)
     else:
         # Bootstrap with default data cluster
@@ -205,9 +205,10 @@ async def lifespan(app: FastAPI):
                 FederationService.create_client(config2)
             )
 
-        state_manager.save_state(
+        if not state_manager.save_state(
             federation_service.clusters_config, federation_service.routing_rules
-        )
+        ):
+            raise RuntimeError("Failed to persist default federation configuration.")
         logger.info("Default data clusters bootstrapped.")
 
     # Initialize Kafka service

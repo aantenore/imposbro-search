@@ -283,9 +283,11 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DEFAULT_DATA_CLUSTER_API_KEY` | API key for default cluster |
 | `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
-| `ADMIN_API_KEY` | Optional; if set, all `/admin/*` requests require header `X-API-Key` or `Authorization: Bearer` |
+| `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
+| `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
+| `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. For production Kubernetes, use the Helm Secret template (`config.useSecret: true`) for credentials.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. For production Kubernetes, use the Helm Secret template (`config.useSecret: true`) for credentials and expose the Admin UI through an authenticated Ingress or gateway.
 
 ---
 
@@ -394,6 +396,7 @@ docker push your-registry-user/imposbro-indexing-service:latest
 ### Step 2: Configure and Deploy the Helm Chart
 
 1.  **Update `values.yaml`:** Open `helm/values.yaml` and update the `image` repository values for `queryApi`, `adminUi`, and `indexingService` to match the image names you just pushed.
+    For production, set `config.useSecret: true`, provide all API keys through a secure values file or external secret manager, and keep `ALLOW_UNAUTHENTICATED_ADMIN` set to `"false"`.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
     helm install imposbro-release ./helm
@@ -461,7 +464,7 @@ make test
 npm run test
 ```
 
-Both run the Query API pytest suite (no Kafka/Redis/Typesense required). See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
+Both run the Query API and indexing service pytest suites (no Kafka/Redis/Typesense required). See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
 
 ---
 

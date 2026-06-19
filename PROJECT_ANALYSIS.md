@@ -1,5 +1,23 @@
 # IMPOSBRO Search – Analysis and Improvements
 
+## Current Product Verdict (2026-06-19)
+
+IMPOSBRO Search is useful, but only with a clear wedge: **a Typesense-focused federation/control plane** for teams that want Typesense ergonomics while distributing data across multiple physical clusters by tenant, region, compliance boundary, or scaling domain.
+
+The market already has strong alternatives:
+
+- **Elasticsearch / OpenSearch cross-cluster search** provide native cross-cluster querying for organizations already on that ecosystem.
+- **Algolia federated or multi-index search** is strong for UX-oriented multi-source search, especially when results can remain grouped by source/index.
+- **Typesense multi_search/federated search** covers searching multiple collections in one Typesense cluster/request, and Typesense HA covers node-level availability.
+
+The product is therefore not a generic “federated search” novelty. Its defensible value is narrower and real: document-level routing/fan-out, async indexing, and an admin surface around **multiple Typesense clusters** where native Typesense federation is not enough. Recommended positioning: open-source Typesense federation gateway/control plane, not an Elasticsearch/OpenSearch replacement.
+
+### Build-vs-buy
+
+- **Build** when Typesense is a strategic choice and data must be split by tenant/region/cluster while still exposing one API and admin workflow.
+- **Buy/use native** when the team is already on Elastic/OpenSearch and needs broad cross-cluster query/analytics.
+- **Hybrid** when Algolia/Typesense native federated search handles UX multi-index search, while IMPOSBRO owns operational routing and ingestion across physical Typesense clusters.
+
 ## Why This Project Matters
 
 - **Real federated architecture**: Not a thin wrapper around Typesense—document-level sharding, field-based routing, scatter-gather search, and correct deep pagination across multiple clusters.
@@ -11,6 +29,20 @@
 ---
 
 ## Fixes and Improvements Applied
+
+### Current hardening pass
+
+1. **Admin auth no longer public-by-default**: `/admin/*` requires `ADMIN_API_KEY` unless `ALLOW_UNAUTHENTICATED_ADMIN=true` is explicitly set for local development.
+2. **Safe cluster credentials flow**: public cluster listing keeps API keys masked; indexing service now uses an internal admin-authenticated endpoint with unmasked credentials.
+3. **Admin UI proxy hardening**: server-side proxy can inject `ADMIN_API_KEY` / `INTERNAL_QUERY_API_ADMIN_API_KEY` without exposing secrets to browser JavaScript.
+4. **Input validation**: cluster names, collection names, aliases, and routing models consistently use the shared Typesense-compatible name pattern.
+5. **State consistency**: startup distinguishes empty routing config from missing state, and admin mutations fail if state persistence fails.
+6. **Kafka reliability**: indexing consumer now uses manual offset commits after successful upsert and fails missing target-cluster messages instead of silently dropping them.
+7. **Search relevance**: federated merge now preserves Typesense `_text_match:desc` semantics.
+8. **Helm deployment**: chart metadata is now `Chart.yaml`; ConfigMap/Secret env vars match the app settings; Admin UI service defaults to `ClusterIP`.
+9. **Dependency/security**: Admin UI upgraded to Next.js 16.2.9 and ESLint 9; production audit gate has no high/critical findings.
+10. **CI**: GitHub Actions runs Python service tests, Admin UI lint/build, and production dependency audit.
+11. **Runtime hardening**: Python Docker images use Python 3.11 and non-root users.
 
 ### Fixes
 

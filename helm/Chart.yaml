@@ -1,4 +1,3 @@
-# Chart.yaml
 apiVersion: v2
 name: imposbro-search
 description: A Helm chart for deploying the IMPOSBRO Search federated architecture on Kubernetes.
