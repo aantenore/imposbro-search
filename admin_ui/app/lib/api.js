@@ -114,6 +114,13 @@ export const api = {
         }),
 
         /**
+         * Recreate any missing desired collection schemas on registered clusters
+         */
+        reconcile: () => request('/admin/collections/reconcile', {
+            method: 'POST',
+        }),
+
+        /**
          * Delete a collection
          */
         delete: (name) => request(`/admin/collections/${encodeSegment(name)}`, {
