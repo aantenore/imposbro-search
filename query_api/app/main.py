@@ -26,11 +26,12 @@ from typing import Optional
 from unittest.mock import MagicMock
 
 import typesense
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from constants import APP_NAME, VERSION
+from observability import normalize_request_id
 from settings import settings
 from services import (
     StateManager,
@@ -341,7 +342,27 @@ if settings.CORS_ORIGINS.strip():
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            settings.REQUEST_ID_HEADER,
+            "Retry-After",
+            "X-Pagination-Info",
+            "X-Pagination-Warning",
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset",
+        ],
     )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Attach a stable, safe request id to every response and async ingest message."""
+    request_id = normalize_request_id(request.headers.get(settings.REQUEST_ID_HEADER))
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers[settings.REQUEST_ID_HEADER] = request_id
+    return response
+
 
 # Include routers
 app.include_router(admin_router)

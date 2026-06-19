@@ -320,15 +320,19 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
     collection_name = message.get("collection")
     document = message.get("document")
     target_cluster = message.get("target_cluster")
+    request_id = str(message.get("request_id") or "-")
 
     # Validate message structure
     if not collection_name or not document:
-        raise ValueError("Invalid message format (missing collection or document)")
+        raise ValueError(
+            f"Invalid message format (missing collection or document) request_id={request_id}"
+        )
 
     if not target_cluster:
         logger.warning(
-            f"Message missing target_cluster field. "
-            f"Falling back to 'default' cluster for backward compatibility."
+            "Message missing target_cluster field request_id=%s. "
+            "Falling back to 'default' cluster for backward compatibility.",
+            request_id,
         )
     target_cluster = resolve_target_cluster(target_cluster, typesense_clients)
 
@@ -341,7 +345,8 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
         raise MissingTargetClusterError(
             f"No client found for cluster '{target_cluster}'. "
             f"Document {doc_id} cannot be indexed. "
-            f"Available clusters: {list(typesense_clients.keys())}"
+            f"Available clusters: {list(typesense_clients.keys())} "
+            f"request_id={request_id}"
         )
 
     # Upsert the document
@@ -352,11 +357,19 @@ def process_message(message: Dict, typesense_clients: Dict) -> None:
             target_cluster=target_cluster,
         ).inc()
         logger.info(
-            f"Indexed document {doc_id} into '{collection_name}' "
-            f"on cluster '{target_cluster}'"
+            "Indexed document %s into '%s' on cluster '%s' request_id=%s",
+            doc_id,
+            collection_name,
+            target_cluster,
+            request_id,
         )
     except Exception as e:
         logger.error(
-            f"Failed to index document {doc_id} to {collection_name}@{target_cluster}: {e}"
+            "Failed to index document %s to %s@%s request_id=%s: %s",
+            doc_id,
+            collection_name,
+            target_cluster,
+            request_id,
+            e,
         )
         raise
