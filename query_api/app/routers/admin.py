@@ -7,9 +7,12 @@ via Redis Pub/Sub for multi-instance synchronization.
 """
 
 import asyncio
+import copy
 import hashlib
 import logging
+import re
 import typesense
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Path, Query, Request
 from typing import Dict, Any, Optional
 
@@ -26,6 +29,7 @@ from models import (
     RoutingRules,
     OperationResponse,
     AuditLogResponse,
+    ControlPlaneStateSnapshot,
 )
 from services import FederationService, StateManager, SyncConfigNotifier
 from settings import settings
@@ -108,6 +112,103 @@ def _record_admin_audit(
     )
 
 
+def _is_masked_api_key(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("***")
+
+
+def _mask_cluster_secrets(clusters_config: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    masked = copy.deepcopy(clusters_config)
+    for config in masked.values():
+        if "api_key" in config:
+            config["api_key"] = _mask_api_key(str(config.get("api_key", "")))
+    return masked
+
+
+def _state_snapshot_from_federation(
+    federation: FederationService,
+    *,
+    include_secrets: bool,
+) -> ControlPlaneStateSnapshot:
+    clusters_config = copy.deepcopy(federation.clusters_config)
+    if not include_secrets:
+        clusters_config = _mask_cluster_secrets(clusters_config)
+
+    return ControlPlaneStateSnapshot(
+        exported_at=datetime.now(timezone.utc).isoformat(),
+        secrets_included=include_secrets,
+        federation_clusters_config=clusters_config,
+        collection_routing_rules=copy.deepcopy(federation.routing_rules),
+        collection_schemas=copy.deepcopy(federation.collection_schemas),
+    )
+
+
+def _snapshot_counts(snapshot: ControlPlaneStateSnapshot) -> Dict[str, int]:
+    return {
+        "clusters": len(snapshot.federation_clusters_config),
+        "routing_rules": len(snapshot.collection_routing_rules),
+        "collection_schemas": len(snapshot.collection_schemas),
+    }
+
+
+def _validate_name_map(name: str, values: Dict[str, Any]) -> None:
+    for key in values.keys():
+        if not re.fullmatch(NAME_PATTERN, key):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {name} name '{key}'.",
+            )
+
+
+def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: bool) -> None:
+    if snapshot.version != "imposbro.state.v1":
+        raise HTTPException(status_code=400, detail="Unsupported state snapshot version.")
+
+    _validate_name_map("cluster", snapshot.federation_clusters_config)
+    _validate_name_map("collection", snapshot.collection_routing_rules)
+    _validate_name_map("collection", snapshot.collection_schemas)
+
+    cluster_names = set(snapshot.federation_clusters_config.keys())
+    for cluster_name, config in snapshot.federation_clusters_config.items():
+        if config.get("name", cluster_name) != cluster_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cluster config name mismatch for '{cluster_name}'.",
+            )
+        for required in ("host", "api_key"):
+            if not str(config.get(required, "")).strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cluster '{cluster_name}' is missing '{required}'.",
+                )
+        if apply and _is_masked_api_key(config.get("api_key")):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Cannot apply a snapshot with masked cluster API keys. "
+                    "Export with include_secrets=true or provide raw keys."
+                ),
+            )
+
+    for collection, rules_config in snapshot.collection_routing_rules.items():
+        default_cluster = rules_config.get("default_cluster", "default")
+        if default_cluster != "default" and default_cluster not in cluster_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Routing default for '{collection}' references unknown cluster '{default_cluster}'.",
+            )
+        for rule in rules_config.get("rules", []):
+            targets = rule.get("clusters") or [rule.get("cluster")]
+            for target in targets:
+                if target != "default" and target not in cluster_names:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Routing rule for '{collection}' references unknown "
+                            f"cluster '{target}'."
+                        ),
+                    )
+
+
 # ----- Cluster Management -----
 
 
@@ -173,6 +274,116 @@ def get_audit_log(
             action=action,
             resource_type=resource_type,
         )
+    }
+
+
+@router.get(
+    "/state/export",
+    summary="Export control-plane state for backup",
+    response_model=ControlPlaneStateSnapshot,
+)
+def export_control_plane_state(
+    request: Request,
+    include_secrets: bool = Query(
+        False,
+        description="Include raw federated cluster API keys for restorable backups.",
+    ),
+    federation: FederationService = Depends(get_federation_service),
+    state_manager: StateManager = Depends(get_state_manager),
+) -> ControlPlaneStateSnapshot:
+    """
+    Export the current in-memory control-plane state.
+
+    Secrets are masked by default so operators can inspect or share the snapshot
+    safely. Use `include_secrets=true` only when creating a restore-ready backup.
+    """
+    snapshot = _state_snapshot_from_federation(
+        federation,
+        include_secrets=include_secrets,
+    )
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="state_exported",
+        resource_type="control_plane_state",
+        resource_id="config_v1",
+        details={
+            **_snapshot_counts(snapshot),
+            "secrets_included": include_secrets,
+        },
+    )
+    return snapshot
+
+
+@router.post(
+    "/state/import",
+    summary="Validate or import control-plane state",
+)
+def import_control_plane_state(
+    request: Request,
+    snapshot: ControlPlaneStateSnapshot,
+    apply_changes: bool = Query(
+        False,
+        alias="apply",
+        description="Persist and load this snapshot. Defaults to dry-run validation.",
+    ),
+    federation: FederationService = Depends(get_federation_service),
+    state_manager: StateManager = Depends(get_state_manager),
+    notifier: SyncConfigNotifier = Depends(get_config_notifier),
+) -> Dict[str, Any]:
+    """
+    Validate or apply a control-plane state snapshot.
+
+    Dry-run is the default. Applying a snapshot requires raw cluster API keys;
+    masked export snapshots are intentionally rejected for restore operations.
+    """
+    _validate_import_snapshot(snapshot, apply=apply_changes)
+    counts = _snapshot_counts(snapshot)
+    has_masked_secrets = any(
+        _is_masked_api_key(config.get("api_key"))
+        for config in snapshot.federation_clusters_config.values()
+    )
+
+    if not apply_changes:
+        return {
+            "status": "ok",
+            "dry_run": True,
+            "message": "State snapshot is valid.",
+            "importable": not has_masked_secrets,
+            "counts": counts,
+        }
+
+    clusters_config = copy.deepcopy(snapshot.federation_clusters_config)
+    routing_rules = copy.deepcopy(snapshot.collection_routing_rules)
+    collection_schemas = copy.deepcopy(snapshot.collection_schemas)
+
+    saved = state_manager.save_state(
+        clusters_config,
+        routing_rules,
+        collection_schemas,
+    )
+    if not saved:
+        raise HTTPException(status_code=500, detail="Could not persist imported state.")
+
+    federation.reload_from_state(
+        clusters_config,
+        routing_rules,
+        collection_schemas,
+    )
+    _notify_config_change(notifier, "state_imported")
+    _record_admin_audit(
+        state_manager,
+        request,
+        action="state_imported",
+        resource_type="control_plane_state",
+        resource_id="config_v1",
+        details=counts,
+    )
+    return {
+        "status": "ok",
+        "dry_run": False,
+        "message": "State snapshot imported.",
+        "counts": counts,
     }
 
 
