@@ -87,6 +87,7 @@ The market does validate the problem, but it also narrows the room for different
 25. **Disaster-recovery smoke**: `make smoke-docker-state` validates masked export, restore-ready export, dry-run import, applied restore, routing/schema state recovery, and collection schema reconciliation against a live stack.
 26. **Config-sync self-notification safety**: Query API instances tag Redis config notifications with a source id and ignore their own messages, preventing immediate stale reloads after state mutations while preserving multi-replica convergence.
 27. **Operations audit visibility**: Admin UI now surfaces recent sanitized admin audit events on the Operations page so backup/restore and other control-plane mutations are visible without leaving the console.
+28. **Schema reconciliation workflow**: Admin UI Collections now exposes `POST /admin/collections/reconcile` with a per-cluster created/existing report for restore or cluster-recovery drills.
 
 ### Fixes
 

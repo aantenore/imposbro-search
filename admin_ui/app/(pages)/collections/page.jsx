@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Database } from 'lucide-react';
+import { Plus, X, Trash2, Database, ServerCog } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
 import { ConfirmationModal } from '../../components/ui';
@@ -26,6 +26,61 @@ const FIELD_TYPES = [
     { value: 'int32[]', label: 'Integer Array' },
 ];
 
+function reconcileTotals(result) {
+    const clusters = Object.values(result?.clusters || {});
+    return clusters.reduce(
+        (totals, report) => ({
+            created: totals.created + (report.created?.length || 0),
+            existing: totals.existing + (report.existing?.length || 0),
+            clusters: totals.clusters + 1,
+        }),
+        { created: 0, existing: 0, clusters: 0 }
+    );
+}
+
+function ReconcileReport({ result }) {
+    if (!result) return null;
+
+    const totals = reconcileTotals(result);
+    const clusters = Object.entries(result.clusters || {});
+
+    return (
+        <div className="border-t border-border p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+                <StatusBadge variant="info">{result.collections_desired ?? 0} desired</StatusBadge>
+                <StatusBadge variant={totals.created > 0 ? 'success' : 'default'}>
+                    {totals.created} created
+                </StatusBadge>
+                <StatusBadge variant="default">{totals.existing} existing</StatusBadge>
+                <StatusBadge variant="default">{totals.clusters} clusters checked</StatusBadge>
+            </div>
+            <div className="space-y-2">
+                {clusters.map(([cluster, report]) => (
+                    <div
+                        key={cluster}
+                        className="rounded-md border border-border bg-muted/20 px-3 py-2"
+                    >
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-mono text-sm font-semibold text-foreground">
+                                {cluster}
+                            </span>
+                            <StatusBadge variant={report.created?.length ? 'success' : 'default'}>
+                                {report.created?.length || 0} created
+                            </StatusBadge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            Created: {(report.created || []).join(', ') || 'none'}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            Existing: {(report.existing || []).join(', ') || 'none'}
+                        </p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 /**
  * Collections Page
  * 
@@ -41,6 +96,8 @@ export default function CollectionsPage() {
     const [collectionToDelete, setCollectionToDelete] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isReconciling, setIsReconciling] = useState(false);
+    const [reconcileResult, setReconcileResult] = useState(null);
     const { notification, showSuccess, showError } = useNotification();
 
     const fetchRoutingMap = useCallback(async () => {
@@ -158,6 +215,25 @@ export default function CollectionsPage() {
         }
     };
 
+    const handleReconcile = async () => {
+        setIsReconciling(true);
+        try {
+            const result = await api.collections.reconcile();
+            const totals = reconcileTotals(result);
+            setReconcileResult(result);
+            showSuccess(
+                totals.created > 0
+                    ? `Reconciled ${totals.created} missing collection schema(s).`
+                    : 'All desired collection schemas are already present.'
+            );
+            fetchRoutingMap();
+        } catch (err) {
+            showError(err.message);
+        } finally {
+            setIsReconciling(false);
+        }
+    };
+
     const collections = Object.entries(routingMap.collections);
 
     return (
@@ -186,7 +262,22 @@ export default function CollectionsPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Existing Collections List */}
-                <Card title="Existing Collections" noPadding>
+                <Card
+                    title="Existing Collections"
+                    action={
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            leftIcon={<ServerCog size={16} />}
+                            loading={isReconciling}
+                            onClick={handleReconcile}
+                        >
+                            Reconcile
+                        </Button>
+                    }
+                    noPadding
+                >
                     <div className="divide-y divide-border">
                         {isLoading ? (
                             <div className="p-6 text-center text-muted-foreground">Loading collections...</div>
@@ -221,6 +312,7 @@ export default function CollectionsPage() {
                             />
                         )}
                     </div>
+                    <ReconcileReport result={reconcileResult} />
                 </Card>
 
                 {/* Create New Collection Form */}

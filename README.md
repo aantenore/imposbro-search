@@ -23,7 +23,7 @@ This is a complete, enterprise-grade open-source search framework built on **Typ
 * **Resilient Scatter-Gather Search:** Queries are automatically sent to all relevant external clusters, with results merged and re-ranked. The system gracefully handles partial failures if a shard is unavailable.
 * **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
 * **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
-* **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, and routing rules from your browser.
+* **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, schema reconciliation, routing rules, operations, and audit visibility from your browser.
 * **Operational Backup/Restore & Audit:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows. Operators can inspect recent sanitized admin audit events from the Operations page.
 * **Enterprise-Ready:** Includes message ordering via Kafka, monitoring with a full Prometheus + Grafana stack, and a resilient, scalable architecture.
 
@@ -212,7 +212,7 @@ docker-compose up --build
 
 1.  **Open the Admin UI** at `http://localhost:3001`.
 2.  **Register External Clusters:** Go to the **Clusters** page and register two or more external Typesense instances (e.g., `cluster-us`, `cluster-eu`).
-3.  **Create a Collection:** Go to the **Collections** page and create a collection (e.g., `products`).
+3.  **Create a Collection:** Go to the **Collections** page and create a collection (e.g., `products`). Use **Reconcile** there after restoring state or adding/recovering clusters to recreate missing desired schemas.
 4.  **Define Routing Rules:** Go to the **Routing** page to configure how documents are sharded.
 5.  **Back Up Control-Plane State:** Go to the **Operations** page to export a masked snapshot, or a restore-ready snapshot when raw cluster API keys must be included.
 6.  **Ingest Sharded Data:** Use `curl` or any HTTP client to push documents.
@@ -525,6 +525,7 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] Document fan-out (routing rule `clusters` for multi-cluster replication)
 * [x] Grafana dashboard panels (documents by collection, error rate, indexing retries, DLQ)
 * [x] Admin UI Operations workflow for masked export, restore-ready export, dry-run import, and apply confirmation
+* [x] Admin UI schema reconciliation workflow with per-cluster report
 
 ### 🚧 Future
 
