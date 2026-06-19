@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Graceful shutdown flag
 shutdown_requested = False
+DEFAULT_METADATA_MAX_AGE_MS = 5000
 
 
 def signal_handler(signum, frame):
@@ -37,6 +38,42 @@ def signal_handler(signum, frame):
     global shutdown_requested
     logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
     shutdown_requested = True
+
+
+def get_int_env(name: str, default: int) -> int:
+    """Read an integer environment variable with a safe fallback."""
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        logger.warning("Invalid %s=%r. Falling back to %s.", name, raw_value, default)
+        return default
+
+
+def create_kafka_consumer(kafka_broker_url: str, topic_prefix: str) -> KafkaConsumer:
+    """Create a consumer tuned to discover dynamically created collection topics."""
+    metadata_max_age_ms = get_int_env(
+        "KAFKA_METADATA_MAX_AGE_MS", DEFAULT_METADATA_MAX_AGE_MS
+    )
+    consumer = KafkaConsumer(
+        bootstrap_servers=kafka_broker_url,
+        auto_offset_reset="earliest",
+        group_id="imposbro_federated_indexing_group",
+        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        consumer_timeout_ms=1000,  # Allow periodic shutdown checks
+        enable_auto_commit=False,
+        metadata_max_age_ms=metadata_max_age_ms,
+    )
+    consumer.subscribe(pattern=f"^{topic_prefix}_.*")
+    logger.info(
+        "Kafka Consumer connected and subscribed to pattern '%s_*' "
+        "(metadata refresh: %sms)",
+        topic_prefix,
+        metadata_max_age_ms,
+    )
+    return consumer
 
 
 def run_consumer(typesense_clients: Dict) -> None:
@@ -71,18 +108,7 @@ def run_consumer(typesense_clients: Dict) -> None:
     # Connect to Kafka with retry logic
     while not shutdown_requested:
         try:
-            consumer = KafkaConsumer(
-                bootstrap_servers=kafka_broker_url,
-                auto_offset_reset="earliest",
-                group_id="imposbro_federated_indexing_group",
-                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-                consumer_timeout_ms=1000,  # Allow periodic shutdown checks
-                enable_auto_commit=False,
-            )
-            consumer.subscribe(pattern=f"^{topic_prefix}_.*")
-            logger.info(
-                f"Kafka Consumer connected and subscribed to pattern '{topic_prefix}_*'"
-            )
+            consumer = create_kafka_consumer(kafka_broker_url, topic_prefix)
             break
         except Exception as e:
             logger.warning(f"Failed to connect to Kafka: {e}. Retrying in 5 seconds...")

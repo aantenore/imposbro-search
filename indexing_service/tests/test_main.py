@@ -69,6 +69,30 @@ def test_build_admin_headers_omits_empty_admin_key(monkeypatch):
     assert main.build_admin_headers() == {}
 
 
+def test_create_kafka_consumer_refreshes_metadata_for_dynamic_topics(monkeypatch):
+    created_kwargs = {}
+
+    class FakeKafkaConsumer:
+        def __init__(self, **kwargs):
+            created_kwargs.update(kwargs)
+            self.pattern = None
+
+        def subscribe(self, pattern):
+            self.pattern = pattern
+
+    monkeypatch.setenv("KAFKA_METADATA_MAX_AGE_MS", "7000")
+    monkeypatch.setattr(consumer, "KafkaConsumer", FakeKafkaConsumer)
+
+    kafka_consumer = consumer.create_kafka_consumer(
+        "kafka:29092", "imposbro_search_sharded"
+    )
+
+    assert created_kwargs["bootstrap_servers"] == "kafka:29092"
+    assert created_kwargs["metadata_max_age_ms"] == 7000
+    assert created_kwargs["enable_auto_commit"] is False
+    assert kafka_consumer.pattern == "^imposbro_search_sharded_.*"
+
+
 class FakeDocumentOperations:
     def __init__(self):
         self.upserted = []
