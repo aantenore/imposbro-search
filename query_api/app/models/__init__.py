@@ -17,6 +17,7 @@ from .schemas import (
     OperationResponse,
     AuditLogEntry,
     AuditLogResponse,
+    ControlPlaneStateSnapshot,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "OperationResponse",
     "AuditLogEntry",
     "AuditLogResponse",
+    "ControlPlaneStateSnapshot",
 ]
