@@ -64,6 +64,70 @@ test('advanced search posts a JSON body to the encoded collection path', async (
   }
 });
 
+test('state export masks secrets by default', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ version: 'imposbro.state.v1', secrets_included: false });
+  };
+
+  try {
+    await api.state.exportSnapshot();
+
+    assert.equal(request.url, '/api/admin/state/export');
+    assert.equal(request.options.headers['Content-Type'], 'application/json');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('state export can explicitly include restore secrets', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ version: 'imposbro.state.v1', secrets_included: true });
+  };
+
+  try {
+    await api.state.exportSnapshot({ includeSecrets: true });
+
+    assert.equal(request.url, '/api/admin/state/export?include_secrets=true');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('state import posts snapshot JSON and apply flag', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  const snapshot = {
+    version: 'imposbro.state.v1',
+    secrets_included: true,
+    federation_clusters_config: {},
+    collection_routing_rules: {},
+    collection_schemas: {},
+  };
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ status: 'ok', dry_run: false, counts: {} });
+  };
+
+  try {
+    await api.state.importSnapshot(snapshot, { apply: true });
+
+    assert.equal(request.url, '/api/admin/state/import?apply=true');
+    assert.equal(request.options.method, 'POST');
+    assert.equal(request.options.body, JSON.stringify(snapshot));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('ingest posts a JSON document to the encoded collection path', async () => {
   const originalFetch = globalThis.fetch;
   let request;
