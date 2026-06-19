@@ -6,7 +6,9 @@ metadata:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: query-api
 spec:
+  {{- if not .Values.queryApi.autoscaling.enabled }}
   replicas: {{ .Values.queryApi.replicaCount | default .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "imposbro-search.selectorLabels" . | nindent 6 }}

@@ -1,0 +1,45 @@
+{{- if .Values.indexingService.keda.enabled -}}
+{{- $bootstrap := default .Values.config.KAFKA_BROKER_URL .Values.indexingService.keda.kafka.bootstrapServers -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-indexing-service-kafka
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+spec:
+  scaleTargetRef:
+    name: {{ include "imposbro-search.fullname" . }}-indexing-service
+  minReplicaCount: {{ .Values.indexingService.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.indexingService.keda.maxReplicaCount }}
+  pollingInterval: {{ .Values.indexingService.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.indexingService.keda.cooldownPeriod }}
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ $bootstrap | quote }}
+        consumerGroup: {{ .Values.indexingService.keda.kafka.consumerGroup | quote }}
+        {{- with .Values.indexingService.keda.kafka.topic }}
+        topic: {{ . | quote }}
+        {{- end }}
+        lagThreshold: {{ .Values.indexingService.keda.kafka.lagThreshold | quote }}
+        activationLagThreshold: {{ .Values.indexingService.keda.kafka.activationLagThreshold | quote }}
+        offsetResetPolicy: {{ .Values.indexingService.keda.kafka.offsetResetPolicy | quote }}
+        allowIdleConsumers: {{ .Values.indexingService.keda.kafka.allowIdleConsumers | quote }}
+        limitToPartitionsWithLag: {{ .Values.indexingService.keda.kafka.limitToPartitionsWithLag | quote }}
+        ensureEvenDistributionOfPartitions: {{ .Values.indexingService.keda.kafka.ensureEvenDistributionOfPartitions | quote }}
+        version: {{ .Values.indexingService.keda.kafka.version | quote }}
+        {{- with .Values.indexingService.keda.kafka.sasl }}
+        sasl: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.indexingService.keda.kafka.tls }}
+        tls: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.indexingService.keda.kafka.unsafeSsl }}
+        unsafeSsl: {{ . | quote }}
+        {{- end }}
+      {{- with .Values.indexingService.keda.authenticationRef.name }}
+      authenticationRef:
+        name: {{ . | quote }}
+      {{- end }}
+{{- end }}
