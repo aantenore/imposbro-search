@@ -89,6 +89,7 @@ The market does validate the problem, but it also narrows the room for different
 27. **Operations audit visibility**: Admin UI now surfaces recent sanitized admin audit events on the Operations page so backup/restore and other control-plane mutations are visible without leaving the console.
 28. **Schema reconciliation workflow**: Admin UI Collections now exposes `POST /admin/collections/reconcile` with a per-cluster created/existing report for restore or cluster-recovery drills.
 29. **Collection aliases workflow**: Admin UI Collections now supports listing, creating/updating, and deleting per-cluster aliases for zero-downtime reindexing.
+30. **Collection aliases smoke**: `make smoke-docker-alias` creates versioned collections, upserts aliases on every data cluster, verifies federated search follows the alias, switches the alias, verifies search follows the new target, and cleans up.
 
 ### Fixes
 

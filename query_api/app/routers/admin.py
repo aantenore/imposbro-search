@@ -722,7 +722,8 @@ async def upsert_alias(
         )
     try:
         await asyncio.to_thread(
-            client.aliases[alias_name].upsert,
+            client.aliases.upsert,
+            alias_name,
             {"collection_name": collection_name},
         )
         _record_admin_audit(
