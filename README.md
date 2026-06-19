@@ -286,6 +286,10 @@ All configuration is done via environment variables. See `.env.example` for the 
 |----------|-------------|
 | `KAFKA_BROKER_URL` | Kafka broker connection string |
 | `KAFKA_TOPIC_PREFIX` | Prefix for Kafka topics |
+| `KAFKA_METADATA_MAX_AGE_MS` | Kafka consumer metadata refresh interval; keep low enough to discover newly created collection topics |
+| `INDEXING_MAX_PROCESSING_ATTEMPTS` | Bounded indexing attempts before a poison message is published to the DLQ |
+| `INDEXING_METRICS_ENABLED` | Enables the indexing worker Prometheus metrics server |
+| `INDEXING_METRICS_PORT` | Port used by the indexing worker metrics server (default `9108`) |
 | `REDIS_URL` | Redis connection string |
 | `INTERNAL_STATE_NODES` | Comma-separated internal Typesense nodes |
 | `INTERNAL_STATE_API_KEY` | API key for internal cluster |
@@ -302,7 +306,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. For production Kubernetes, set both admin and data API keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set both admin and data API keys, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
 
 ---
 
@@ -461,7 +465,7 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] Admin API key authentication (optional `ADMIN_API_KEY`, `X-API-Key` / Bearer)
 * [x] Helm Secrets for production (optional `config.useSecret`, Secret template)
 * [x] Document fan-out (routing rule `clusters` for multi-cluster replication)
-* [x] Grafana dashboard panels (documents by collection, error rate)
+* [x] Grafana dashboard panels (documents by collection, error rate, indexing retries, DLQ)
 
 ### 🚧 Future
 

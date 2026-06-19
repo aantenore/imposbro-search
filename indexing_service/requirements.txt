@@ -2,3 +2,4 @@ kafka-python-ng==2.2.3
 typesense==2.0.0
 typing-extensions==4.15.0
 requests==2.32.5
+prometheus-client==0.25.0

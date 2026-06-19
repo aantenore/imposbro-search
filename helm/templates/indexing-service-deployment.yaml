@@ -38,6 +38,12 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.indexingService.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.indexingService.metrics.port }}
+              protocol: TCP
+          {{- end }}
           {{- with .Values.indexingService.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

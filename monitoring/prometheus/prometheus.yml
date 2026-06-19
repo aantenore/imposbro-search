@@ -7,7 +7,19 @@ scrape_configs:
   - job_name: 'imposbro_services'
     static_configs:
       - targets: ['query_api:8000']
+  - job_name: 'indexing_service'
+    static_configs:
+      - targets: ['indexing_service:9108']
   - job_name: 'typesense'
     metrics_path: /metrics.json
     static_configs:
-      - targets: ['typesense:8108', 'typesense-replica:8108']
+      - targets:
+          - 'typesense-state-1:8108'
+          - 'typesense-state-2:8108'
+          - 'typesense-state-3:8108'
+          - 'typesense-data-1:8108'
+          - 'typesense-data-2:8108'
+          - 'typesense-data-3:8108'
+          - 'typesense-data2-1:8108'
+          - 'typesense-data2-2:8108'
+          - 'typesense-data2-3:8108'

@@ -1,0 +1,19 @@
+{{- if and .Values.indexingService.metrics.enabled .Values.indexingService.metrics.service.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-indexing-service
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+spec:
+  type: {{ .Values.indexingService.metrics.service.type }}
+  ports:
+    - port: {{ .Values.indexingService.metrics.service.port }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "imposbro-search.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+{{- end }}

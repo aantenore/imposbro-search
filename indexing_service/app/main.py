@@ -17,6 +17,8 @@ import time
 import requests
 from typing import Dict
 
+import metrics
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -85,6 +87,7 @@ def fetch_cluster_configuration(query_api_url: str) -> Dict[str, typesense.Clien
             cluster_data = cluster_response.json()
 
             if not cluster_data:
+                metrics.CLUSTER_CONFIG_FETCHES.labels(result="empty").inc()
                 logger.warning(
                     "Query API returned no clusters. Retrying in 10 seconds..."
                 )
@@ -110,9 +113,12 @@ def fetch_cluster_configuration(query_api_url: str) -> Dict[str, typesense.Clien
             logger.info(
                 f"Successfully loaded {len(federation_clients)} cluster client(s)"
             )
+            metrics.CLUSTER_CONFIG_FETCHES.labels(result="success").inc()
+            metrics.LOADED_CLUSTERS.set(len(federation_clients))
             return federation_clients
 
         except requests.exceptions.RequestException as e:
+            metrics.CLUSTER_CONFIG_FETCHES.labels(result="error").inc()
             logger.warning(
                 f"Failed to connect to Query API: {e}. Retrying in 10 seconds..."
             )
@@ -125,6 +131,8 @@ def main():
     logger.info("IMPOSBRO Search - Indexing Service")
     logger.info("Architecture: Smart Producer Pattern")
     logger.info("=" * 60)
+
+    metrics.start_metrics_server_from_env()
 
     # Get Query API URL from environment
     query_api_url = os.environ.get("INTERNAL_QUERY_API_URL", "http://query_api:8000")

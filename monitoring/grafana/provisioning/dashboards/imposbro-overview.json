@@ -8,7 +8,10 @@
     {"id": 2, "title": "Documents by Collection (1h)", "type": "timeseries", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum by (collection) (increase(documents_ingested_total[1h]))", "legendFormat": "{{collection}}"}]},
     {"id": 3, "title": "Query API: Request Rate (5m)", "type": "timeseries", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum(rate(fastapi_requests_total{job=\"imposbro_services\"}[5m])) by (app_name)", "legendFormat": "{{app_name}} reqs/s"}]},
     {"id": 4, "title": "Query API: P95 Latency", "type": "timeseries", "datasource": {"type": "prometheus"}, "unit": "s", "targets": [{"expr": "histogram_quantile(0.95, sum(rate(fastapi_requests_latency_seconds_bucket{job=\"imposbro_services\"}[5m])) by (le, app_name))", "legendFormat": "{{app_name}} P95"}]},
-    {"id": 5, "title": "Error Rate (5xx)", "type": "timeseries", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum(rate(fastapi_requests_total{job=\"imposbro_services\",status=~\"5..\"}[5m])) by (status)", "legendFormat": "{{status}}"}]}
+    {"id": 5, "title": "Error Rate (5xx)", "type": "timeseries", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum(rate(fastapi_requests_total{job=\"imposbro_services\",status=~\"5..\"}[5m])) by (status)", "legendFormat": "{{status}}"}]},
+    {"id": 6, "title": "Indexed Documents by Cluster (1h)", "type": "timeseries", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum by (target_cluster) (increase(indexing_documents_indexed_total[1h]))", "legendFormat": "{{target_cluster}}"}]},
+    {"id": 7, "title": "Indexing Retries (1h)", "type": "timeseries", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum by (error) (increase(indexing_processing_retries_total[1h]))", "legendFormat": "{{error}}"}]},
+    {"id": 8, "title": "Indexing DLQ Messages (1h)", "type": "stat", "datasource": {"type": "prometheus"}, "targets": [{"expr": "sum(increase(indexing_dlq_messages_total[1h]))", "legendFormat": "DLQ"}]}
   ],
   "title": "IMPOSBRO Search Overview"
 }
