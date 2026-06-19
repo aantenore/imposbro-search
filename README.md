@@ -506,6 +506,12 @@ npm run test
 
 # Full local release gate (tests, lint, UI build, Compose config, Helm render)
 make ci
+
+# Runtime smoke: Docker stack + vector collection + Kafka ingest + federated search + Admin UI proxy
+make smoke-docker
+
+# Against an already running stack
+make smoke-vector
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
