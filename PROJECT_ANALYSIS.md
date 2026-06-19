@@ -81,10 +81,10 @@ The market does validate the problem, but it also narrows the room for different
 19. **Scoped API keys**: `SCOPED_API_KEYS` can grant least-privilege `admin`, `search`, `ingest`, `data`, or `*` access while preserving legacy `ADMIN_API_KEY`/`DATA_API_KEY` behavior.
 20. **Repeatable runtime smoke**: `make smoke-docker` builds/starts the stack, creates a vector collection, ingests through Kafka, verifies federated vector ordering and the Admin UI proxy, then tears the stack down.
 21. **Partial outage smoke**: `make smoke-docker-outage` stops the secondary data cluster and verifies `/ready` degrades while federated search still returns healthy-cluster hits with `partial: true` and explicit `failed_clusters`.
-22. **Control-plane backup/restore**: Admin API can export state snapshots with masked secrets by default, create restore-ready exports with explicit secret opt-in, dry-run imports, and apply audited state restores.
+22. **Control-plane backup/restore**: Admin API can export state snapshots with masked secrets by default, create restore-ready exports with explicit secret opt-in, dry-run imports, and apply audited state restores for clusters, routing, schemas, and aliases.
 23. **Kafka/indexing load smoke**: `make smoke-docker-load` concurrently ingests configurable document batches through Kafka, waits for indexing convergence, and verifies sorted federated search results.
 24. **Admin operations workflow**: Admin UI now exposes backup/restore as an operator workflow with masked export, restore-ready export confirmation, JSON download, file upload, dry-run validation, stale-validation protection, and explicit apply confirmation.
-25. **Disaster-recovery smoke**: `make smoke-docker-state` validates masked export, restore-ready export, dry-run import, applied restore, routing/schema state recovery, and collection schema reconciliation against a live stack.
+25. **Disaster-recovery smoke**: `make smoke-docker-state` validates masked export, restore-ready export, dry-run import, applied restore, routing/schema/alias state recovery, and collection schema reconciliation against a live stack.
 26. **Config-sync self-notification safety**: Query API instances tag Redis config notifications with a source id and ignore their own messages, preventing immediate stale reloads after state mutations while preserving multi-replica convergence.
 27. **Operations audit visibility**: Admin UI now surfaces recent sanitized admin audit events on the Operations page so backup/restore and other control-plane mutations are visible without leaving the console.
 28. **Schema reconciliation workflow**: Admin UI Collections now exposes `POST /admin/collections/reconcile` with a per-cluster created/existing report for restore or cluster-recovery drills.
@@ -94,6 +94,7 @@ The market does validate the problem, but it also narrows the room for different
 32. **Release hardening**: Admin mutations roll runtime state back when persistence fails, cluster registration probes all declared nodes, search pagination fetches one extra hit for `next_offset`, fan-out search exposes deduplicated counts, legacy worker messages resolve `default` to a real cluster, Compose binds dev ports to localhost, Helm fails on placeholder/mutable images or missing service/secret values, and local Docker smoke targets cover runtime paths.
 33. **Admin UI completeness**: Routing preserves fan-out `clusters[]`, Workspace exposes offset pagination and advanced search tuning params, Collections can set `default_sorting_field`, Dashboard/Clusters show per-cluster health, and Operations audit logs can be filtered.
 34. **Enterprise identity**: Query API accepts OIDC/JWT bearer tokens with issuer/audience/signature checks, configurable claim-to-scope mapping, hashed OIDC audit actors, and optional collection tenant policies that inject server-side search filters and validate or inject ingest tenant fields.
+35. **Alias state portability**: Collection alias bindings are persisted in control-plane state, included in backup/restore snapshots, restored through import apply, and covered by DR smoke.
 35. **Horizontal scaling proof**: Added a scale Compose overlay, local Query API proxy, `make smoke-docker-scale`, Kafka lag budget check, rolling-restart ingest smoke, and an operator runbook for scale up/down, lag triage, rollback, and incidents.
 
 ### Fixes
@@ -139,6 +140,7 @@ The market does validate the problem, but it also narrows the room for different
 
 - ~~**Document fan-out**~~: **Done.** Routing rules support optional `clusters` (list) for replicating a document to multiple clusters; ingest publishes one message per target.
 - ~~**Collection aliases**~~: **Done.** Admin API and Admin UI support `PUT /admin/aliases/{alias_name}`, `GET /admin/aliases`, `DELETE /admin/aliases/{alias_name}` (per cluster) for zero-downtime reindexing.
+- ~~**Alias state portability**~~: **Done.** Alias bindings are first-class control-plane state and are included in export/import snapshots.
 - ~~**Cursor-based pagination**~~: **Done.** Search accepts optional `offset` and `limit` for cursor-style deep pagination; response includes `next_offset` when applicable.
 - ~~**Admin UI dashboard**~~: **Done.** Dashboard fetches `/admin/stats` and `/health` every 15s; shows status, clusters, collections, Redis/Kafka.
 - ~~**Hybrid/vector search gateway**~~: **Done.** JSON search endpoint supports long vector/hybrid params and cross-cluster merge can order vector-only results by `_vector_distance`.
@@ -150,7 +152,6 @@ The market does validate the problem, but it also narrows the room for different
 ### Remaining Product Risks
 
 - **Enterprise authorization depth**: OIDC and tenant policies cover API-level identity and tenant isolation; future enterprise deployments may still need richer per-collection RBAC, admin role mapping, and UI login/session flows.
-- **Alias state portability**: aliases are operationally supported and smoke-tested, but they are still live Typesense objects rather than first-class persisted control-plane state in backup/restore snapshots.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke and lag budget; the next credibility step is a real Kubernetes benchmark with production-sized topics, KEDA/HPA decisions, and sustained traffic.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
 - **Documentation depth**: horizontal scaling, disaster recovery drills, and production network topology need operator-grade docs before calling this “enterprise-ready.”

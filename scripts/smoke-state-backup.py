@@ -103,6 +103,39 @@ def set_routing_rules(query_api_url: str, headers, collection: str, target_clust
     return result
 
 
+def upsert_alias(query_api_url: str, headers, alias: str, collection: str, cluster: str):
+    _status, payload = request(
+        "PUT",
+        (
+            f"{query_api_url}/admin/aliases/{alias}"
+            f"?collection_name={collection}&cluster_name={cluster}"
+        ),
+        headers=headers,
+        timeout=30,
+    )
+    return payload
+
+
+def delete_alias(query_api_url: str, headers, alias: str, cluster: str):
+    return request(
+        "DELETE",
+        f"{query_api_url}/admin/aliases/{alias}?cluster_name={cluster}",
+        headers=headers,
+        timeout=30,
+        ok_statuses={200, 404},
+    )
+
+
+def list_aliases(query_api_url: str, headers, cluster: str):
+    _status, payload = request(
+        "GET",
+        f"{query_api_url}/admin/aliases?cluster_name={cluster}",
+        headers=headers,
+        timeout=30,
+    )
+    return payload
+
+
 def reconcile_collections(query_api_url: str, headers):
     _status, result = request(
         "POST",
@@ -113,7 +146,7 @@ def reconcile_collections(query_api_url: str, headers):
     return result
 
 
-def assert_snapshot_contains(snapshot, collection: str) -> None:
+def assert_snapshot_contains(snapshot, collection: str, alias: str, cluster: str) -> None:
     if snapshot.get("version") != "imposbro.state.v1":
         raise RuntimeError(f"Unexpected snapshot version: {snapshot.get('version')}")
     if collection not in snapshot.get("collection_schemas", {}):
@@ -124,6 +157,13 @@ def assert_snapshot_contains(snapshot, collection: str) -> None:
     rules = routing.get("rules", [])
     if not rules or rules[0].get("field") != "region":
         raise RuntimeError(f"Snapshot routing rule is unexpected: {routing}")
+    alias_config = (
+        snapshot.get("collection_aliases", {})
+        .get(cluster, {})
+        .get(alias)
+    )
+    if not alias_config or alias_config.get("collection_name") != collection:
+        raise RuntimeError(f"Snapshot is missing alias {alias} on {cluster}")
 
 
 def assert_routing_restored(query_api_url: str, headers, collection: str) -> None:
@@ -144,6 +184,23 @@ def assert_routing_restored(query_api_url: str, headers, collection: str) -> Non
     field_names = {field.get("name") for field in schema.get("fields", [])}
     if {"title", "region"} - field_names:
         raise RuntimeError(f"Restored schema is unexpected: {schema}")
+
+
+def assert_alias_restored(
+    query_api_url: str,
+    headers,
+    alias: str,
+    collection: str,
+    cluster: str,
+) -> None:
+    payload = list_aliases(query_api_url, headers, cluster)
+    aliases = payload.get("aliases", [])
+    if isinstance(aliases, dict):
+        aliases = aliases.get("aliases", [])
+    for item in aliases:
+        if item.get("name") == alias and item.get("collection_name") == collection:
+            return
+    raise RuntimeError(f"Restored alias {alias} -> {collection} not found: {payload}")
 
 
 def assert_reconcile_recreated(result, collection: str) -> None:
@@ -181,7 +238,10 @@ def main() -> int:
     query_api_url = args.query_api_url.rstrip("/")
     admin_headers = auth_headers("admin")
     collection = f"state_smoke_{int(time.time())}"
+    alias = f"{collection}_live"
     created = False
+    alias_created = False
+    target_cluster = ""
 
     try:
         ready = wait_for_ready(query_api_url, args.timeout_seconds)
@@ -212,6 +272,16 @@ def main() -> int:
         )
         print("routing:", routing_result.get("message"))
 
+        alias_result = upsert_alias(
+            query_api_url,
+            admin_headers,
+            alias,
+            collection,
+            target_cluster,
+        )
+        alias_created = True
+        print("alias:", alias_result.get("message"))
+
         masked_snapshot = export_state(
             query_api_url,
             admin_headers,
@@ -238,7 +308,7 @@ def main() -> int:
         )
         if restore_snapshot.get("secrets_included") is not True:
             raise RuntimeError("Restore-ready export did not include secrets")
-        assert_snapshot_contains(restore_snapshot, collection)
+        assert_snapshot_contains(restore_snapshot, collection, alias, target_cluster)
 
         dry_run = import_state(
             query_api_url,
@@ -250,6 +320,8 @@ def main() -> int:
             raise RuntimeError(f"Restore-ready dry-run failed: {dry_run}")
         print("restore-dry-run:", dry_run.get("counts"))
 
+        delete_alias(query_api_url, admin_headers, alias, target_cluster)
+        alias_created = False
         delete_collection(query_api_url, collection, admin_headers)
         created = False
         after_delete = routing_map(query_api_url, admin_headers)
@@ -266,15 +338,30 @@ def main() -> int:
         if applied.get("dry_run") is not False:
             raise RuntimeError(f"Apply did not restore state: {applied}")
         created = True
+        alias_created = True
         print("restore-applied:", applied.get("counts"))
 
         assert_routing_restored(query_api_url, admin_headers, collection)
+        assert_alias_restored(
+            query_api_url,
+            admin_headers,
+            alias,
+            collection,
+            target_cluster,
+        )
         reconcile_result = reconcile_collections(query_api_url, admin_headers)
         assert_reconcile_recreated(reconcile_result, collection)
 
         print("state-smoke-ok:", collection)
         return 0
     finally:
+        if alias_created and not args.keep_collection:
+            try:
+                if target_cluster:
+                    delete_alias(query_api_url, admin_headers, alias, target_cluster)
+                    print("cleanup-alias:", target_cluster, alias)
+            except Exception as exc:  # noqa: BLE001 - cleanup is best effort.
+                print(f"cleanup-alias-warning: {exc}", file=sys.stderr)
         if created and not args.keep_collection:
             try:
                 delete_collection(query_api_url, collection, admin_headers)

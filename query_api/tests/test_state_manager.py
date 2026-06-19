@@ -130,7 +130,7 @@ def test_load_state_raises_on_corrupt_persisted_state():
         manager.load_state()
 
 
-def test_load_state_defaults_legacy_snapshots_without_collection_schemas():
+def test_load_state_defaults_legacy_snapshots_without_collection_schemas_or_aliases():
     client = FakeClient()
     manager = StateManager(client)
     state_documents = client.collections["_imposbro_state"].documents
@@ -143,14 +143,20 @@ def test_load_state_defaults_legacy_snapshots_without_collection_schemas():
         )
     }
 
-    clusters_config, routing_rules, collection_schemas = manager.load_state()
+    (
+        clusters_config,
+        routing_rules,
+        collection_schemas,
+        collection_aliases,
+    ) = manager.load_state()
 
     assert clusters_config == {}
     assert routing_rules == {}
     assert collection_schemas == {}
+    assert collection_aliases == {}
 
 
-def test_state_snapshot_round_trips_collection_schemas():
+def test_state_snapshot_round_trips_collection_schemas_and_aliases():
     client = FakeClient()
     manager = StateManager(client)
     schema = {
@@ -162,18 +168,30 @@ def test_state_snapshot_round_trips_collection_schemas():
         {"cluster-a": {"host": "typesense-a", "port": 8108, "api_key": "secret"}},
         {"products": {"rules": [], "default_cluster": "default"}},
         {"products": schema},
+        {"cluster-a": {"products_live": {"collection_name": "products"}}},
     )
 
     assert ok is True
     state_documents = client.collections["_imposbro_state"].documents
     saved = json.loads(state_documents.upserted[-1]["state_data"])
     assert saved["collection_schemas"] == {"products": schema}
+    assert saved["collection_aliases"] == {
+        "cluster-a": {"products_live": {"collection_name": "products"}}
+    }
 
     state_documents.retrieved[STATE_DOCUMENT_ID] = {
         "state_data": json.dumps(saved),
     }
-    clusters_config, routing_rules, collection_schemas = manager.load_state()
+    (
+        clusters_config,
+        routing_rules,
+        collection_schemas,
+        collection_aliases,
+    ) = manager.load_state()
 
     assert "cluster-a" in clusters_config
     assert "products" in routing_rules
     assert collection_schemas == {"products": schema}
+    assert collection_aliases == {
+        "cluster-a": {"products_live": {"collection_name": "products"}}
+    }

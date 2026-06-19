@@ -92,6 +92,44 @@ def test_reconcile_collection_schemas_reports_existing_and_created():
     assert report["cluster-missing"] == {"existing": [], "created": ["products"]}
 
 
+def test_load_from_state_restores_collection_aliases(monkeypatch):
+    federation = FederationService()
+
+    monkeypatch.setattr(typesense, "Client", lambda _config: object())
+    aliases = {"cluster-a": {"products_live": {"collection_name": "products"}}}
+
+    federation.load_from_state(
+        {
+            "cluster-a": {
+                "host": "node-a",
+                "port": 8108,
+                "api_key": "secret",
+            }
+        },
+        {},
+        {},
+        aliases,
+    )
+    aliases["cluster-a"]["products_live"]["collection_name"] = "other"
+
+    assert federation.collection_aliases == {
+        "cluster-a": {"products_live": {"collection_name": "products"}}
+    }
+
+
+def test_unregister_cluster_removes_desired_aliases_for_cluster():
+    federation = FederationService()
+    federation.clients = {"cluster-a": FakeClient()}
+    federation.clusters_config = {"cluster-a": {"name": "cluster-a"}}
+    federation.collection_aliases = {
+        "cluster-a": {"products_live": {"collection_name": "products"}}
+    }
+
+    federation.unregister_cluster("cluster-a")
+
+    assert federation.collection_aliases == {}
+
+
 def test_create_client_respects_configured_port(monkeypatch):
     captured = {}
 

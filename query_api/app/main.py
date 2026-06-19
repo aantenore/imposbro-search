@@ -127,14 +127,22 @@ async def reload_configuration():
 
     logger.info("Reloading configuration from state store...")
     try:
-        clusters_config, routing_rules, collection_schemas = state_manager.load_state()
+        (
+            clusters_config,
+            routing_rules,
+            collection_schemas,
+            collection_aliases,
+        ) = state_manager.load_state()
     except StateLoadError as exc:
         logger.error("Failed to reload configuration from state store: %s", exc)
         return
 
     if clusters_config is not None and routing_rules is not None:
         federation_service.reload_from_state(
-            clusters_config, routing_rules, collection_schemas
+            clusters_config,
+            routing_rules,
+            collection_schemas,
+            collection_aliases,
         )
         logger.info("Configuration reloaded successfully")
     else:
@@ -151,6 +159,7 @@ async def lifespan_test(app: FastAPI):
     mock_federation.clusters_config = {}  # GET /admin/federation/clusters iterates this
     mock_federation.routing_rules = {}
     mock_federation.collection_schemas = {}
+    mock_federation.collection_aliases = {}
     mock_federation.get_client_for_document = MagicMock(
         return_value=(MagicMock(), "default-data-cluster")
     )
@@ -193,11 +202,19 @@ async def lifespan(app: FastAPI):
     federation_service = FederationService()
 
     # Try to load existing state
-    clusters_config, routing_rules, collection_schemas = state_manager.load_state()
+    (
+        clusters_config,
+        routing_rules,
+        collection_schemas,
+        collection_aliases,
+    ) = state_manager.load_state()
 
     if clusters_config is not None and routing_rules is not None:
         federation_service.load_from_state(
-            clusters_config, routing_rules, collection_schemas
+            clusters_config,
+            routing_rules,
+            collection_schemas,
+            collection_aliases,
         )
     else:
         # Bootstrap with default data cluster
@@ -229,6 +246,7 @@ async def lifespan(app: FastAPI):
             federation_service.clusters_config,
             federation_service.routing_rules,
             federation_service.collection_schemas,
+            federation_service.collection_aliases,
         ):
             raise RuntimeError("Failed to persist default federation configuration.")
         logger.info("Default data clusters bootstrapped.")
