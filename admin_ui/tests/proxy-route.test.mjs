@@ -6,6 +6,82 @@ process.env.INTERNAL_QUERY_API_ADMIN_API_KEY = 'admin-secret';
 process.env.INTERNAL_QUERY_API_DATA_API_KEY = 'data-secret';
 
 const routeModule = await import('../app/api/[[...path]]/route.js');
+const loginRoute = await import('../app/api/auth/login/route.js');
+const callbackRoute = await import('../app/api/auth/callback/route.js');
+
+const AUTH_ENV = {
+  ADMIN_UI_OIDC_ENABLED: 'true',
+  ADMIN_UI_SESSION_SECRET: 'admin-ui-session-secret-32-bytes-minimum',
+  ADMIN_UI_OIDC_CLIENT_ID: 'imposbro-admin-ui',
+  ADMIN_UI_OIDC_CLIENT_SECRET: 'client-secret',
+  ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: 'https://idp.example.com/oauth2/authorize',
+  ADMIN_UI_OIDC_TOKEN_ENDPOINT: 'https://idp.example.com/oauth2/token',
+  ADMIN_UI_OIDC_SCOPES: 'openid profile email imposbro:admin imposbro:data',
+  ADMIN_UI_PROXY_TRUSTED_HEADER: '',
+  ADMIN_UI_PROXY_TRUSTED_VALUE: '',
+};
+
+function withEnv(overrides, run) {
+  const previous = {};
+  for (const key of Object.keys(overrides)) {
+    previous[key] = process.env[key];
+    process.env[key] = overrides[key];
+  }
+  return Promise.resolve()
+    .then(run)
+    .finally(() => {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    });
+}
+
+function cookiePair(response, name) {
+  const match = (response.headers.get('set-cookie') || '').match(new RegExp(`${name}=[^;,\\s]*`));
+  return match?.[0] || '';
+}
+
+function request(url, headers = {}) {
+  return {
+    method: 'GET',
+    url,
+    nextUrl: new URL(url),
+    headers: new Headers(headers),
+  };
+}
+
+async function createSessionCookie(accessToken = 'session-access-token') {
+  const login = await loginRoute.GET(request('http://admin.local/api/auth/login?return_to=/dashboard'));
+  const authorizeUrl = new URL(login.headers.get('location'));
+  const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: 1200,
+    scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const callback = await callbackRoute.GET(
+      request(
+        `http://admin.local/api/auth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`,
+        { cookie: txCookie }
+      )
+    );
+    return cookiePair(callback, 'imposbro_admin_session');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 test('proxies catch-all route params to the backend path', async () => {
   const originalFetch = globalThis.fetch;
@@ -159,5 +235,100 @@ test('production proxy requires trusted upstream identity before injecting serve
         process.env[key] = value;
       }
     }
+  }
+});
+
+test('injects OIDC session bearer before falling back to server API keys', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const originalFetch = globalThis.fetch;
+    const sessionCookie = await createSessionCookie('operator-token');
+    let proxied;
+
+    globalThis.fetch = async (url, options) => {
+      proxied = {
+        url,
+        headers: Object.fromEntries(options.headers.entries()),
+      };
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    try {
+      const response = await routeModule.GET(
+        {
+          method: 'GET',
+          nextUrl: new URL('http://admin.local/api/admin/stats'),
+          headers: new Headers({ cookie: sessionCookie }),
+        },
+        { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(proxied.url, 'http://backend.internal/admin/stats');
+      assert.equal(proxied.headers.authorization, 'Bearer operator-token');
+      assert.equal(proxied.headers['x-api-key'], undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('OIDC-enabled proxy returns login URL instead of API-key bypass without a session', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new Response('{}');
+    };
+
+    try {
+      const response = await routeModule.GET(
+        {
+          method: 'GET',
+          nextUrl: new URL('http://admin.local/api/admin/stats'),
+          headers: new Headers({ referer: 'http://admin.local/operations' }),
+        },
+        { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+      );
+      const payload = await response.json();
+
+      assert.equal(response.status, 401);
+      assert.equal(called, false);
+      assert.equal(payload.detail, 'Admin UI login required.');
+      assert.equal(
+        payload.login_url,
+        'http://admin.local/api/auth/login?return_to=%2Foperations'
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('catch-all proxy does not forward reserved auth paths', async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response('{}');
+  };
+
+  try {
+    const response = await routeModule.GET(
+      {
+        method: 'GET',
+        nextUrl: new URL('http://admin.local/api/auth/missing'),
+        headers: new Headers(),
+      },
+      { params: Promise.resolve({ path: ['auth', 'missing'] }) }
+    );
+
+    assert.equal(response.status, 404);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

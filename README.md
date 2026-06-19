@@ -335,6 +335,14 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional server-side key used by the Admin UI proxy; defaults to `ADMIN_API_KEY` when omitted |
 | `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
 | `ADMIN_UI_PROXY_TRUSTED_VALUE` | Optional expected value for `ADMIN_UI_PROXY_TRUSTED_HEADER` |
+| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login for the Admin UI; requires Query API `OIDC_ENABLED=true` so proxied bearer sessions can be validated |
+| `ADMIN_UI_SESSION_SECRET` | Secret used to seal Admin UI HttpOnly session cookies; required and at least 32 characters when Admin UI OIDC is enabled |
+| `ADMIN_UI_OIDC_CLIENT_ID` / `ADMIN_UI_OIDC_CLIENT_SECRET` | OIDC client credentials for the Admin UI login flow; client secret is optional for public-client PKCE providers |
+| `ADMIN_UI_OIDC_ISSUER` | OIDC issuer used for Discovery when explicit authorization/token endpoints are not set |
+| `ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT` / `ADMIN_UI_OIDC_TOKEN_ENDPOINT` | Optional explicit provider endpoints; use both when not relying on Discovery |
+| `ADMIN_UI_OIDC_SCOPES` | Space-separated scopes requested by the Admin UI login flow; defaults to `openid profile email imposbro:admin imposbro:data` |
+| `ADMIN_UI_OIDC_REDIRECT_URI` | Optional callback URL override; defaults to the request origin plus `/api/auth/callback` |
+| `ADMIN_UI_SESSION_TTL_SECONDS` | Max Admin UI session lifetime; also capped by the provider token `expires_in` |
 | `DATA_API_KEY` | Coarse legacy data-plane API key; grants both `/ingest/*` and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest; defaults to `DATA_API_KEY` when omitted |
@@ -350,7 +358,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress or gateway.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
 
 Example collection-scoped API key:
 
@@ -530,7 +538,7 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header.
+1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, and `ADMIN_UI_SESSION_SECRET`.
     The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, and security contexts. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
@@ -614,10 +622,11 @@ indexingService:
 * [x] Persisted collection aliases in control-plane backup/restore snapshots
 * [x] Helm HPA/KEDA autoscaling controls for Query API, Admin UI, and Kafka indexing workers
 * [x] Collection-scoped data-plane RBAC for API keys and OIDC claims
+* [x] Admin UI OIDC Authorization Code + PKCE login/session flow
 
 ### 🚧 Future
 
-* [ ] Admin UI OIDC login/session flow and richer admin role mapping
+* [ ] Richer admin role mapping for enterprise operator permissions
 
 ---
 

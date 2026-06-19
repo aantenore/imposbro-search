@@ -83,6 +83,27 @@ test('state export masks secrets by default', async () => {
   }
 });
 
+test('auth session checks the Admin UI session endpoint without auth redirects', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ enabled: true, authenticated: false });
+  };
+
+  try {
+    const result = await api.auth.session();
+
+    assert.deepEqual(result, { enabled: true, authenticated: false });
+    assert.equal(request.url, '/api/auth/session');
+    assert.equal(request.options.headers['Content-Type'], 'application/json');
+    assert.equal(request.options.redirectOnAuth, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('collection reconciliation posts to the admin endpoint', async () => {
   const originalFetch = globalThis.fetch;
   let request;
