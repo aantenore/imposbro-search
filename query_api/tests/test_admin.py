@@ -1,6 +1,7 @@
 """Tests for admin endpoints."""
 import json
 import os
+from unittest.mock import MagicMock
 
 os.environ.setdefault("TESTING", "1")
 
@@ -480,6 +481,33 @@ def test_reconcile_collections_returns_cluster_report(client):
     data = r.json()
     assert data["collections_desired"] == 1
     assert data["clusters"]["cluster-a"]["created"] == ["products"]
+
+
+def test_upsert_alias_uses_typesense_alias_collection_api(client):
+    """Alias upsert goes through Typesense's collection-level aliases API."""
+    fake_typesense = MagicMock()
+    client.app.state.federation_service.get_client_for_cluster.return_value = (
+        fake_typesense
+    )
+
+    r = client.put(
+        "/admin/aliases/products_live"
+        "?collection_name=products_v2&cluster_name=cluster-a"
+    )
+
+    assert r.status_code == 200
+    fake_typesense.aliases.upsert.assert_called_once_with(
+        "products_live",
+        {"collection_name": "products_v2"},
+    )
+    audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
+    assert audit_kwargs["action"] == "alias_upserted"
+    assert audit_kwargs["resource_type"] == "alias"
+    assert audit_kwargs["resource_id"] == "products_live"
+    assert audit_kwargs["details"] == {
+        "collection_name": "products_v2",
+        "cluster_name": "cluster-a",
+    }
 
 
 def test_set_routing_rules_omits_null_fanout_field(client):
