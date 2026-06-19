@@ -1,0 +1,59 @@
+{{- if .Values.queryApi.podDisruptionBudget.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-query-api
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: query-api
+spec:
+  {{- if .Values.queryApi.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.queryApi.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.queryApi.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: query-api
+---
+{{ end }}
+{{- if .Values.adminUi.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-admin-ui
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-ui
+spec:
+  {{- if .Values.adminUi.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.adminUi.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.adminUi.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin-ui
+---
+{{ end }}
+{{- if .Values.indexingService.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "imposbro-search.fullname" . }}-indexing-service
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+spec:
+  {{- if .Values.indexingService.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.indexingService.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.indexingService.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "imposbro-search.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: indexing-service
+{{ end }}

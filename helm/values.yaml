@@ -107,6 +107,10 @@ queryApi:
   # Required: set to an immutable image reference, never a mutable :latest tag.
   image: ""
   replicaCount: 1
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: ""
   port: 8000
   service:
     type: ClusterIP
@@ -154,6 +158,10 @@ adminUi:
   # Required: set to an immutable image reference, never a mutable :latest tag.
   image: ""
   replicaCount: 1
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: ""
   port: 3000
   service:
     type: ClusterIP # Expose through an authenticated Ingress or gateway in production
@@ -195,6 +203,10 @@ indexingService:
   # Required: set to an immutable image reference, never a mutable :latest tag.
   image: ""
   replicaCount: 1
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: ""
   metrics:
     enabled: true
     port: 9108
