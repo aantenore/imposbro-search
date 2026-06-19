@@ -8,7 +8,7 @@ SCALE_COMPOSE_FILE ?= docker-compose.yml:docker-compose.scale.yml
 SCALE_QUERY_API_REPLICAS ?= 3
 SCALE_INDEXING_REPLICAS ?= 3
 
-.PHONY: help test test-api test-ui lint build-ui compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
+.PHONY: help test test-api test-ui lint build-ui compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -26,6 +26,7 @@ help:
 	@echo "  make smoke-state    Run control-plane backup/restore smoke against an already running stack"
 	@echo "  make smoke-alias    Run collection alias switching smoke against an already running stack"
 	@echo "  make smoke-scale    Run multi-instance rolling smoke against an already running scaled stack"
+	@echo "  make benchmark-k8s  Run sustained ingest/search benchmark against Query API"
 	@echo "  make smoke-docker   Build/start Docker stack, run vector smoke, then stop it"
 	@echo "  make smoke-docker-outage Build/start Docker stack, run outage smoke, then stop it"
 	@echo "  make smoke-docker-load Build/start Docker stack, run load smoke, then stop it"
@@ -75,6 +76,9 @@ smoke-alias:
 
 smoke-scale:
 	$(PYTHON) scripts/smoke-scale.py
+
+benchmark-k8s:
+	$(PYTHON) scripts/benchmark-k8s.py
 
 smoke-docker:
 	@set -e; \
