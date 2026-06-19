@@ -95,6 +95,27 @@ For larger replica counts, use `maxUnavailable` if it maps better to the
 cluster maintenance policy. Do not enable a strict PDB on a single-replica
 workload unless blocking voluntary disruption is intentional.
 
+## Topology Spread
+
+Use per-workload topology spread constraints when multiple nodes or zones are
+available. Keep the selector aligned with the workload component label:
+
+```yaml
+queryApi:
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: query-api
+```
+
+Use `topology.kubernetes.io/zone` for zone-level balancing when the cluster has
+multiple zones. Start with `ScheduleAnyway` to prefer balance without blocking
+deployments in small clusters; move to `DoNotSchedule` only after verifying
+capacity and PDB behavior.
+
 ## Kubernetes Autoscaling
 
 Use HPA for request-serving workloads when CPU or memory is the best available signal:

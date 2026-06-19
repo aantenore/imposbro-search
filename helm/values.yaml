@@ -151,6 +151,7 @@ queryApi:
     periodSeconds: 20
     timeoutSeconds: 3
     failureThreshold: 3
+  topologySpreadConstraints: []
 
 # Configuration for the admin-ui service
 adminUi:
@@ -196,6 +197,7 @@ adminUi:
     periodSeconds: 20
     timeoutSeconds: 3
     failureThreshold: 3
+  topologySpreadConstraints: []
 
 # Configuration for the indexing-service (Kafka consumer)
 indexingService:
@@ -255,6 +257,7 @@ indexingService:
   # Workers do not expose an HTTP health endpoint by default.
   # Provide probes here if you wrap the worker with a process-level healthcheck.
   livenessProbe: {}
+  topologySpreadConstraints: []
 
 # Configuration for backend services (Kafka, Typesense, Redis)
 # For a production setup, these should come from external Helm charts (as dependencies)
