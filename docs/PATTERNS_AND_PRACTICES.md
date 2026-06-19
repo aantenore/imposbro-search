@@ -48,9 +48,10 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 ### 1.6 State and consistency
 
-- **State store**: Federation config, desired collection schemas, and routing rules are persisted in the internal Typesense cluster (`StateManager`). All admin changes are saved and then broadcast via Redis Pub/Sub so other API instances reload config.
+- **State store**: Federation config, desired collection schemas, per-cluster collection aliases, and routing rules are persisted in the internal Typesense cluster (`StateManager`). All admin changes are saved and then broadcast via Redis Pub/Sub so other API instances reload config.
 - **Config sync source id**: Query API instances publish Redis config-sync notifications with a source id and ignore their own messages. This prevents a writer from immediately reloading a stale state-store read while still allowing other replicas to converge. Override `CONFIG_SYNC_SOURCE_ID` only when a stable process identity is required.
 - **Schema reconciliation**: `FederationService.collection_schemas` is the desired schema state. Creating a collection records the schema, registering a new cluster backfills those schemas, and `POST /admin/collections/reconcile` idempotently recreates missing schemas after operational recovery.
+- **Alias portability**: `FederationService.collection_aliases` is the desired per-cluster alias state. Alias upsert/delete must persist this map, and state import applies aliases after schema reconciliation so disaster recovery can recreate live Typesense aliases.
 - **Control-plane backup/restore**: `GET /admin/state/export` masks cluster API keys by default; restore-ready exports require `include_secrets=true` and must be stored as secrets. `POST /admin/state/import` is dry-run by default and only mutates runtime/persisted state with `?apply=true`.
 - **Control-plane mutation safety**: Admin mutations that change runtime federation state must snapshot the in-memory state before mutating and roll it back if `StateManager.save_state()` fails. Do not leave one Query API replica running config that was not persisted.
 - **Smart Producer**: The Query API decides the target cluster for each document and puts it in the Kafka message; the indexing service only executes that decision. Routing logic lives in one place.

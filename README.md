@@ -402,6 +402,7 @@ curl -X POST "http://localhost:8000/admin/state/import?apply=true" \
 ```
 
 Exports without `include_secrets=true` are safe for inspection but intentionally cannot be applied because cluster API keys are masked.
+Snapshots include registered clusters, routing rules, desired collection schemas, and per-cluster collection aliases. Applying a snapshot reloads the control-plane state, reconciles desired schemas when aliases are present, and restores alias bindings.
 The Admin UI **Operations** page exposes the same flow with download, file upload, dry-run validation, and an explicit apply confirmation.
 
 ---
@@ -567,11 +568,11 @@ Kubernetes makes it easy to scale your stateless application services.
 * [x] Admin UI fan-out routing editor, search pagination, advanced search tuning fields, cluster health details, and audit filters
 * [x] OIDC/JWT bearer-token auth with configurable scope mapping, hashed OIDC audit actors, and optional tenant policy for search/ingest
 * [x] Horizontal scaling runbook and multi-instance Docker rolling smoke with Kafka lag budget
+* [x] Persisted collection aliases in control-plane backup/restore snapshots
 
 ### 🚧 Future
 
 * [ ] Richer per-collection RBAC and Admin UI OIDC login/session flow
-* [ ] Persist collection aliases in control-plane backup/restore snapshots
 
 ---
 
@@ -596,7 +597,7 @@ make smoke-docker-outage
 # Load smoke: concurrent ingest through Kafka and indexed search convergence
 make smoke-docker-load
 
-# DR smoke: control-plane export/import/reconcile against Docker stack
+# DR smoke: control-plane export/import/reconcile and alias restore against Docker stack
 make smoke-docker-state
 
 # Alias smoke: create versioned collections, switch alias, verify search follows it

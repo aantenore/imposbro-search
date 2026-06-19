@@ -5,6 +5,7 @@ This module manages the federation of multiple Typesense clusters,
 including cluster registration, client creation, and document routing.
 """
 
+import copy
 import logging
 import typesense
 from typing import Dict, List, Optional, Tuple
@@ -32,6 +33,7 @@ class FederationService:
         self.clients: Dict[str, typesense.Client] = {}
         self.routing_rules: Dict[str, Dict] = {}
         self.collection_schemas: Dict[str, Dict] = {}
+        self.collection_aliases: Dict[str, Dict[str, Dict[str, str]]] = {}
 
     @staticmethod
     def split_hosts(hosts: str) -> List[str]:
@@ -171,6 +173,7 @@ class FederationService:
 
         del self.clients[name]
         del self.clusters_config[name]
+        self.collection_aliases.pop(name, None)
         logger.info(f"Cluster '{name}' unregistered.")
 
     def backfill_collection_schemas(self, cluster_name: str) -> List[str]:
@@ -258,12 +261,14 @@ class FederationService:
 
     def get_client_for_cluster(self, cluster_name: str) -> Optional[typesense.Client]:
         """Return the Typesense client for a cluster (resolves 'default' to a real cluster)."""
-        name = (
-            self._resolve_default_cluster()
-            if cluster_name == "default"
-            else cluster_name
-        )
+        name = self.resolve_cluster_name(cluster_name)
         return self.clients.get(name) if name else None
+
+    def resolve_cluster_name(self, cluster_name: str) -> Optional[str]:
+        """Return the real registered cluster name for a public cluster identifier."""
+        if cluster_name == "default":
+            return self._resolve_default_cluster()
+        return cluster_name if cluster_name in self.clients else None
 
     def get_client_for_document(
         self, collection_name: str, document: Dict
@@ -442,6 +447,7 @@ class FederationService:
         clusters_config: Dict[str, Dict],
         routing_rules: Dict[str, Dict],
         collection_schemas: Optional[Dict[str, Dict]] = None,
+        collection_aliases: Optional[Dict[str, Dict[str, Dict[str, str]]]] = None,
     ) -> None:
         """
         Load federation configuration from saved state.
@@ -450,10 +456,12 @@ class FederationService:
             clusters_config: Saved cluster configurations
             routing_rules: Saved routing rules
             collection_schemas: Desired collection schemas to reconcile across clusters
+            collection_aliases: Desired collection aliases keyed by cluster name
         """
         self.clusters_config.update(clusters_config)
         self.routing_rules.update(routing_rules)
         self.collection_schemas.update(collection_schemas or {})
+        self.collection_aliases.update(copy.deepcopy(collection_aliases or {}))
 
         for name, config in clusters_config.items():
             port = config.get("port", 8108)
@@ -478,6 +486,7 @@ class FederationService:
         clusters_config: Dict[str, Dict],
         routing_rules: Dict[str, Dict],
         collection_schemas: Optional[Dict[str, Dict]] = None,
+        collection_aliases: Optional[Dict[str, Dict[str, Dict[str, str]]]] = None,
     ) -> None:
         """
         Reload federation configuration from saved state.
@@ -489,13 +498,20 @@ class FederationService:
             clusters_config: Fresh cluster configurations
             routing_rules: Fresh routing rules
             collection_schemas: Fresh desired collection schemas
+            collection_aliases: Fresh desired collection aliases
         """
         # Clear existing state
         self.clusters_config.clear()
         self.clients.clear()
         self.routing_rules.clear()
         self.collection_schemas.clear()
+        self.collection_aliases.clear()
 
         # Load fresh state
-        self.load_from_state(clusters_config, routing_rules, collection_schemas)
+        self.load_from_state(
+            clusters_config,
+            routing_rules,
+            collection_schemas,
+            collection_aliases,
+        )
         logger.info("Configuration reloaded from state store.")
