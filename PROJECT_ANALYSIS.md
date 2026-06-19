@@ -88,6 +88,7 @@ The market does validate the problem, but it also narrows the room for different
 26. **Config-sync self-notification safety**: Query API instances tag Redis config notifications with a source id and ignore their own messages, preventing immediate stale reloads after state mutations while preserving multi-replica convergence.
 27. **Operations audit visibility**: Admin UI now surfaces recent sanitized admin audit events on the Operations page so backup/restore and other control-plane mutations are visible without leaving the console.
 28. **Schema reconciliation workflow**: Admin UI Collections now exposes `POST /admin/collections/reconcile` with a per-cluster created/existing report for restore or cluster-recovery drills.
+29. **Collection aliases workflow**: Admin UI Collections now supports listing, creating/updating, and deleting per-cluster aliases for zero-downtime reindexing.
 
 ### Fixes
 
@@ -131,7 +132,7 @@ The market does validate the problem, but it also narrows the room for different
 ### Medium priority
 
 - ~~**Document fan-out**~~: **Done.** Routing rules support optional `clusters` (list) for replicating a document to multiple clusters; ingest publishes one message per target.
-- ~~**Collection aliases**~~: **Done.** Admin API: `PUT /admin/aliases/{alias_name}`, `GET /admin/aliases`, `DELETE /admin/aliases/{alias_name}` (per cluster) for zero-downtime reindexing.
+- ~~**Collection aliases**~~: **Done.** Admin API and Admin UI support `PUT /admin/aliases/{alias_name}`, `GET /admin/aliases`, `DELETE /admin/aliases/{alias_name}` (per cluster) for zero-downtime reindexing.
 - ~~**Cursor-based pagination**~~: **Done.** Search accepts optional `offset` and `limit` for cursor-style deep pagination; response includes `next_offset` when applicable.
 - ~~**Admin UI dashboard**~~: **Done.** Dashboard fetches `/admin/stats` and `/health` every 15s; shows status, clusters, collections, Redis/Kafka.
 - ~~**Hybrid/vector search gateway**~~: **Done.** JSON search endpoint supports long vector/hybrid params and cross-cluster merge can order vector-only results by `_vector_distance`.
