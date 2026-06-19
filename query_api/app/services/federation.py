@@ -34,6 +34,41 @@ class FederationService:
         self.collection_schemas: Dict[str, Dict] = {}
 
     @staticmethod
+    def split_hosts(hosts: str) -> List[str]:
+        """Return non-empty host entries from a comma-separated Typesense node list."""
+        return [host.strip() for host in hosts.split(",") if host.strip()]
+
+    @staticmethod
+    def create_single_node_client(host: str, port: str, api_key: str) -> typesense.Client:
+        """Create a Typesense client pinned to one node for readiness checks."""
+        return typesense.Client(
+            {
+                "nodes": [{"host": host, "port": str(port), "protocol": "http"}],
+                "api_key": api_key,
+                "connection_timeout_seconds": 5,
+            }
+        )
+
+    @staticmethod
+    def node_statuses(hosts: str, port: str, api_key: str) -> List[Dict[str, str]]:
+        """Check every declared Typesense node by listing collections."""
+        statuses: List[Dict[str, str]] = []
+        for host in FederationService.split_hosts(hosts):
+            try:
+                client = FederationService.create_single_node_client(host, port, api_key)
+                client.collections.retrieve()
+                statuses.append({"host": host, "status": "ok"})
+            except Exception as exc:
+                statuses.append(
+                    {
+                        "host": host,
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+        return statuses
+
+    @staticmethod
     def create_client_config(name: str, nodes_str: str, api_key: str) -> Dict:
         """
         Create a cluster configuration dictionary.
@@ -59,9 +94,10 @@ class FederationService:
         Returns:
             Configured Typesense client
         """
+        port = str(config.get("port", 8108))
         nodes = [
-            {"host": h.strip(), "port": "8108", "protocol": "http"}
-            for h in config["host"].split(",")
+            {"host": h, "port": port, "protocol": "http"}
+            for h in FederationService.split_hosts(config["host"])
         ]
         return typesense.Client(
             {
@@ -162,6 +198,17 @@ class FederationService:
                     cluster_name,
                 )
         return created
+
+    def cluster_node_statuses(self, cluster_name: str) -> List[Dict[str, str]]:
+        """Return readiness status for every node configured in a registered cluster."""
+        config = self.clusters_config.get(cluster_name)
+        if not config:
+            raise ValueError(f"Cluster '{cluster_name}' not found.")
+        return self.node_statuses(
+            config["host"],
+            str(config.get("port", 8108)),
+            config["api_key"],
+        )
 
     def reconcile_collection_schemas(self) -> Dict[str, Dict[str, List[str]]]:
         """
@@ -410,8 +457,8 @@ class FederationService:
             if isinstance(port, int):
                 port = str(port)
             nodes = [
-                {"host": h.strip(), "port": port, "protocol": "http"}
-                for h in config["host"].split(",")
+                {"host": h, "port": port, "protocol": "http"}
+                for h in self.split_hosts(config["host"])
             ]
             self.clients[name] = typesense.Client(
                 {

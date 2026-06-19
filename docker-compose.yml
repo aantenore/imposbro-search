@@ -33,6 +33,9 @@ services:
     volumes:
       - typesense_data_state_1:/data
       - ./typesense-nodes-internal:/app/typesense-nodes-internal
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_STATE_1_IP:-172.28.0.11}
   typesense-state-2:
     image: typesense/typesense:0.25.2
     environment:
@@ -43,6 +46,9 @@ services:
     volumes:
       - typesense_data_state_2:/data
       - ./typesense-nodes-internal:/app/typesense-nodes-internal
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_STATE_2_IP:-172.28.0.12}
   typesense-state-3:
     image: typesense/typesense:0.25.2
     environment:
@@ -53,6 +59,9 @@ services:
     volumes:
       - typesense_data_state_3:/data
       - ./typesense-nodes-internal:/app/typesense-nodes-internal
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_STATE_3_IP:-172.28.0.13}
 
   # --- Default Federated Cluster 1 for User Data ---
   typesense-data-1:
@@ -65,6 +74,9 @@ services:
     volumes:
       - typesense_data_default_1:/data
       - ./typesense-nodes-data:/app/typesense-nodes-data
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_DATA_1_IP:-172.28.0.21}
   typesense-data-2:
     image: typesense/typesense:0.25.2
     environment:
@@ -75,6 +87,9 @@ services:
     volumes:
       - typesense_data_default_2:/data
       - ./typesense-nodes-data:/app/typesense-nodes-data
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_DATA_2_IP:-172.28.0.22}
   typesense-data-3:
     image: typesense/typesense:0.25.2
     environment:
@@ -85,6 +100,9 @@ services:
     volumes:
       - typesense_data_default_3:/data
       - ./typesense-nodes-data:/app/typesense-nodes-data
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_DATA_3_IP:-172.28.0.23}
 
   # --- NEW: Second Federated Cluster for User Data ---
   typesense-data2-1:
@@ -97,6 +115,9 @@ services:
     volumes:
       - typesense_data_default2_1:/data
       - ./typesense-nodes-data2:/app/typesense-nodes-data2
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_DATA2_1_IP:-172.28.0.31}
   typesense-data2-2:
     image: typesense/typesense:0.25.2
     environment:
@@ -107,6 +128,9 @@ services:
     volumes:
       - typesense_data_default2_2:/data
       - ./typesense-nodes-data2:/app/typesense-nodes-data2
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_DATA2_2_IP:-172.28.0.32}
   typesense-data2-3:
     image: typesense/typesense:0.25.2
     environment:
@@ -117,6 +141,9 @@ services:
     volumes:
       - typesense_data_default2_3:/data
       - ./typesense-nodes-data2:/app/typesense-nodes-data2
+    networks:
+      default:
+        ipv4_address: ${TYPESENSE_DATA2_3_IP:-172.28.0.33}
 
   query_api:
     build: ./query_api
@@ -187,3 +214,9 @@ volumes:
   typesense_data_default2_1:
   typesense_data_default2_2:
   typesense_data_default2_3:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-172.28.0.0/16}
