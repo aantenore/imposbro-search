@@ -69,6 +69,32 @@ kubectl rollout status deployment imposbro-release-imposbro-search-indexing-serv
 
 Keep indexing replicas at or below useful Kafka partition parallelism. Extra replicas can help failover, but they will sit idle if there are fewer assigned partitions.
 
+## Disruption Budgets
+
+Enable PodDisruptionBudget for replicated production workloads so voluntary
+disruptions such as node drains do not evict every available replica at once:
+
+```yaml
+queryApi:
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+adminUi:
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+indexingService:
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+```
+
+For larger replica counts, use `maxUnavailable` if it maps better to the
+cluster maintenance policy. Do not enable a strict PDB on a single-replica
+workload unless blocking voluntary disruption is intentional.
+
 ## Kubernetes Autoscaling
 
 Use HPA for request-serving workloads when CPU or memory is the best available signal:

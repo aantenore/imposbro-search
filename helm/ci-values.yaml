@@ -1,6 +1,9 @@
 # Values used only to validate Helm rendering in CI/local release gates.
 queryApi:
   image: registry.example.com/imposbro-query-api:1.0.0
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   autoscaling:
     enabled: true
     minReplicas: 2
@@ -9,6 +12,9 @@ queryApi:
 
 adminUi:
   image: registry.example.com/imposbro-admin-ui:1.0.0
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   autoscaling:
     enabled: true
     minReplicas: 2
@@ -17,6 +23,9 @@ adminUi:
 
 indexingService:
   image: registry.example.com/imposbro-indexing-service:1.0.0
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   keda:
     enabled: true
     minReplicaCount: 1

@@ -81,6 +81,8 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 - `CORS_ORIGINS` set to explicit browser origins.
 - HPA enabled for Query API/Admin UI when CPU or memory tracks request load.
 - KEDA enabled for indexing workers when Kafka lag is the scaling signal.
+- PodDisruptionBudget enabled for replicated workloads after choosing
+  `minAvailable` or `maxUnavailable` for the environment.
 - NetworkPolicy enabled after ingress and monitoring selectors are known.
 - `monitoring.serviceMonitor.enabled=true` and
   `monitoring.prometheusRule.enabled=true` when Prometheus Operator is used.
