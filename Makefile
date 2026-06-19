@@ -3,7 +3,7 @@
 PYTHON ?= python3
 HELM ?= $(shell command -v helm 2>/dev/null || printf "%s/.local/bin/helm" "$$HOME")
 
-.PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-docker ci
+.PHONY: help test test-api test-ui lint build-ui compose-config helm smoke-vector smoke-outage smoke-docker smoke-docker-outage ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -15,7 +15,9 @@ help:
 	@echo "  make compose-config Validate docker compose config"
 	@echo "  make helm           Lint and render Helm chart"
 	@echo "  make smoke-vector   Run vector smoke against an already running stack"
+	@echo "  make smoke-outage   Run partial-outage smoke against an already running stack"
 	@echo "  make smoke-docker   Build/start Docker stack, run vector smoke, then stop it"
+	@echo "  make smoke-docker-outage Build/start Docker stack, run outage smoke, then stop it"
 	@echo "  make ci             Run local release gate"
 
 test: test-api test-ui
@@ -42,10 +44,19 @@ helm:
 smoke-vector:
 	$(PYTHON) scripts/smoke-vector-search.py
 
+smoke-outage:
+	$(PYTHON) scripts/smoke-partial-outage.py
+
 smoke-docker:
 	@set -e; \
 	docker compose up -d --build query_api indexing_service admin_ui; \
 	trap 'docker compose down' EXIT; \
 	$(PYTHON) scripts/smoke-vector-search.py
+
+smoke-docker-outage:
+	@set -e; \
+	docker compose up -d --build query_api indexing_service admin_ui; \
+	trap 'docker compose down' EXIT; \
+	$(PYTHON) scripts/smoke-partial-outage.py
 
 ci: test lint build-ui compose-config helm
