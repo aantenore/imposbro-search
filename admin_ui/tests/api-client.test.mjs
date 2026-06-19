@@ -102,6 +102,43 @@ test('collection reconciliation posts to the admin endpoint', async () => {
   }
 });
 
+test('alias client lists, upserts, and deletes with encoded names', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return jsonResponse({ status: 'ok', aliases: [] });
+  };
+
+  try {
+    await api.aliases.list({ clusterName: 'cluster eu' });
+    await api.aliases.upsert({
+      aliasName: 'products live',
+      collectionName: 'products_v2',
+      clusterName: 'cluster eu',
+    });
+    await api.aliases.delete({
+      aliasName: 'products live',
+      clusterName: 'cluster eu',
+    });
+
+    assert.equal(requests[0].url, '/api/admin/aliases?cluster_name=cluster+eu');
+    assert.equal(
+      requests[1].url,
+      '/api/admin/aliases/products%20live?collection_name=products_v2&cluster_name=cluster+eu'
+    );
+    assert.equal(requests[1].options.method, 'PUT');
+    assert.equal(
+      requests[2].url,
+      '/api/admin/aliases/products%20live?cluster_name=cluster+eu'
+    );
+    assert.equal(requests[2].options.method, 'DELETE');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('state export can explicitly include restore secrets', async () => {
   const originalFetch = globalThis.fetch;
   let request;

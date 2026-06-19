@@ -128,6 +128,40 @@ export const api = {
         }),
     },
 
+    // ===== Collection Aliases =====
+    aliases: {
+        /**
+         * List aliases on a cluster
+         */
+        list: ({ clusterName = 'default' } = {}) => {
+            const params = new URLSearchParams({ cluster_name: clusterName });
+            return request(`/admin/aliases?${params.toString()}`);
+        },
+
+        /**
+         * Create or update an alias on a cluster
+         */
+        upsert: ({ aliasName, collectionName, clusterName = 'default' }) => {
+            const params = new URLSearchParams({
+                collection_name: collectionName,
+                cluster_name: clusterName,
+            });
+            return request(`/admin/aliases/${encodeSegment(aliasName)}?${params.toString()}`, {
+                method: 'PUT',
+            });
+        },
+
+        /**
+         * Delete an alias from a cluster
+         */
+        delete: ({ aliasName, clusterName = 'default' }) => {
+            const params = new URLSearchParams({ cluster_name: clusterName });
+            return request(`/admin/aliases/${encodeSegment(aliasName)}?${params.toString()}`, {
+                method: 'DELETE',
+            });
+        },
+    },
+
     // ===== Stats & Health =====
     stats: {
         /** Dashboard metrics summary */
