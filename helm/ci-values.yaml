@@ -25,6 +25,25 @@ indexingService:
       lagThreshold: "25"
       ensureEvenDistributionOfPartitions: "true"
 
+networkPolicy:
+  enabled: true
+  ingressController:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: ingress-nginx
+  prometheus:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
+
 config:
   useSecret: true
   KAFKA_BROKER_URL: kafka:9092
