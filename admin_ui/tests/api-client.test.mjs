@@ -83,6 +83,25 @@ test('state export masks secrets by default', async () => {
   }
 });
 
+test('collection reconciliation posts to the admin endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ status: 'ok', clusters: {} });
+  };
+
+  try {
+    await api.collections.reconcile();
+
+    assert.equal(request.url, '/api/admin/collections/reconcile');
+    assert.equal(request.options.method, 'POST');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('state export can explicitly include restore secrets', async () => {
   const originalFetch = globalThis.fetch;
   let request;
