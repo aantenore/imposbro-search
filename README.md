@@ -312,6 +312,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `INDEXING_METRICS_ENABLED` | Enables the indexing worker Prometheus metrics server |
 | `INDEXING_METRICS_PORT` | Port used by the indexing worker metrics server (default `9108`) |
 | `REDIS_URL` | Redis connection string |
+| `CONFIG_SYNC_SOURCE_ID` | Optional source id for Redis config sync; defaults to `hostname:pid` so a Query API instance ignores its own notifications while other replicas reload |
 | `INTERNAL_STATE_NODES` | Comma-separated internal Typesense nodes |
 | `INTERNAL_STATE_API_KEY` | API key for internal cluster |
 | `DEFAULT_DATA_CLUSTER_NODES` | Default federated cluster nodes |
@@ -553,10 +554,14 @@ make smoke-docker-outage
 # Load smoke: concurrent ingest through Kafka and indexed search convergence
 make smoke-docker-load
 
+# DR smoke: control-plane export/import/reconcile against Docker stack
+make smoke-docker-state
+
 # Against an already running stack
 make smoke-vector
 make smoke-outage
 make smoke-load
+make smoke-state
 ```
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
