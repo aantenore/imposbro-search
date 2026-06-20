@@ -43,6 +43,10 @@ class MissingTargetClusterError(RuntimeError):
     """Raised when a message targets a cluster the consumer has not loaded."""
 
 
+class InvalidKafkaMessageError(ValueError):
+    """Raised when a Kafka record cannot be decoded into an indexing payload."""
+
+
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
     global shutdown_requested
@@ -81,7 +85,6 @@ def create_kafka_consumer(kafka_broker_url: str, topic_prefix: str) -> KafkaCons
         bootstrap_servers=kafka_broker_url,
         auto_offset_reset="earliest",
         group_id="imposbro_federated_indexing_group",
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         consumer_timeout_ms=1000,  # Allow periodic shutdown checks
         enable_auto_commit=False,
         metadata_max_age_ms=metadata_max_age_ms,
@@ -95,6 +98,45 @@ def create_kafka_consumer(kafka_broker_url: str, topic_prefix: str) -> KafkaCons
         metadata_max_age_ms,
     )
     return consumer
+
+
+def decode_kafka_value(raw_value) -> Dict:
+    """Decode raw Kafka record bytes into the JSON object expected by the worker."""
+    try:
+        if isinstance(raw_value, bytes):
+            decoded = raw_value.decode("utf-8")
+        elif isinstance(raw_value, str):
+            decoded = raw_value
+        elif isinstance(raw_value, dict):
+            return raw_value
+        else:
+            raise TypeError(f"unsupported payload type {type(raw_value).__name__}")
+        message = json.loads(decoded)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+        raise InvalidKafkaMessageError(f"Invalid Kafka JSON payload: {exc}") from exc
+
+    if not isinstance(message, dict):
+        raise InvalidKafkaMessageError("Invalid Kafka JSON payload: expected object")
+    return message
+
+
+def dlq_safe_message(raw_value):
+    """Return a JSON-serializable representation of a raw poison Kafka payload."""
+    if isinstance(raw_value, bytes):
+        return raw_value.decode("utf-8", errors="replace")
+    return raw_value
+
+
+def commit_message_offset(consumer, message) -> None:
+    """Commit the offset immediately after successful processing or quarantine."""
+    consumer.commit(
+        {
+            TopicPartition(message.topic, message.partition): OffsetAndMetadata(
+                message.offset + 1,
+                None,
+            )
+        }
+    )
 
 
 def build_topic_subscription_pattern(topic_prefix: str) -> str:
@@ -176,8 +218,37 @@ def run_consumer(typesense_clients: Dict, refresh_clients=None) -> None:
                         break
 
                     try:
+                        decoded_message = decode_kafka_value(message.value)
+                    except InvalidKafkaMessageError as e:
+                        logger.error(
+                            "Invalid Kafka payload from %s partition=%s offset=%s: %s",
+                            message.topic,
+                            message.partition,
+                            message.offset,
+                            e,
+                        )
+                        if not dlq_producer:
+                            break
+                        try:
+                            publish_to_dlq(
+                                dlq_producer,
+                                topic_prefix=topic_prefix,
+                                source_topic=message.topic,
+                                message=dlq_safe_message(message.value),
+                                error=e,
+                            )
+                            commit_message_offset(consumer, message)
+                        except Exception as dlq_error:
+                            logger.error(
+                                "Failed to quarantine invalid Kafka payload: %s",
+                                dlq_error,
+                            )
+                            break
+                        continue
+
+                    try:
                         process_message_with_retries(
-                            message.value,
+                            decoded_message,
                             typesense_clients,
                             refresh_clients=refresh_clients,
                             dlq_producer=dlq_producer,
@@ -185,18 +256,12 @@ def run_consumer(typesense_clients: Dict, refresh_clients=None) -> None:
                             topic_prefix=topic_prefix,
                             max_attempts=max_processing_attempts,
                         )
-                        consumer.commit(
-                            {
-                                TopicPartition(message.topic, message.partition): OffsetAndMetadata(
-                                    message.offset + 1,
-                                    None,
-                                )
-                            }
-                        )
+                        commit_message_offset(consumer, message)
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
-                        # Do not commit failed offsets. Leave the message available
-                        # for retry; add a DLQ before enabling poison-message skipping.
+                        # Do not commit failed offsets unless they have been
+                        # published to the DLQ. Leaving the offset uncommitted
+                        # lets Kafka retry transient infrastructure failures.
                         break
 
         except Exception as e:
@@ -281,7 +346,7 @@ def publish_to_dlq(
     *,
     topic_prefix: str,
     source_topic: str,
-    message: Dict,
+    message,
     error: Exception,
 ) -> None:
     """Publish a failed indexing message to a dead-letter topic."""
