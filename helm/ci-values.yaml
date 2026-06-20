@@ -124,3 +124,4 @@ config:
   INTERNAL_QUERY_API_ADMIN_API_KEY: test-admin-key
   DATA_API_KEY: test-data-key
   ADMIN_UI_PROXY_TRUSTED_HEADER: x-authenticated-user
+  ADMIN_UI_PROXY_TRUSTED_VALUE: operator

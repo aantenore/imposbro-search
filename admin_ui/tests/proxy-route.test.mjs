@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 process.env.INTERNAL_QUERY_API_URL = 'http://backend.internal';
 process.env.INTERNAL_QUERY_API_ADMIN_API_KEY = 'admin-secret';
@@ -16,9 +17,19 @@ const AUTH_ENV = {
   ADMIN_UI_OIDC_CLIENT_SECRET: 'client-secret',
   ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: 'https://idp.example.com/oauth2/authorize',
   ADMIN_UI_OIDC_TOKEN_ENDPOINT: 'https://idp.example.com/oauth2/token',
+  ADMIN_UI_OIDC_JWKS_URL: 'https://idp.example.com/.well-known/jwks.json',
   ADMIN_UI_OIDC_SCOPES: 'openid profile email imposbro:admin imposbro:data',
   ADMIN_UI_PROXY_TRUSTED_HEADER: '',
   ADMIN_UI_PROXY_TRUSTED_VALUE: '',
+};
+
+const TEST_KEY_ID = 'admin-ui-proxy-test-key';
+const { publicKey: TEST_PUBLIC_KEY, privateKey: TEST_PRIVATE_KEY } = await generateKeyPair('RS256');
+const TEST_PUBLIC_JWK = {
+  ...(await exportJWK(TEST_PUBLIC_KEY)),
+  alg: 'RS256',
+  kid: TEST_KEY_ID,
+  use: 'sig',
 };
 
 function withEnv(overrides, run) {
@@ -54,27 +65,27 @@ function request(url, headers = {}) {
   };
 }
 
-function base64UrlJson(value) {
-  return Buffer.from(JSON.stringify(value))
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-function testIdToken(nonce) {
+async function testIdToken(nonce) {
   const now = Math.floor(Date.now() / 1000);
-  return [
-    base64UrlJson({ alg: 'none', typ: 'JWT' }),
-    base64UrlJson({
+  return new SignJWT({
       aud: AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID,
       exp: now + 1200,
       iat: now,
       nonce,
       sub: 'operator-1',
-    }),
-    'signature',
-  ].join('.');
+    })
+    .setProtectedHeader({ alg: 'RS256', kid: TEST_KEY_ID, typ: 'JWT' })
+    .sign(TEST_PRIVATE_KEY);
+}
+
+async function tokenOrJwksResponse(url, tokenResponse) {
+  if (String(url) === AUTH_ENV.ADMIN_UI_OIDC_JWKS_URL) {
+    return new Response(JSON.stringify({ keys: [TEST_PUBLIC_JWK] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return tokenResponse();
 }
 
 async function createSessionCookie(accessToken = 'session-access-token') {
@@ -83,16 +94,16 @@ async function createSessionCookie(accessToken = 'session-access-token') {
   const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
   const originalFetch = globalThis.fetch;
 
-  globalThis.fetch = async () => new Response(JSON.stringify({
+  globalThis.fetch = async (url) => tokenOrJwksResponse(url, async () => new Response(JSON.stringify({
     access_token: accessToken,
-    id_token: testIdToken(authorizeUrl.searchParams.get('nonce')),
+    id_token: await testIdToken(authorizeUrl.searchParams.get('nonce')),
     token_type: 'Bearer',
     expires_in: 1200,
     scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
-  });
+  }));
 
   try {
     const callback = await callbackRoute.GET(
@@ -352,6 +363,43 @@ test('production proxy requires trusted upstream identity before injecting serve
       }
     }
   }
+});
+
+test('production proxy rejects spoofed trusted header without configured trusted value', async () => {
+  await withEnv({
+    ADMIN_UI_OIDC_ENABLED: 'false',
+    ADMIN_UI_PROXY_TRUSTED_HEADER: 'x-authenticated-user',
+    ADMIN_UI_PROXY_TRUSTED_VALUE: '',
+    INTERNAL_QUERY_API_ADMIN_API_KEY: 'admin-secret',
+    NODE_ENV: 'production',
+  }, async () => {
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => {
+      called = true;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    try {
+      const response = await routeModule.GET(
+        {
+          method: 'GET',
+          nextUrl: new URL('http://admin.local/api/admin/stats'),
+          headers: new Headers({ 'x-authenticated-user': 'attacker-controlled' }),
+        },
+        { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+      );
+
+      assert.equal(response.status, 401);
+      assert.equal(called, false);
+      assert.match((await response.json()).detail, /trusted upstream identity/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 test('injects OIDC session bearer before falling back to server API keys', async () => {
