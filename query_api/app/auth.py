@@ -366,6 +366,28 @@ def _document_value(document: Dict[str, Any], path: str) -> Any:
     return value
 
 
+def _set_document_value(document: Dict[str, Any], path: str, value: Any) -> Dict[str, Any]:
+    """Return a copy of a document with a possibly nested dot-path value set."""
+    parts = path.split(".")
+    updated = dict(document)
+    current = updated
+    for part in parts[:-1]:
+        existing = current.get(part)
+        if existing is None:
+            next_value: Dict[str, Any] = {}
+        elif isinstance(existing, dict):
+            next_value = dict(existing)
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail="Document tenant path is not allowed",
+            )
+        current[part] = next_value
+        current = next_value
+    current[parts[-1]] = value
+    return updated
+
+
 def _value_matches_any_tenant(value: Any, tenants: List[str]) -> bool:
     if isinstance(value, (list, tuple, set)):
         return any(str(item) in tenants for item in value)
@@ -425,18 +447,16 @@ def authorize_ingest_document(
         return document
 
     field = _tenant_field(policy)
-    current_value = document.get(field)
+    current_value = _document_value(document, field)
     if current_value in (None, "") and mode == "inject":
         if len(tenants) != 1:
             raise HTTPException(
                 status_code=403,
                 detail="Cannot inject tenant when token has multiple tenants",
             )
-        document = dict(document)
-        document[field] = tenants[0]
-        return document
+        return _set_document_value(document, field, tenants[0])
 
-    if str(current_value) not in tenants:
+    if not _value_matches_any_tenant(current_value, tenants):
         raise HTTPException(status_code=403, detail="Document tenant is not allowed")
     return document
 
