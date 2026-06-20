@@ -682,7 +682,7 @@ indexingService:
 * [x] Async data-plane document deletion with tenant-safe filtered delete support
 * [x] Tenant-safe data-plane document read/export by ID
 * [x] Rate-limit Prometheus metrics, Grafana panels, and PrometheusRule alerts for blocked traffic and backend failures
-* [x] Kubernetes ingest/search benchmark harness with JSON/Markdown output and configurable SLO thresholds
+* [x] Kubernetes ingest/search benchmark harness with JSON/Markdown output, publishable run metadata, and configurable SLO thresholds
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
 * [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting
 * [x] Opt-in Helm PodDisruptionBudget for Query API, Admin UI, and indexing workers
@@ -728,7 +728,7 @@ make smoke-docker-alias
 # Scale smoke: multi-replica Query API + indexing workers, rolling restarts, lag budget
 make smoke-docker-scale
 
-# Kubernetes or port-forward benchmark: sustained ingest/search with optional SLOs
+# Kubernetes or port-forward benchmark: sustained ingest/search with optional SLOs and run metadata
 make benchmark-k8s
 
 # Local Docker benchmark: start stack, run sustained ingest/search, save JSON artifact
@@ -745,7 +745,7 @@ make smoke-scale
 
 Both `make test` and `npm run test` run the Query API and indexing service pytest suites plus Admin UI unit tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for full test and dev setup.
 
-`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm chart validation scenarios. Make targets use `.env` when present and fall back to `.env.example` for reproducible config validation in clean checkouts. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, async document deletion, and the Admin UI proxy. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
+`make ci` runs the local release gate: API/worker tests, Admin UI tests, lint, production build, Docker Compose validation, and Helm chart validation scenarios. Make targets use `.env` when present and fall back to `.env.example` for reproducible config validation in clean checkouts. `make smoke-docker` boots the Docker stack and verifies Kafka ingest, indexing, federated vector search, async document deletion, and the Admin UI proxy. Benchmark JSON/Markdown reports include run metadata when `BENCHMARK_ENVIRONMENT`, `BENCHMARK_RELEASE`, `BENCHMARK_CLUSTER_SHAPE`, `BENCHMARK_HELM_VALUES_REF`, and `BENCHMARK_IMAGE_SET` are set. A hosted GitHub Actions gate is still recommended, but creating workflow files requires a GitHub token with the `workflow` scope.
 
 ---
 
