@@ -5,6 +5,7 @@ const loginRoute = await import('../app/api/auth/login/route.js');
 const callbackRoute = await import('../app/api/auth/callback/route.js');
 const logoutRoute = await import('../app/api/auth/logout/route.js');
 const sessionRoute = await import('../app/api/auth/session/route.js');
+const { sanitizeReturnTo } = await import('../app/lib/adminAuth.js');
 
 const AUTH_ENV = {
   ADMIN_UI_OIDC_ENABLED: 'true',
@@ -57,7 +58,11 @@ function redirectLocation(response) {
   return response.headers.get('location');
 }
 
-async function createSessionCookie({ returnTo = '/operations', accessToken = 'access-token' } = {}) {
+async function createSessionCookie({
+  returnTo = '/operations',
+  expectedReturnTo = returnTo,
+  accessToken = 'access-token',
+} = {}) {
   const login = await loginRoute.GET(
     request(`http://admin.local/api/auth/login?return_to=${encodeURIComponent(returnTo)}`)
   );
@@ -94,7 +99,7 @@ async function createSessionCookie({ returnTo = '/operations', accessToken = 'ac
       )
     );
     assert.equal(callback.status, 302);
-    assert.equal(redirectLocation(callback), returnTo);
+    assert.equal(redirectLocation(callback), expectedReturnTo);
     const sessionCookie = cookiePair(callback, 'imposbro_admin_session');
     assert.ok(sessionCookie, 'session cookie is set');
     return sessionCookie;
@@ -131,6 +136,32 @@ test('login route redirects to provider with PKCE, state, and a sealed transacti
     assert.match(setCookieHeader(response), /HttpOnly/);
     assert.match(setCookieHeader(response), /SameSite=Lax/);
     assert.match(setCookieHeader(response), /Max-Age=600/);
+  });
+});
+
+test('login and logout sanitize unsafe return targets', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    assert.equal(sanitizeReturnTo('/safe/path?tab=1'), '/safe/path?tab=1');
+    assert.equal(sanitizeReturnTo('/\nadmin'), '/dashboard');
+    assert.equal(sanitizeReturnTo('/\\evil.com'), '/dashboard');
+
+    const login = await loginRoute.GET(
+      request(`http://admin.local/api/auth/login?return_to=${encodeURIComponent('/\\evil.com')}`)
+    );
+    const loginLocation = new URL(redirectLocation(login));
+    assert.ok(loginLocation.searchParams.get('state'));
+
+    const sessionCookie = await createSessionCookie({
+      returnTo: '/\\evil.com',
+      expectedReturnTo: '/dashboard',
+    });
+    assert.ok(sessionCookie, 'unsafe return target falls back and still creates a session');
+
+    const logout = await logoutRoute.GET(
+      request(`http://admin.local/api/auth/logout?return_to=${encodeURIComponent('/\\evil.com')}`)
+    );
+    assert.equal(logout.status, 302);
+    assert.equal(redirectLocation(logout), '/dashboard');
   });
 });
 

@@ -163,7 +163,13 @@ export function sanitizeReturnTo(value, fallback = DEFAULT_RETURN_TO) {
   if (!value || typeof value !== 'string') {
     return fallback;
   }
-  if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/api/auth')) {
+  if (
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    value.startsWith('/api/auth') ||
+    value.includes('\\') ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
     return fallback;
   }
   return value;
