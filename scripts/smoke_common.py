@@ -233,6 +233,23 @@ def delete_document(
     )
 
 
+def get_document(
+    query_api_url: str,
+    collection: str,
+    document_id: str,
+    search_headers,
+    *,
+    ok_statuses=None,
+):
+    return request(
+        "GET",
+        f"{query_api_url}/documents/{collection}/{document_id}",
+        headers=search_headers,
+        timeout=30,
+        ok_statuses=ok_statuses,
+    )
+
+
 def ingest_vector_documents(query_api_url: str, collection: str, ingest_headers):
     results = []
     for doc in VECTOR_DOCS:
@@ -329,3 +346,30 @@ def wait_for_missing_id(
             last_result = exc
         time.sleep(1)
     raise RuntimeError(f"Deleted document remained searchable: {last_result!r}")
+
+
+def wait_for_document_not_found(
+    query_api_url: str,
+    collection: str,
+    document_id: str,
+    headers,
+    timeout_seconds: int,
+):
+    deadline = time.monotonic() + timeout_seconds
+    last_result = None
+    while time.monotonic() < deadline:
+        try:
+            status, payload = get_document(
+                query_api_url,
+                collection,
+                document_id,
+                headers,
+                ok_statuses={200, 404},
+            )
+            last_result = {"status": status, "payload": payload}
+            if status == 404:
+                return payload
+        except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
+            last_result = exc
+        time.sleep(1)
+    raise RuntimeError(f"Document lookup still found {document_id}: {last_result!r}")

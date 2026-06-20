@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import jwt
+import typesense
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -257,6 +258,30 @@ class _CaptureClient:
         self.collections = _CaptureCollections(self.documents)
 
 
+class _RetrieveDocumentRef:
+    def __init__(self, document=None):
+        self.document = document
+
+    def retrieve(self):
+        if self.document is None:
+            raise typesense.exceptions.ObjectNotFound("not found")
+        return self.document
+
+
+class _RetrieveDocuments:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def __getitem__(self, document_id):
+        return _RetrieveDocumentRef(self.documents.get(document_id))
+
+
+class _RetrieveClient:
+    def __init__(self, documents):
+        self.documents = _RetrieveDocuments(documents)
+        self.collections = _CaptureCollections(self.documents)
+
+
 def test_oidc_tenant_policy_adds_search_filter(client, monkeypatch):
     _configure_oidc(monkeypatch)
     from settings import settings
@@ -327,6 +352,80 @@ def test_oidc_tenant_policy_adds_delete_filter(client, monkeypatch):
     assert r.status_code == 200
     published = client.app.state.kafka_service.publish_delete_document.call_args.kwargs
     assert published["filter_by"] == "(id:=doc-1) && tenant_id:=tenant-a"
+
+
+def test_oidc_tenant_policy_allows_matching_document_read(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    from settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "AUTHZ_COLLECTION_POLICIES",
+        json.dumps({
+            "collections": {
+                "products": {
+                    "mode": "required",
+                    "tenant_field": "tenant_id",
+                    "tenant_claim": "tenant_id",
+                }
+            }
+        }),
+    )
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        (
+            "cluster-a",
+            _RetrieveClient({"doc-1": {"id": "doc-1", "tenant_id": "tenant-a"}}),
+        )
+    ]
+    token = _token(
+        scope="imposbro:search",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.get(
+        "/documents/products/doc-1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["document"] == {"id": "doc-1", "tenant_id": "tenant-a"}
+
+
+def test_oidc_tenant_policy_hides_cross_tenant_document_read(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    from settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "AUTHZ_COLLECTION_POLICIES",
+        json.dumps({
+            "collections": {
+                "products": {
+                    "mode": "required",
+                    "tenant_field": "tenant_id",
+                    "tenant_claim": "tenant_id",
+                }
+            }
+        }),
+    )
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        (
+            "cluster-a",
+            _RetrieveClient({"doc-1": {"id": "doc-1", "tenant_id": "tenant-b"}}),
+        )
+    ]
+    token = _token(
+        scope="imposbro:search",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.get(
+        "/documents/products/doc-1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Document not found."
 
 
 def test_oidc_tenant_policy_injects_missing_ingest_tenant(client, monkeypatch):
