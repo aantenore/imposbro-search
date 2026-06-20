@@ -154,6 +154,28 @@ def test_create_client_respects_configured_port(monkeypatch):
     assert captured["api_key"] == "test-key"
 
 
+def test_delete_candidates_include_all_clusters_despite_current_routing():
+    federation = FederationService()
+    federation.clients = {
+        "cluster-a": object(),
+        "cluster-b": object(),
+    }
+    federation.routing_rules = {
+        "products": {
+            "rules": [{"field": "region", "value": "EU", "cluster": "cluster-a"}],
+            "default_cluster": "cluster-a",
+        }
+    }
+
+    assert federation.get_named_clients_for_search("products") == [
+        ("cluster-a", federation.clients["cluster-a"])
+    ]
+    assert federation.get_named_clients_for_delete("products") == [
+        ("cluster-a", federation.clients["cluster-a"]),
+        ("cluster-b", federation.clients["cluster-b"]),
+    ]
+
+
 def test_register_cluster_rejects_unreachable_declared_nodes(monkeypatch):
     federation = FederationService()
 
