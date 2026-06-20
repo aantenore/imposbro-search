@@ -863,3 +863,129 @@ def test_set_routing_rules_omits_null_fanout_field(client):
             "cluster": "default-data-cluster",
         }
     ]
+
+
+def test_set_routing_rules_accepts_v2_operators_without_expanding_legacy_defaults(client):
+    """New operators are persisted while legacy equals rules keep the compact shape."""
+    client.app.state.federation_service.collection_schemas = {
+        "products": {"name": "products", "fields": [{"name": "title", "type": "string"}]}
+    }
+
+    r = client.post(
+        "/admin/routing-rules",
+        json={
+            "collection": "products",
+            "rules": [
+                {
+                    "field": "region",
+                    "operator": "in",
+                    "values": ["IT", "FR"],
+                    "clusters": ["default-data-cluster"],
+                    "priority": 10,
+                },
+                {
+                    "field": "sku",
+                    "operator": "glob",
+                    "pattern": "vip-*",
+                    "cluster": "default-data-cluster",
+                    "priority": 0,
+                },
+                {
+                    "field": "price",
+                    "operator": "range",
+                    "min": 100,
+                    "max": 200,
+                    "cluster": "default-data-cluster",
+                },
+                {
+                    "field": "tenant_id",
+                    "value": "acme",
+                    "cluster": "default-data-cluster",
+                },
+            ],
+            "default_cluster": "default",
+        },
+    )
+
+    assert r.status_code == 201
+    rules = client.app.state.federation_service.set_routing_rules.call_args.kwargs[
+        "rules"
+    ]
+    assert rules == [
+        {
+            "field": "region",
+            "operator": "in",
+            "values": ["IT", "FR"],
+            "priority": 10,
+            "clusters": ["default-data-cluster"],
+        },
+        {
+            "field": "sku",
+            "operator": "glob",
+            "pattern": "vip-*",
+            "priority": 0,
+            "cluster": "default-data-cluster",
+        },
+        {
+            "field": "price",
+            "operator": "range",
+            "min": 100.0,
+            "max": 200.0,
+            "cluster": "default-data-cluster",
+        },
+        {
+            "field": "tenant_id",
+            "value": "acme",
+            "cluster": "default-data-cluster",
+        },
+    ]
+
+
+def test_routing_preview_uses_draft_rules_without_persisting(client):
+    """Dry-run previews evaluate draft policies without saving or broadcasting state."""
+    from services.federation import FederationService
+
+    federation = FederationService()
+    federation.clients = {
+        "cluster-a": MagicMock(),
+        "cluster-b": MagicMock(),
+    }
+    federation.routing_rules = {
+        "products": {
+            "rules": [
+                {"field": "tenant_id", "value": "acme", "cluster": "cluster-a"}
+            ],
+            "default_cluster": "cluster-b",
+        }
+    }
+    client.app.state.federation_service = federation
+    client.app.state.state_manager.reset_mock()
+    client.app.state.config_notifier.reset_mock()
+
+    r = client.post(
+        "/admin/routing-rules/preview",
+        json={
+            "collection": "products",
+            "document": {"region": "IT", "tenant_id": "other"},
+            "rules": [
+                {
+                    "field": "region",
+                    "operator": "in",
+                    "values": ["IT", "FR"],
+                    "cluster": "cluster-a",
+                    "priority": 5,
+                }
+            ],
+            "default_cluster": "cluster-b",
+        },
+    )
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["matched"] is True
+    assert data["matched_rule_index"] == 0
+    assert data["routed_to"] == ["cluster-a"]
+    assert data["target_clusters"] == ["cluster-a"]
+    assert federation.routing_rules["products"]["rules"][0]["field"] == "tenant_id"
+    client.app.state.state_manager.save_state.assert_not_called()
+    client.app.state.config_notifier.notify.assert_not_called()

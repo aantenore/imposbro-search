@@ -231,6 +231,39 @@ test('audit list builds sanitized filter query parameters', async () => {
   }
 });
 
+test('routing preview posts draft rules without saving', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  const payload = {
+    collection: 'products',
+    document: { region: 'IT' },
+    rules: [
+      {
+        field: 'region',
+        operator: 'in',
+        values: ['IT', 'FR'],
+        cluster: 'cluster-eu',
+      },
+    ],
+    default_cluster: 'default',
+  };
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ matched: true, routed_to: ['cluster-eu'] });
+  };
+
+  try {
+    await api.routing.preview(payload);
+
+    assert.equal(request.url, '/api/admin/routing-rules/preview');
+    assert.equal(request.options.method, 'POST');
+    assert.equal(request.options.body, JSON.stringify(payload));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('ingest posts a JSON document to the encoded collection path', async () => {
   const originalFetch = globalThis.fetch;
   let request;

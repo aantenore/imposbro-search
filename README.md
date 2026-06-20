@@ -49,7 +49,7 @@ One configurable control plane for routing, ingesting, searching, observing, and
 
 ## ✨ Core Features
 
-* **Advanced Document-Level Sharding:** Define routing rules based on document fields (e.g., `country`, `tenant_id`) to distribute documents across multiple physical clusters. This includes **fan-out routing**, allowing a single document to be replicated to several clusters simultaneously.
+* **Advanced Document-Level Sharding:** Define routing rules based on document fields (e.g., `country`, `tenant_id`) to distribute documents across multiple physical clusters. Routing supports exact, list, glob, and numeric range matches with priorities, dry-run previews, and **fan-out routing** to replicate one document to several clusters simultaneously.
 * **Resilient Scatter-Gather Search:** Queries are automatically sent to all relevant external clusters, with results merged and re-ranked. The system gracefully handles partial failures if a shard is unavailable.
 * **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
 * **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
@@ -348,6 +348,7 @@ Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_m
 | `/admin/aliases/{alias}` | PUT | Create or update a collection alias for zero-downtime reindexing |
 | `/admin/aliases/{alias}` | DELETE | Delete a collection alias |
 | `/admin/routing-rules` | POST | Set routing rules for a collection |
+| `/admin/routing-rules/preview` | POST | Preview draft or persisted routing rules without saving |
 | `/admin/routing-rules/{collection}` | DELETE | Delete routing rules |
 | `/admin/routing-map` | GET | Get complete routing configuration |
 | `/admin/audit-log` | GET | List recent successful admin mutations without exposing secrets |
@@ -693,6 +694,7 @@ indexingService:
 * [x] Opt-in Helm PodDisruptionBudget for Query API, Admin UI, and indexing workers
 * [x] Per-workload Helm topology spread constraints for multi-node availability
 * [x] Opt-in Helm Ingress for Query API and Admin UI with TLS, class, host, path, and annotation controls
+* [x] Routing policy v2 with equals, in-list, glob, range, priority, fan-out targets, and dry-run Admin UI previews
 * [x] Helm chart validation harness covering rendered resource counts, Ingress permutations, and fail-fast guardrails
 * [x] Docker benchmark target that starts the local stack, runs sustained ingest/search, and writes JSON/Markdown artifacts
 

@@ -6,9 +6,10 @@ including cluster registration, client creation, and document routing.
 """
 
 import copy
+import fnmatch
 import logging
 import typesense
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,139 @@ class FederationService:
             return self._resolve_default_cluster()
         return cluster_name if cluster_name in self.clients else None
 
+    @staticmethod
+    def _document_value(document: Dict[str, Any], path: str) -> Any:
+        value: Any = document
+        for part in path.split("."):
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+        return value
+
+    @staticmethod
+    def _rule_targets(rule: Dict[str, Any]) -> List[str]:
+        targets = rule.get("clusters")
+        if targets is None:
+            targets = [rule.get("cluster")]
+        return [str(target) for target in targets if target]
+
+    @staticmethod
+    def _ordered_rules_with_index(
+        rules: List[Dict[str, Any]]
+    ) -> List[Tuple[int, Dict[str, Any]]]:
+        return sorted(
+            enumerate(rules),
+            key=lambda item: (
+                item[1].get("priority")
+                if item[1].get("priority") is not None
+                else item[0],
+                item[0],
+            ),
+        )
+
+    @staticmethod
+    def _ordered_rules(rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [rule for _, rule in FederationService._ordered_rules_with_index(rules)]
+
+    @staticmethod
+    def _numeric_value(value: Any) -> Optional[float]:
+        if isinstance(value, bool):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _rule_matches(self, rule: Dict[str, Any], document: Dict[str, Any]) -> bool:
+        doc_value = self._document_value(document, str(rule.get("field", "")))
+        if doc_value is None:
+            return False
+
+        operator = str(rule.get("operator") or "equals").strip().lower()
+        if operator == "equals":
+            expected = rule.get("value")
+            if expected is None:
+                values = rule.get("values") or []
+                expected = values[0] if values else None
+            return expected is not None and str(doc_value) == str(expected)
+        if operator == "in":
+            values = rule.get("values") or []
+            return str(doc_value) in {str(value) for value in values}
+        if operator == "glob":
+            pattern = rule.get("pattern") or rule.get("value")
+            return bool(pattern) and fnmatch.fnmatchcase(str(doc_value), str(pattern))
+        if operator == "range":
+            numeric = self._numeric_value(doc_value)
+            if numeric is None:
+                return False
+            min_value = self._numeric_value(rule.get("min"))
+            max_value = self._numeric_value(rule.get("max"))
+            if min_value is not None and numeric < min_value:
+                return False
+            if max_value is not None and numeric > max_value:
+                return False
+            return min_value is not None or max_value is not None
+        return False
+
+    def _targets_for_names(
+        self,
+        target_names: List[str],
+    ) -> List[Tuple[typesense.Client, str]]:
+        result: List[Tuple[typesense.Client, str]] = []
+        for target_name in target_names:
+            resolved_name = self.resolve_cluster_name(target_name)
+            client = self.clients.get(resolved_name) if resolved_name else None
+            if client:
+                result.append((client, resolved_name))
+            else:
+                logger.warning("Target cluster '%s' from rule not found.", target_name)
+        return result
+
+    def _default_targets(
+        self,
+        default_cluster: str = "default",
+    ) -> List[Tuple[typesense.Client, str]]:
+        default_name = self.resolve_cluster_name(default_cluster)
+        if default_name is None:
+            return []
+        client = self.clients.get(default_name)
+        return [(client, default_name)] if client else []
+
+    def preview_routing(
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        *,
+        rules_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        collection_rules = rules_config or self.routing_rules.get(collection_name, {})
+        rules = collection_rules.get("rules", [])
+        for index, rule in self._ordered_rules_with_index(rules):
+            if self._rule_matches(rule, document):
+                target_names = self._rule_targets(rule)
+                targets = self._targets_for_names(target_names)
+                return {
+                    "collection": collection_name,
+                    "matched": True,
+                    "matched_rule": copy.deepcopy(rule),
+                    "matched_rule_index": index,
+                    "used_default": False,
+                    "routed_to": [name for _, name in targets],
+                    "target_clusters": target_names,
+                }
+
+        default_cluster = collection_rules.get("default_cluster", "default")
+        targets = self._default_targets(default_cluster)
+        return {
+            "collection": collection_name,
+            "matched": False,
+            "matched_rule": None,
+            "matched_rule_index": None,
+            "used_default": True,
+            "routed_to": [name for _, name in targets],
+            "target_clusters": [default_cluster],
+        }
+
     def get_client_for_document(
         self, collection_name: str, document: Dict
     ) -> Tuple[Optional[typesense.Client], Optional[str]]:
@@ -284,39 +418,12 @@ class FederationService:
             Tuple of (Typesense client, cluster name). Cluster name may be None
             if no suitable cluster is available.
         """
-        collection_rules = self.routing_rules.get(collection_name)
-
-        if not collection_rules or not collection_rules.get("rules"):
-            default_name = self._resolve_default_cluster()
-            if default_name is None:
-                return None, None
-            return self.clients.get(default_name), default_name
-
-        for rule in collection_rules["rules"]:
-            doc_value = document.get(rule["field"])
-            if doc_value is not None and str(doc_value) == rule["value"]:
-                # Fan-out: rule may have "clusters" (list) or "cluster" (single)
-                target_names = rule.get("clusters")
-                if target_names is None:
-                    target_names = [rule["cluster"]]
-                targets: List[Tuple[Optional[typesense.Client], Optional[str]]] = []
-                for target_name in target_names:
-                    client = self.clients.get(target_name)
-                    if client:
-                        targets.append((client, target_name))
-                    else:
-                        logger.warning(f"Target cluster '{target_name}' from rule not found.")
-                if targets:
-                    # Return first for backward compat; use get_targets_for_document for full list
-                    return targets[0][0], targets[0][1]
-                return None, target_names[0] if target_names else None
-
-        default_name = collection_rules.get("default_cluster", "default")
-        if default_name == "default":
-            default_name = self._resolve_default_cluster()
-        if default_name is None:
-            return None, None
-        return self.clients.get(default_name), default_name
+        targets = self.get_targets_for_document(collection_name, document)
+        if targets:
+            return targets[0]
+        preview = self.preview_routing(collection_name, document)
+        unresolved = preview.get("target_clusters") or []
+        return None, unresolved[0] if unresolved else None
 
     def get_targets_for_document(
         self, collection_name: str, document: Dict
@@ -325,33 +432,11 @@ class FederationService:
         Return all (client, cluster_name) pairs for a document (single or fan-out).
         Use this for ingest when replicating to multiple clusters.
         """
-        collection_rules = self.routing_rules.get(collection_name)
-
-        if not collection_rules or not collection_rules.get("rules"):
-            default_name = self._resolve_default_cluster()
-            if default_name is None:
-                return []
-            client = self.clients.get(default_name)
-            return [(client, default_name)] if client else []
-
-        for rule in collection_rules["rules"]:
-            doc_value = document.get(rule["field"])
-            if doc_value is not None and str(doc_value) == rule["value"]:
-                target_names = rule.get("clusters") or [rule["cluster"]]
-                result: List[Tuple[typesense.Client, str]] = []
-                for name in target_names:
-                    client = self.clients.get(name)
-                    if client:
-                        result.append((client, name))
-                return result
-
-        default_name = collection_rules.get("default_cluster", "default")
-        if default_name == "default":
-            default_name = self._resolve_default_cluster()
-        if default_name is None:
-            return []
-        client = self.clients.get(default_name)
-        return [(client, default_name)] if client else []
+        preview = self.preview_routing(collection_name, document)
+        target_names = preview.get("target_clusters") or []
+        if preview.get("used_default"):
+            return self._default_targets(target_names[0] if target_names else "default")
+        return self._targets_for_names(target_names)
 
     def _cluster_names_for_search(self, collection_name: str) -> List[str]:
         """Return cluster names that may contain documents for a collection."""
@@ -368,11 +453,8 @@ class FederationService:
                 cluster_names.append(name)
 
         for rule in rules.get("rules", []):
-            if "clusters" in rule:
-                for name in rule["clusters"]:
-                    add_cluster(name)
-            else:
-                add_cluster(rule["cluster"])
+            for name in self._rule_targets(rule):
+                add_cluster(name)
         add_cluster(rules.get("default_cluster", "default"))
         return cluster_names
 
@@ -426,10 +508,9 @@ class FederationService:
         # Validate all clusters exist (resolve virtual "default" for validation)
         all_clusters = set()
         for r in rules:
-            if "clusters" in r:
-                all_clusters.update(r["clusters"])
-            else:
-                all_clusters.add(r["cluster"])
+            for target_name in self._rule_targets(r):
+                resolved_name = self.resolve_cluster_name(target_name)
+                all_clusters.add(resolved_name or target_name)
         effective_default = (
             self._resolve_default_cluster()
             if default_cluster == "default"
