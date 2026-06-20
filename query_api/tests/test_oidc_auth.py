@@ -208,6 +208,48 @@ def test_oidc_incomplete_configuration_fails_closed(client, monkeypatch):
     assert "OIDC" in r.json().get("detail", "")
 
 
+def test_oidc_jwks_client_is_reused_for_same_url(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    from settings import settings
+    import auth
+
+    jwks_url = "https://idp.example.com/.well-known/jwks.json"
+    monkeypatch.setattr(settings, "OIDC_JWKS_URL", jwks_url)
+    monkeypatch.setattr(settings, "OIDC_PUBLIC_KEY", "")
+    auth.clear_oidc_jwks_cache()
+
+    constructions = []
+
+    class _SigningKey:
+        key = _PUBLIC_PEM
+
+    class _FakeJwksClient:
+        def __init__(self, url):
+            constructions.append(url)
+
+        def get_signing_key_from_jwt(self, token):
+            return _SigningKey()
+
+    monkeypatch.setattr(auth, "PyJWKClient", _FakeJwksClient)
+    token = _token(scope="imposbro:admin")
+
+    try:
+        first = client.get(
+            "/admin/stats",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        second = client.get(
+            "/admin/stats",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert constructions == [jwks_url]
+    finally:
+        auth.clear_oidc_jwks_cache()
+
+
 def test_bearer_api_key_still_works_when_oidc_enabled(client, monkeypatch):
     _configure_oidc(monkeypatch)
     from settings import settings
