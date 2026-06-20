@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +61,48 @@ def count_kinds(manifest: str) -> dict[str, int]:
         kind = match.group(1).strip()
         counts[kind] = counts.get(kind, 0) + 1
     return counts
+
+
+def iter_documents(manifest: str):
+    for document in re.split(r"^---\s*$", manifest, flags=re.MULTILINE):
+        document = document.strip()
+        if document:
+            yield document
+
+
+def resource_name(document: str) -> str:
+    match = re.search(r"^metadata:\n\s+name:\s+(.+)$", document, flags=re.MULTILINE)
+    if not match:
+        raise SystemExit(f"Rendered resource has no metadata.name:\n{document}")
+    return match.group(1).strip().strip('"')
+
+
+def find_document(manifest: str, kind: str, name: str) -> str:
+    for document in iter_documents(manifest):
+        if not re.search(rf"^kind:\s+{re.escape(kind)}$", document, flags=re.MULTILINE):
+            continue
+        if resource_name(document) == name:
+            return document
+    raise SystemExit(f"Expected rendered {kind}/{name} resource")
+
+
+def resource_names(manifest: str, kind: str) -> set[str]:
+    names = set()
+    for document in iter_documents(manifest):
+        if re.search(rf"^kind:\s+{re.escape(kind)}$", document, flags=re.MULTILINE):
+            names.add(resource_name(document))
+    return names
+
+
+def configmap_value(configmap: str, key: str) -> str:
+    match = re.search(
+        rf"^\s+{re.escape(key)}:\s+\"([^\"]*)\"$",
+        configmap,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        raise SystemExit(f"Expected ConfigMap to contain {key!r}")
+    return match.group(1)
 
 
 def require_count(counts: dict[str, int], kind: str, expected: int) -> None:
@@ -126,6 +169,33 @@ def main() -> None:
     require_contains(manifest, "RATE_LIMIT_ENABLED")
     require_contains(manifest, "ImposbroQueryApiRateLimitBlocked")
     require_contains(manifest, "query_api_rate_limit_backend_errors_total")
+    require_contains(manifest, 'http_requests_total{status="5xx"}')
+    require_contains(manifest, "http_request_duration_seconds_bucket")
+    require_not_contains(manifest, "fastapi_requests")
+    require_contains(manifest, 'INTERNAL_QUERY_API_ADMIN_API_KEY: "test-admin-key"')
+
+    fullname = f"{RELEASE_NAME}-imposbro-search"
+    configmap = find_document(manifest, "ConfigMap", f"{fullname}-config")
+    internal_query_api_url = configmap_value(configmap, "INTERNAL_QUERY_API_URL")
+    internal_query_api_host = urlparse(internal_query_api_url).hostname
+    services = resource_names(manifest, "Service")
+    if internal_query_api_host not in services:
+        raise SystemExit(
+            "config.INTERNAL_QUERY_API_URL must target a rendered Service; "
+            f"got host {internal_query_api_host!r}, rendered services {sorted(services)}"
+        )
+
+    query_api_policy = find_document(manifest, "NetworkPolicy", f"{fullname}-query-api")
+    require_contains(query_api_policy, "kubernetes.io/metadata.name: monitoring")
+    require_contains(query_api_policy, "app.kubernetes.io/name: prometheus")
+
+    dashboard = (
+        REPO_ROOT
+        / "monitoring/grafana/provisioning/dashboards/imposbro-overview.json"
+    ).read_text(encoding="utf-8")
+    require_contains(dashboard, "http_requests_total")
+    require_contains(dashboard, "http_request_duration_seconds_bucket")
+    require_not_contains(dashboard, "fastapi_requests")
     print(f"Rendered counts: {counts}")
 
     print("==> Helm render: query-api ingress only")
@@ -187,6 +257,35 @@ def main() -> None:
         "--set",
         "queryApi.replicaCount=2",
     )
+
+    print("==> Helm guardrail: scoped-only admin auth needs worker internal key")
+    expect_failure(
+        "config.ADMIN_API_KEY or config.INTERNAL_QUERY_API_ADMIN_API_KEY is required for indexing service internal Query API admin calls",
+        "--set",
+        "config.ADMIN_API_KEY=",
+        "--set",
+        "config.INTERNAL_QUERY_API_ADMIN_API_KEY=",
+        "--set-json",
+        'config.SCOPED_API_KEYS=[{"name":"ops","key":"ops-secret","scopes":["admin"]}]',
+    )
+
+    print("==> Helm guardrail: distinct worker internal key must be accepted by Query API")
+    expect_failure(
+        "config.INTERNAL_QUERY_API_ADMIN_API_KEY must match config.ADMIN_API_KEY or be present in config.SCOPED_API_KEYS",
+        "--set",
+        "config.INTERNAL_QUERY_API_ADMIN_API_KEY=worker-secret",
+    )
+
+    print("==> Helm render: distinct worker internal key accepted via scoped key")
+    scoped_worker = render(
+        "--set",
+        "config.ADMIN_API_KEY=",
+        "--set",
+        "config.INTERNAL_QUERY_API_ADMIN_API_KEY=worker-secret",
+        "--set-json",
+        'config.SCOPED_API_KEYS=[{"name":"worker","key":"worker-secret","scopes":["admin:internal"]}]',
+    )
+    require_contains(scoped_worker, "worker-secret")
 
     print("Helm chart validation passed.")
 

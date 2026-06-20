@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 
 def build_admin_headers() -> Dict[str, str]:
     """Build service-to-service headers for Query API admin endpoints."""
-    admin_api_key = os.environ.get("ADMIN_API_KEY", "").strip()
+    admin_api_key = (
+        os.environ.get("INTERNAL_QUERY_API_ADMIN_API_KEY", "").strip()
+        or os.environ.get("ADMIN_API_KEY", "").strip()
+    )
     return {"X-API-Key": admin_api_key} if admin_api_key else {}
 
 
