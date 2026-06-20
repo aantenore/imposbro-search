@@ -3,8 +3,53 @@ import os
 import pytest
 from unittest.mock import MagicMock, call
 
+import typesense
+
 # Ensure test mode so we get mock federation
 os.environ["TESTING"] = "1"
+
+
+class _FakeDocumentRef:
+    def __init__(self, document=None, error=None):
+        self.document = document
+        self.error = error
+
+    def retrieve(self):
+        if self.error:
+            raise self.error
+        if self.document is None:
+            raise typesense.exceptions.ObjectNotFound("not found")
+        return self.document
+
+
+class _FakeDocuments:
+    def __init__(self, documents=None, error=None):
+        self.documents = documents or {}
+        self.error = error
+
+    def __getitem__(self, document_id):
+        if self.error:
+            return _FakeDocumentRef(error=self.error)
+        return _FakeDocumentRef(self.documents.get(document_id))
+
+
+class _FakeCollection:
+    def __init__(self, documents):
+        self.documents = documents
+
+
+class _FakeCollections:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def __getitem__(self, collection_name):
+        return _FakeCollection(self.documents)
+
+
+class _FakeClient:
+    def __init__(self, documents=None, error=None):
+        self.documents = _FakeDocuments(documents, error=error)
+        self.collections = _FakeCollections(self.documents)
 
 
 def test_ingest_requires_id(client):
@@ -43,6 +88,54 @@ def test_ingest_propagates_request_id_to_kafka(client):
     assert r.headers["x-request-id"] == "trace-123"
     published = client.app.state.kafka_service.publish_document.call_args.kwargs
     assert published["request_id"] == "trace-123"
+
+
+def test_get_document_returns_first_matching_candidate_cluster(client):
+    """GET /documents/{collection}/{id} retrieves from candidate search clusters."""
+    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+        return_value=[
+            ("cluster-a", _FakeClient()),
+            ("cluster-b", _FakeClient({"doc-1": {"id": "doc-1", "name": "Product"}})),
+        ]
+    )
+
+    r = client.get("/documents/products/doc-1")
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "status": "ok",
+        "collection": "products",
+        "document_id": "doc-1",
+        "found_in": "cluster-b",
+        "document": {"id": "doc-1", "name": "Product"},
+    }
+
+
+def test_get_document_returns_404_when_not_found(client):
+    """GET document returns 404 when every candidate reports a miss."""
+    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+        return_value=[("cluster-a", _FakeClient())]
+    )
+
+    r = client.get("/documents/products/doc-1")
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Document not found."
+
+
+def test_get_document_returns_503_when_lookup_cannot_check_all_candidates(client):
+    """A cluster failure is surfaced when no authoritative document result exists."""
+    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+        return_value=[
+            ("cluster-a", _FakeClient(error=RuntimeError("down"))),
+            ("cluster-b", _FakeClient()),
+        ]
+    )
+
+    r = client.get("/documents/products/doc-1")
+
+    assert r.status_code == 503
+    assert "cluster-a" in r.json()["detail"]
 
 
 def test_delete_document_publishes_delete_to_all_candidate_clusters(client):
@@ -98,5 +191,12 @@ def test_delete_document_requires_at_least_one_candidate_cluster(client):
 def test_delete_document_rejects_unsafe_document_ids(client):
     """Document ids in path are constrained for safe filter construction."""
     r = client.delete("/documents/products/doc:1")
+
+    assert r.status_code == 422
+
+
+def test_get_document_rejects_unsafe_document_ids(client):
+    """Read path uses the same conservative document id validation as delete."""
+    r = client.get("/documents/products/doc:1")
 
     assert r.status_code == 422

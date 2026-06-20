@@ -357,6 +357,21 @@ def _tenant_filter(field: str, tenants: List[str]) -> str:
     return f"{field}:=[{','.join(tenants)}]"
 
 
+def _document_value(document: Dict[str, Any], path: str) -> Any:
+    value: Any = document
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _value_matches_any_tenant(value: Any, tenants: List[str]) -> bool:
+    if isinstance(value, (list, tuple, set)):
+        return any(str(item) in tenants for item in value)
+    return str(value) in tenants
+
+
 def authorize_search_request(request: Request, collection_name: str, search_request: Any) -> Any:
     """Apply configured tenant policy to a search request."""
     policy = _collection_policy(collection_name)
@@ -375,6 +390,23 @@ def authorize_search_request(request: Request, collection_name: str, search_requ
         else tenant_filter
     )
     return search_request.model_copy(update={"filter_by": combined_filter})
+
+
+def can_read_document(
+    request: Request,
+    collection_name: str,
+    document: Dict[str, Any],
+) -> bool:
+    """Return whether the current actor may read a retrieved document."""
+    policy = _collection_policy(collection_name)
+    if _policy_mode(policy) == "off":
+        return True
+
+    tenants = _tenant_values_from_request(request, policy)
+    if tenants is None:
+        return True
+
+    return _value_matches_any_tenant(_document_value(document, _tenant_field(policy)), tenants)
 
 
 def authorize_ingest_document(

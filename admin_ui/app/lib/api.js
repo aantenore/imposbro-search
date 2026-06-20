@@ -275,6 +275,14 @@ export const api = {
         }),
 
         /**
+         * Retrieve a document by id
+         */
+        getDocument: (collection, documentId) => request(
+            `/documents/${encodeSegment(collection)}/${encodeSegment(documentId)}`,
+            { method: 'GET' }
+        ),
+
+        /**
          * Delete a document by id
          */
         deleteDocument: (collection, documentId) => request(

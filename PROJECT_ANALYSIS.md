@@ -109,6 +109,7 @@ The market does validate the problem, but it also narrows the room for different
 47. **Data-plane abuse control**: Query API can now enforce optional fixed-window search and write-side data mutation rate limits by authenticated actor and collection, using Redis counters for multi-replica deployments and memory counters for local/test runs.
 48. **Rate-limit observability**: Query API now exports low-cardinality Prometheus metrics for allowed/blocked rate-limit decisions and backend failures; Helm renders alert rules and Grafana shows rate-limit blocks/errors.
 49. **Data lifecycle delete**: Query API now exposes `DELETE /documents/{collection}/{document_id}` as an async data-plane mutation. It fans out delete events to every candidate data cluster, propagates request ids, enforces ingest/data scoped authorization, uses tenant-safe filtered deletes for OIDC tenant policies, and the worker treats missing documents as idempotent no-ops with `indexing_documents_deleted_total` metrics.
+50. **Data lifecycle read/export**: Query API now exposes `GET /documents/{collection}/{document_id}` as a read-side data-plane operation. It checks every candidate data cluster, enforces search/data scoped authorization, returns tenant-mismatched OIDC documents as 404, exposes low-cardinality `documents_read_total`, and is available from the Admin UI Workspace.
 
 ### Fixes
 
@@ -159,6 +160,7 @@ The market does validate the problem, but it also narrows the room for different
 - ~~**Hybrid/vector search gateway**~~: **Done.** JSON search endpoint supports long vector/hybrid params and cross-cluster merge can order vector-only results by `_vector_distance`.
 - ~~**Support diagnostics**~~: **Done.** Query API echoes a sanitized request-correlation header and propagates it through Kafka data-plane messages so indexing logs can be tied back to the originating HTTP request without adding high-cardinality metric labels.
 - ~~**Data lifecycle delete**~~: **Done.** Document delete is available as an asynchronous data-plane write and covered by unit plus Docker smoke tests.
+- ~~**Document read/export by ID**~~: **Done.** Tenant-safe data-plane read/export is available by API and Admin UI, and covered by unit plus Docker smoke tests.
 
 ### Low priority
 
@@ -166,7 +168,7 @@ The market does validate the problem, but it also narrows the room for different
 
 ### Remaining Product Risks
 
-- **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, tenant-safe document deletion, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
+- **Enterprise authorization depth**: OIDC, tenant policies, collection-scoped data-plane RBAC, tenant-safe document read/delete, Admin UI login/session flows, and fine-grained admin operation scopes now cover API identity, tenant isolation, collection access, browser operator login, and least-privilege operator roles.
 - **Traffic abuse protection**: Optional actor-scoped data-plane rate limits now protect search and write-side data mutation paths with Prometheus/Grafana visibility; production operators still need environment-specific budgets and gateway/WAF policy for public exposure.
 - **Operational scale proof**: local Docker now covers multi-instance rolling smoke, lag budget, JSON/Markdown benchmark artifacts, Helm autoscaling manifests, and a repeatable Kubernetes benchmark harness; the next credibility step is publishing results from a production-sized Kubernetes run.
 - **CI/CD gate**: local `make ci` is green, but hosted GitHub Actions workflow creation still depends on a token with `workflow` scope.
