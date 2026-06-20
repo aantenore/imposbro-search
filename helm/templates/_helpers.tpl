@@ -62,6 +62,18 @@ Require production callers to provide immutable, non-placeholder images.
 {{- end }}
 
 {{/*
+Render scoped API keys as the JSON string expected by the application.
+Allows either the documented string value or Helm --set-json list input.
+*/}}
+{{- define "imposbro-search.scopedApiKeysJson" -}}
+{{- if kindIs "string" .Values.config.SCOPED_API_KEYS -}}
+{{- .Values.config.SCOPED_API_KEYS -}}
+{{- else -}}
+{{- toJson .Values.config.SCOPED_API_KEYS -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Validate required external service and secret configuration.
 */}}
 {{- define "imposbro-search.validateConfig" -}}
@@ -82,6 +94,31 @@ Validate required external service and secret configuration.
 {{- end -}}
 {{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_DATA) "false") (not .Values.config.DATA_API_KEY) (not .Values.config.SCOPED_API_KEYS) (not $oidcEnabled) -}}
 {{- fail "config.DATA_API_KEY, config.SCOPED_API_KEYS, or config.OIDC_ENABLED=true is required when ALLOW_UNAUTHENTICATED_DATA is false" -}}
+{{- end -}}
+{{- $adminApiKey := toString .Values.config.ADMIN_API_KEY -}}
+{{- $internalAdminApiKey := toString .Values.config.INTERNAL_QUERY_API_ADMIN_API_KEY -}}
+{{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_ADMIN) "false") (not $adminApiKey) (not $internalAdminApiKey) -}}
+{{- fail "config.ADMIN_API_KEY or config.INTERNAL_QUERY_API_ADMIN_API_KEY is required for indexing service internal Query API admin calls when ALLOW_UNAUTHENTICATED_ADMIN is false" -}}
+{{- end -}}
+{{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_ADMIN) "false") $internalAdminApiKey (or (not $adminApiKey) (ne $internalAdminApiKey $adminApiKey)) -}}
+{{- if not .Values.config.SCOPED_API_KEYS -}}
+{{- fail "config.INTERNAL_QUERY_API_ADMIN_API_KEY must match config.ADMIN_API_KEY or be present in config.SCOPED_API_KEYS with admin:internal, admin, or * scope" -}}
+{{- end -}}
+{{- $internalAdminApiKeyAllowed := false -}}
+{{- $scopedApiKeys := mustFromJson (include "imposbro-search.scopedApiKeysJson" .) -}}
+{{- range $entry := $scopedApiKeys -}}
+{{- if eq (toString (get $entry "key")) $internalAdminApiKey -}}
+{{- range $scope := (get $entry "scopes") -}}
+{{- $scopeName := toString $scope -}}
+{{- if or (eq $scopeName "*") (eq $scopeName "admin") (eq $scopeName "admin:internal") -}}
+{{- $internalAdminApiKeyAllowed = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $internalAdminApiKeyAllowed -}}
+{{- fail "config.INTERNAL_QUERY_API_ADMIN_API_KEY must match config.ADMIN_API_KEY or be present in config.SCOPED_API_KEYS with admin:internal, admin, or * scope" -}}
+{{- end -}}
 {{- end -}}
 {{- $rateLimitEnabled := eq (toString .Values.config.RATE_LIMIT_ENABLED) "true" -}}
 {{- if $rateLimitEnabled -}}

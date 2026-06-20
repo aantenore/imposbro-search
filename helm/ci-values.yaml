@@ -117,9 +117,10 @@ config:
   REDIS_URL: redis://redis:6379
   INTERNAL_STATE_NODES: typesense-state-1,typesense-state-2,typesense-state-3
   DEFAULT_DATA_CLUSTER_NODES: typesense-data-1,typesense-data-2,typesense-data-3
-  INTERNAL_QUERY_API_URL: http://query-api:80
+  INTERNAL_QUERY_API_URL: http://imposbro-release-imposbro-search-query-api:80
   INTERNAL_STATE_API_KEY: test-state-key
   DEFAULT_DATA_CLUSTER_API_KEY: test-data-key
   ADMIN_API_KEY: test-admin-key
+  INTERNAL_QUERY_API_ADMIN_API_KEY: test-admin-key
   DATA_API_KEY: test-data-key
   ADMIN_UI_PROXY_TRUSTED_HEADER: x-authenticated-user

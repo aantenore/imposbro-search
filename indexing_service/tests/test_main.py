@@ -68,8 +68,23 @@ def test_fetch_cluster_configuration_uses_internal_endpoint_and_admin_key(monkey
 
 def test_build_admin_headers_omits_empty_admin_key(monkeypatch):
     monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+    monkeypatch.delenv("INTERNAL_QUERY_API_ADMIN_API_KEY", raising=False)
 
     assert main.build_admin_headers() == {}
+
+
+def test_build_admin_headers_prefers_internal_query_api_key(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "legacy-admin-secret")
+    monkeypatch.setenv("INTERNAL_QUERY_API_ADMIN_API_KEY", "worker-admin-secret")
+
+    assert main.build_admin_headers() == {"X-API-Key": "worker-admin-secret"}
+
+
+def test_build_admin_headers_falls_back_to_admin_api_key(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "legacy-admin-secret")
+    monkeypatch.delenv("INTERNAL_QUERY_API_ADMIN_API_KEY", raising=False)
+
+    assert main.build_admin_headers() == {"X-API-Key": "legacy-admin-secret"}
 
 
 def test_start_metrics_server_respects_disabled_env(monkeypatch):
