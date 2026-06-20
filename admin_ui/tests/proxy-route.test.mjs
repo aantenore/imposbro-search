@@ -123,6 +123,87 @@ test('proxies catch-all route params to the backend path', async () => {
   }
 });
 
+test('does not forward headers nominated by the Connection header', async () => {
+  const originalFetch = globalThis.fetch;
+  let proxied;
+
+  globalThis.fetch = async (url, options) => {
+    proxied = {
+      url,
+      headers: Object.fromEntries(options.headers.entries()),
+    };
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const response = await routeModule.GET(
+      {
+        method: 'GET',
+        nextUrl: new URL('http://admin.local/api/admin/stats'),
+        headers: new Headers({
+          connection: 'x-hop, keep-alive',
+          'x-hop': 'leak',
+          'keep-alive': 'timeout=5',
+        }),
+      },
+      { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(proxied.url, 'http://backend.internal/admin/stats');
+    assert.equal(proxied.headers.connection, undefined);
+    assert.equal(proxied.headers['x-hop'], undefined);
+    assert.equal(proxied.headers['keep-alive'], undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('preserves selected backend headers on JSON responses', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), {
+    status: 429,
+    headers: {
+      'Content-Type': 'application/json',
+      'Retry-After': '30',
+      'X-RateLimit-Limit': '1',
+      'X-RateLimit-Remaining': '0',
+      'X-RateLimit-Reset': '12345',
+      'X-Pagination-Info': '{"page":2}',
+      'X-Request-ID': 'trace-123',
+      'Set-Cookie': 'backend=leak',
+    },
+  });
+
+  try {
+    const response = await routeModule.GET(
+      {
+        method: 'GET',
+        nextUrl: new URL('http://admin.local/api/search/products?q=codex&query_by=name'),
+        headers: new Headers(),
+      },
+      { params: Promise.resolve({ path: ['search', 'products'] }) }
+    );
+
+    assert.equal(response.status, 429);
+    assert.deepEqual(await response.json(), { ok: true });
+    assert.equal(response.headers.get('retry-after'), '30');
+    assert.equal(response.headers.get('x-ratelimit-limit'), '1');
+    assert.equal(response.headers.get('x-ratelimit-remaining'), '0');
+    assert.equal(response.headers.get('x-ratelimit-reset'), '12345');
+    assert.equal(response.headers.get('x-pagination-info'), '{"page":2}');
+    assert.equal(response.headers.get('x-request-id'), 'trace-123');
+    assert.equal(response.headers.get('set-cookie'), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('injects data-plane key for data paths when caller has no credentials', async () => {
   const originalFetch = globalThis.fetch;
   const proxied = [];
