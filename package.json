@@ -7,6 +7,7 @@
     "node": ">=20.9.0"
   },
   "scripts": {
+    "audit": "make audit",
     "test": "npm run test:api && npm run test:ui",
     "test:api": "node scripts/run-pytest.js",
     "test:ui": "npm --prefix admin_ui test"

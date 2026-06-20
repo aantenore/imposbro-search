@@ -7,7 +7,7 @@ Thank you for your interest in contributing to IMPOSBRO Search! This document pr
 ### Prerequisites
 
 - Docker and Docker Compose
-- Node.js 22+ (for frontend development)
+- Node.js 20.9+ (22+ recommended, matching the Docker image)
 - Python 3.11+ (for backend development)
 - Git
 
@@ -89,7 +89,7 @@ feat(api): add batch ingestion endpoint
 
 ### Pull Request Process
 
-1. Create a feature branch from `master`
+1. Create a feature branch from `main`
 2. Make your changes with appropriate tests
 3. Ensure all services build successfully
 4. Update documentation if needed
@@ -103,6 +103,7 @@ feat(api): add batch ingestion endpoint
 # From repo root (recommended)
 make test          # Unix/macOS
 npm run test       # Any OS (runs query_api pytest)
+make audit         # npm + Python dependency audit
 
 # From query_api/
 cd query_api

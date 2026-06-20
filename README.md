@@ -361,12 +361,12 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional service-to-service key used by the Admin UI proxy and indexing worker; defaults to `ADMIN_API_KEY` when omitted. If it differs from `ADMIN_API_KEY`, include it in `SCOPED_API_KEYS` with `admin:internal`, `admin`, or `*` scope |
 | `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
-| `ADMIN_UI_PROXY_TRUSTED_VALUE` | Optional expected value for `ADMIN_UI_PROXY_TRUSTED_HEADER` |
-| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login for the Admin UI; callback responses must include an `id_token` whose nonce, audience, issuer when configured, and timestamps validate before the session cookie is sealed. Requires Query API `OIDC_ENABLED=true` so proxied bearer sessions can be validated |
+| `ADMIN_UI_PROXY_TRUSTED_VALUE` | Required expected value for `ADMIN_UI_PROXY_TRUSTED_HEADER` when the proxy injects server-side API keys |
+| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login for the Admin UI; callback responses must include a signed `id_token` whose signature, nonce, audience, issuer when configured, and timestamps validate before the session cookie is sealed. Requires Query API `OIDC_ENABLED=true` so proxied bearer sessions can be validated |
 | `ADMIN_UI_SESSION_SECRET` | Secret used to seal Admin UI HttpOnly session cookies; required and at least 32 characters when Admin UI OIDC is enabled |
 | `ADMIN_UI_OIDC_CLIENT_ID` / `ADMIN_UI_OIDC_CLIENT_SECRET` | OIDC client credentials for the Admin UI login flow; client secret is optional for public-client PKCE providers |
-| `ADMIN_UI_OIDC_ISSUER` | OIDC issuer used for Discovery when explicit authorization/token endpoints are not set |
-| `ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT` / `ADMIN_UI_OIDC_TOKEN_ENDPOINT` | Optional explicit provider endpoints; use both when not relying on Discovery |
+| `ADMIN_UI_OIDC_ISSUER` | OIDC issuer used for Discovery when explicit authorization/token/JWKS endpoints are not set |
+| `ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT` / `ADMIN_UI_OIDC_TOKEN_ENDPOINT` / `ADMIN_UI_OIDC_JWKS_URL` | Optional explicit provider endpoints; provide all three when not relying on Discovery |
 | `ADMIN_UI_OIDC_SCOPES` | Space-separated scopes requested by the Admin UI login flow; defaults to `openid profile email imposbro:admin imposbro:data` |
 | `ADMIN_UI_OIDC_REDIRECT_URI` | Optional callback URL override; defaults to the request origin plus `/api/auth/callback` |
 | `ADMIN_UI_SESSION_TTL_SECONDS` | Max Admin UI session lifetime; also capped by the provider token `expires_in` |
@@ -553,7 +553,7 @@ docker push your-registry-user/imposbro-indexing-service:1.0.0
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and have your authenticated ingress/gateway set that header. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, and `ADMIN_UI_SESSION_SECRET`.
+1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE`, and have your authenticated ingress/gateway set that exact header/value. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, signed id-token validation settings, and `ADMIN_UI_SESSION_SECRET`.
     The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
     Enable `queryApi.ingress.enabled=true` and/or `adminUi.ingress.enabled=true` when the cluster ingress controller should own TLS and routing. Keep Admin UI behind an authenticated ingress/gateway whenever the proxy injects server-side keys.
     Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.
@@ -672,6 +672,9 @@ npm run test
 
 # Full local release gate (tests, lint, UI build, Compose config, Helm render)
 make ci
+
+# Dependency audit gate (npm root, Admin UI npm, Python requirements)
+make audit
 
 # Runtime smoke: Docker stack + vector collection + document read + Kafka ingest/delete + federated search + Admin UI proxy
 make smoke-docker

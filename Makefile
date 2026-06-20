@@ -4,6 +4,7 @@ PYTHON ?= python3
 HELM ?= $(shell command -v helm 2>/dev/null || printf "%s/.local/bin/helm" "$$HOME")
 HELM_TEST_VALUES ?= -f helm/ci-values.yaml
 COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
+PIP_AUDIT_REQUIREMENTS ?= requirements-audit.txt
 
 SCALE_COMPOSE_FILE ?= docker-compose.yml:docker-compose.scale.yml
 SCALE_QUERY_API_REPLICAS ?= 3
@@ -17,7 +18,7 @@ BENCHMARK_DOCKER_TIMEOUT_SECONDS ?= 180
 BENCHMARK_DOCKER_OUTPUT_JSON ?= artifacts/benchmark-docker.json
 BENCHMARK_DOCKER_OUTPUT_MARKDOWN ?= artifacts/benchmark-docker.md
 
-.PHONY: help test test-api test-ui lint build-ui compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s benchmark-docker smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
+.PHONY: help test test-api test-ui lint build-ui audit compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s benchmark-docker smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -26,6 +27,7 @@ help:
 	@echo "  make test-ui        Run Admin UI unit tests"
 	@echo "  make lint           Run Admin UI lint"
 	@echo "  make build-ui       Build Admin UI"
+	@echo "  make audit          Run npm and Python dependency audits"
 	@echo "  make compose-config Validate docker compose config"
 	@echo "  make compose-config-scale Validate multi-instance docker compose overlay"
 	@echo "  make helm           Lint, render, and validate Helm chart scenarios"
@@ -58,6 +60,12 @@ lint:
 
 build-ui:
 	cd admin_ui && npm run build
+
+audit:
+	npm audit --omit=dev
+	npm --prefix admin_ui audit --omit=dev
+	$(PYTHON) -m pip install --disable-pip-version-check -r query_api/requirements-dev.txt -r indexing_service/requirements.txt -r $(PIP_AUDIT_REQUIREMENTS)
+	$(PYTHON) -m pip_audit --local
 
 compose-config:
 	COMPOSE_ENV_FILE=$(COMPOSE_ENV_FILE) docker compose --env-file $(COMPOSE_ENV_FILE) config --quiet
