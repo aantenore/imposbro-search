@@ -486,75 +486,38 @@ The Admin UI **Operations** page exposes the same flow with download, file uploa
 
 ---
 
-## 📊 Scaling the Typesense HA Cluster
+## 📊 Scaling Model
 
-The architecture is designed to easily scale the internal Typesense High-Availability (HA) cluster, which is responsible for storing the application's configuration state. Adding more nodes increases fault tolerance and read performance.
+IMPOSBRO has two different scaling surfaces:
 
-**Best Practice:** It is recommended to use an odd number of nodes (3, 5, 7, etc.) in a distributed cluster to maintain a clear quorum and avoid "split-brain" scenarios.
+* **Application workloads** (`query_api`, `indexing_service`, and `admin_ui`) are stateless or horizontally coordinated and are the workloads this repository scales directly.
+* **Stateful dependencies** (Typesense state/data clusters, Kafka, and Redis) should be scaled with their own operator, managed service, or dedicated runbook. Do not scale production Typesense clusters by copying Compose service blocks as a release procedure.
 
-Adding a new node (e.g., scaling from 3 to 5 nodes) is a simple, three-step configuration change. Here is how to add `typesense-4` and `typesense-5`:
+For local multi-instance validation, use the scale overlay. It removes per-replica host port bindings and publishes one local Query API endpoint through nginx:
 
-### Step 1: Add New Services to `docker-compose.yml`
-
-Copy the existing `typesense-3` service block twice and update the names and volume names.
-
-```yaml
-# In docker-compose.yml, add these new services:
-
-  typesense-4:
-    image: typesense/typesense:0.25.2
-    environment:
-      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
-      - TYPESENSE_DATA_DIR=/data
-      - GLOG_logtostderr=1
-    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
-    volumes:
-      - typesense_data_4:/data
-      - ./typesense-nodes:/app/typesense-nodes
-
-  typesense-5:
-    image: typesense/typesense:0.25.2
-    environment:
-      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
-      - TYPESENSE_DATA_DIR=/data
-      - GLOG_logtostderr=1
-    command: '--nodes=/app/typesense-nodes --api-key=${TYPESENSE_API_KEY}'
-    volumes:
-      - typesense_data_5:/data
-      - ./typesense-nodes:/app/typesense-nodes
+```bash
+make compose-config-scale
+SCALE_QUERY_API_REPLICAS=3 SCALE_INDEXING_REPLICAS=3 make smoke-docker-scale
 ```
 
-You also need to declare the new volumes at the bottom of the file:
+For Kubernetes, scale the IMPOSBRO application deployments or enable chart-managed HPA/KEDA:
 
-```yaml
-# In the top-level 'volumes:' section of docker-compose.yml:
-
-volumes:
-  # ... existing volumes
-  typesense_data_4:
-  typesense_data_5:
+```bash
+kubectl scale deployment imposbro-release-imposbro-search-query-api --replicas=3
+kubectl scale deployment imposbro-release-imposbro-search-indexing-service --replicas=5
 ```
 
-### Step 2: Update the `typesense-nodes` File
+Use `queryApi.autoscaling` / `adminUi.autoscaling` for CPU or memory driven request-serving workloads, and `indexingService.keda` when Kafka lag is the indexing-worker scaling signal.
 
-Add the hostnames of the new nodes to this file so all nodes in the cluster can discover each other.
+The local Compose topology intentionally keeps three-node Typesense clusters with stable peer files:
 
-```
-# In the 'typesense-nodes' file:
-in the format hostname:peering_port:api_port
-typesense-1:8107:8108,typesense-2:8107:8108,typesense-3:8107:8108,...
-```
+* `typesense-nodes-internal` for control-plane state
+* `typesense-nodes-data` for the default data cluster
+* `typesense-nodes-data2` for the optional second data cluster
 
-### Step 3: Update the `.env` File
+If you change those local stateful topologies, update the matching `*_NODES` environment variables, stable IP overrides, volumes, and peer files together, then recreate the affected volumes deliberately. For production stateful scaling, prefer the dedicated dependency tooling and capture evidence with the benchmark harness.
 
-Finally, tell the `query_api` about the new nodes by updating the `INTERNAL_STATE_NODES` environment variable.
-
-```env
-# In the '.env' file:
-INTERNAL_STATE_NODES=typesense-1,typesense-2,typesense-3,typesense-4,typesense-5
-```
-
-After these changes, restart the entire stack with `docker-compose up --build`. The `query_api` will automatically connect to all five nodes, and the Typesense cluster will re-balance itself. No application code changes are required.
+See [docs/RUNBOOK_SCALING.md](docs/RUNBOOK_SCALING.md) for the full scaling, lag-budget, rolling restart, rollback, and incident workflow.
 
 ---
 

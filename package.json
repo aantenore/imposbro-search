@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Enterprise federated search on Typesense – root workspace",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "test": "npm run test:api && npm run test:ui",
     "test:api": "node scripts/run-pytest.js",
