@@ -176,6 +176,11 @@ def main() -> None:
 
     fullname = f"{RELEASE_NAME}-imposbro-search"
     configmap = find_document(manifest, "ConfigMap", f"{fullname}-config")
+    secret = find_document(manifest, "Secret", f"{fullname}-secret")
+    require_not_contains(configmap, "REDIS_URL")
+    require_not_contains(configmap, "ADMIN_UI_PROXY_TRUSTED_VALUE")
+    require_contains(secret, 'REDIS_URL: "redis://redis:6379"')
+    require_contains(secret, 'ADMIN_UI_PROXY_TRUSTED_VALUE: "operator"')
     internal_query_api_url = configmap_value(configmap, "INTERNAL_QUERY_API_URL")
     internal_query_api_host = urlparse(internal_query_api_url).hostname
     services = resource_names(manifest, "Service")
@@ -197,6 +202,22 @@ def main() -> None:
     require_contains(dashboard, "http_request_duration_seconds_bucket")
     require_not_contains(dashboard, "fastapi_requests")
     print(f"Rendered counts: {counts}")
+
+    print("==> Helm guardrail: credentialed Redis URL is secret-only")
+    credentialed_redis = render("--set", "config.REDIS_URL=redis://:supersecret@redis:6379/0")
+    credentialed_configmap = find_document(
+        credentialed_redis,
+        "ConfigMap",
+        f"{fullname}-config",
+    )
+    credentialed_secret = find_document(
+        credentialed_redis,
+        "Secret",
+        f"{fullname}-secret",
+    )
+    require_not_contains(credentialed_configmap, "REDIS_URL")
+    require_not_contains(credentialed_configmap, "supersecret")
+    require_contains(credentialed_secret, 'REDIS_URL: "redis://:supersecret@redis:6379/0"')
 
     print("==> Helm render: query-api ingress only")
     query_only = render("--set", "adminUi.ingress.enabled=false")
@@ -274,6 +295,38 @@ def main() -> None:
         "config.INTERNAL_QUERY_API_ADMIN_API_KEY must match config.ADMIN_API_KEY or be present in config.SCOPED_API_KEYS",
         "--set",
         "config.INTERNAL_QUERY_API_ADMIN_API_KEY=worker-secret",
+    )
+
+    print("==> Helm guardrail: trusted proxy header requires expected value")
+    expect_failure(
+        "config.ADMIN_UI_PROXY_TRUSTED_VALUE is required when the Admin UI proxy injects server-side API keys",
+        "--set",
+        "config.ADMIN_UI_PROXY_TRUSTED_VALUE=",
+    )
+
+    print("==> Helm guardrail: explicit Admin UI OIDC endpoints require JWKS")
+    expect_failure(
+        "config.ADMIN_UI_OIDC_ISSUER or explicit Admin UI OIDC authorization, token, and JWKS endpoints are required",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.OIDC_ALGORITHMS=RS256",
+        "--set",
+        "config.ADMIN_UI_OIDC_CLIENT_ID=imposbro-admin-ui",
+        "--set",
+        "config.ADMIN_UI_SESSION_SECRET=admin-ui-session-secret-32-bytes-minimum",
+        "--set",
+        "config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT=https://idp.example.com/oauth2/authorize",
+        "--set",
+        "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT=https://idp.example.com/oauth2/token",
     )
 
     print("==> Helm render: distinct worker internal key accepted via scoped key")

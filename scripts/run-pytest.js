@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
+const minimumPython = [3, 11];
 const venvPython = process.platform === 'win32'
   ? path.join(repoRoot, '.venv', 'Scripts', 'python.exe')
   : path.join(repoRoot, '.venv', 'bin', 'python');
@@ -27,7 +28,31 @@ function runSuite(command, suite) {
   });
 }
 
+function checkPythonVersion(command) {
+  const result = spawnSync(command, [
+    '-c',
+    `import sys; raise SystemExit(0 if sys.version_info >= (${minimumPython[0]}, ${minimumPython[1]}) else 42)`,
+  ], {
+    cwd: repoRoot,
+    stdio: 'ignore',
+  });
+  if (result.error && result.error.code === 'ENOENT') {
+    return 'missing';
+  }
+  return result.status === 0 ? 'supported' : 'unsupported';
+}
+
+const unsupportedPython = [];
 for (const command of pythonCandidates) {
+  const versionStatus = checkPythonVersion(command);
+  if (versionStatus === 'missing') {
+    continue;
+  }
+  if (versionStatus === 'unsupported') {
+    unsupportedPython.push(command);
+    continue;
+  }
+
   let missing = false;
   for (const suite of suites) {
     const result = runSuite(command, suite);
@@ -44,5 +69,10 @@ for (const command of pythonCandidates) {
   }
 }
 
-console.error(`Unable to find a Python executable. Tried: ${pythonCandidates.join(', ')}`);
+console.error(
+  `Unable to find a Python ${minimumPython.join('.')}+ executable. Tried: ${pythonCandidates.join(', ')}`
+);
+if (unsupportedPython.length > 0) {
+  console.error(`Skipped unsupported Python executables: ${unsupportedPython.join(', ')}`);
+}
 process.exit(1);

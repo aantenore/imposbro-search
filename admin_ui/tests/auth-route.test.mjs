@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 const loginRoute = await import('../app/api/auth/login/route.js');
 const callbackRoute = await import('../app/api/auth/callback/route.js');
@@ -14,7 +15,17 @@ const AUTH_ENV = {
   ADMIN_UI_OIDC_CLIENT_SECRET: 'client-secret',
   ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: 'https://idp.example.com/oauth2/authorize',
   ADMIN_UI_OIDC_TOKEN_ENDPOINT: 'https://idp.example.com/oauth2/token',
+  ADMIN_UI_OIDC_JWKS_URL: 'https://idp.example.com/.well-known/jwks.json',
   ADMIN_UI_OIDC_SCOPES: 'openid profile email imposbro:admin imposbro:data',
+};
+
+const TEST_KEY_ID = 'admin-ui-test-key';
+const { publicKey: TEST_PUBLIC_KEY, privateKey: TEST_PRIVATE_KEY } = await generateKeyPair('RS256');
+const TEST_PUBLIC_JWK = {
+  ...(await exportJWK(TEST_PUBLIC_KEY)),
+  alg: 'RS256',
+  kid: TEST_KEY_ID,
+  use: 'sig',
 };
 
 function request(url, headers = {}) {
@@ -66,7 +77,28 @@ function base64UrlJson(value) {
     .replace(/=+$/g, '');
 }
 
-function testIdToken(nonce, claims = {}) {
+async function testIdToken(nonce, claims = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const {
+    aud = AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID,
+    exp = now + 1200,
+    iat = now,
+    sub = 'operator-1',
+    ...extraClaims
+  } = claims;
+  return new SignJWT({
+    aud,
+    exp,
+    iat,
+    nonce,
+    sub,
+    ...extraClaims,
+  })
+    .setProtectedHeader({ alg: 'RS256', kid: TEST_KEY_ID, typ: 'JWT' })
+    .sign(TEST_PRIVATE_KEY);
+}
+
+function unsignedIdToken(nonce, claims = {}) {
   const now = Math.floor(Date.now() / 1000);
   return [
     base64UrlJson({ alg: 'none', typ: 'JWT' }),
@@ -80,6 +112,16 @@ function testIdToken(nonce, claims = {}) {
     }),
     'signature',
   ].join('.');
+}
+
+async function tokenOrJwksResponse(url, tokenResponse) {
+  if (String(url) === AUTH_ENV.ADMIN_UI_OIDC_JWKS_URL) {
+    return new Response(JSON.stringify({ keys: [TEST_PUBLIC_JWK] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return tokenResponse();
 }
 
 async function createSessionCookie({
@@ -97,23 +139,25 @@ async function createSessionCookie({
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, options) => {
-    assert.equal(url, AUTH_ENV.ADMIN_UI_OIDC_TOKEN_ENDPOINT);
-    const body = new URLSearchParams(String(options.body));
-    assert.equal(body.get('grant_type'), 'authorization_code');
-    assert.equal(body.get('code'), 'auth-code');
-    assert.equal(body.get('client_id'), AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID);
-    assert.equal(body.get('client_secret'), AUTH_ENV.ADMIN_UI_OIDC_CLIENT_SECRET);
-    assert.ok(body.get('code_verifier'));
+    return tokenOrJwksResponse(url, async () => {
+      assert.equal(url, AUTH_ENV.ADMIN_UI_OIDC_TOKEN_ENDPOINT);
+      const body = new URLSearchParams(String(options.body));
+      assert.equal(body.get('grant_type'), 'authorization_code');
+      assert.equal(body.get('code'), 'auth-code');
+      assert.equal(body.get('client_id'), AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID);
+      assert.equal(body.get('client_secret'), AUTH_ENV.ADMIN_UI_OIDC_CLIENT_SECRET);
+      assert.ok(body.get('code_verifier'));
 
-    return new Response(JSON.stringify({
-      access_token: accessToken,
-      id_token: testIdToken(authorizeUrl.searchParams.get('nonce'), idTokenClaims),
-      token_type: 'Bearer',
-      expires_in: 1200,
-      scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      return new Response(JSON.stringify({
+        access_token: accessToken,
+        id_token: await testIdToken(authorizeUrl.searchParams.get('nonce'), idTokenClaims),
+        token_type: 'Bearer',
+        expires_in: 1200,
+        scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     });
   };
 
@@ -244,16 +288,16 @@ test('callback rejects id tokens that do not match the login nonce', async () =>
     const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async () => new Response(JSON.stringify({
+    globalThis.fetch = async (url) => tokenOrJwksResponse(url, async () => new Response(JSON.stringify({
       access_token: 'access-token',
-      id_token: testIdToken('different-nonce'),
+      id_token: await testIdToken('different-nonce'),
       token_type: 'Bearer',
       expires_in: 1200,
       scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
-    });
+    }));
 
     try {
       const response = await callbackRoute.GET(
@@ -264,6 +308,41 @@ test('callback rejects id tokens that do not match the login nonce', async () =>
       );
       assert.equal(response.status, 401);
       assert.match((await response.json()).detail, /nonce/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('callback rejects unsigned id tokens', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const login = await loginRoute.GET(
+      request('http://admin.local/api/auth/login?return_to=/operations')
+    );
+    const authorizeUrl = new URL(redirectLocation(login));
+    const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async (url) => tokenOrJwksResponse(url, async () => new Response(JSON.stringify({
+      access_token: 'access-token',
+      id_token: unsignedIdToken(authorizeUrl.searchParams.get('nonce')),
+      token_type: 'Bearer',
+      expires_in: 1200,
+      scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    try {
+      const response = await callbackRoute.GET(
+        request(
+          `http://admin.local/api/auth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`,
+          { cookie: txCookie }
+        )
+      );
+      assert.equal(response.status, 401);
+      assert.match((await response.json()).detail, /signature|claims/i);
     } finally {
       globalThis.fetch = originalFetch;
     }

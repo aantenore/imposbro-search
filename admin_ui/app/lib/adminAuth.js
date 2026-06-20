@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const DEFAULT_SCOPES = 'openid profile email imposbro:admin imposbro:data';
 const DEFAULT_RETURN_TO = '/dashboard';
@@ -7,6 +8,7 @@ const TX_COOKIE_NAME = 'imposbro_admin_oidc_tx';
 const TX_TTL_SECONDS = 600;
 const ID_TOKEN_CLOCK_SKEW_SECONDS = 60;
 const SEAL_AAD = Buffer.from('imposbro-admin-ui-session-v1');
+const JWKS_CACHE = new Map();
 
 export class AdminAuthError extends Error {
   constructor(message, status = 400) {
@@ -102,7 +104,7 @@ export async function createCallbackResponse(request) {
   if (!tokenSet.id_token) {
     throw new AdminAuthError('OIDC token endpoint did not return an id token.', 502);
   }
-  validateIdTokenClaims(tokenSet.id_token, tx.nonce, config);
+  await verifyIdToken(tokenSet.id_token, tx.nonce, config);
 
   const expiresIn = Number(tokenSet.expires_in || config.sessionTtlSeconds);
   const sessionMaxAge = Math.max(1, Math.min(config.sessionTtlSeconds, expiresIn));
@@ -224,6 +226,7 @@ async function getOidcConfig(request) {
     process.env.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT || ''
   ).trim();
   const configuredTokenEndpoint = (process.env.ADMIN_UI_OIDC_TOKEN_ENDPOINT || '').trim();
+  const configuredJwksUri = (process.env.ADMIN_UI_OIDC_JWKS_URL || '').trim();
   const scopes = (process.env.ADMIN_UI_OIDC_SCOPES || DEFAULT_SCOPES).trim();
   const redirectUri = (
     process.env.ADMIN_UI_OIDC_REDIRECT_URI ||
@@ -240,26 +243,32 @@ async function getOidcConfig(request) {
 
   let authorizationEndpoint = configuredAuthorizationEndpoint;
   let tokenEndpoint = configuredTokenEndpoint;
-  if (!authorizationEndpoint || !tokenEndpoint) {
+  let jwksUri = configuredJwksUri;
+  if (!authorizationEndpoint || !tokenEndpoint || !jwksUri) {
     if (!issuer) {
       throw new AdminAuthError(
-        'ADMIN_UI_OIDC_ISSUER or explicit Admin UI OIDC endpoints are required.',
+        'ADMIN_UI_OIDC_ISSUER or explicit Admin UI OIDC endpoints plus ADMIN_UI_OIDC_JWKS_URL are required.',
         500
       );
     }
     const metadata = await fetchOidcMetadata(issuer);
     authorizationEndpoint = authorizationEndpoint || metadata.authorization_endpoint;
     tokenEndpoint = tokenEndpoint || metadata.token_endpoint;
+    jwksUri = jwksUri || metadata.jwks_uri;
   }
 
   if (!authorizationEndpoint || !tokenEndpoint) {
     throw new AdminAuthError('OIDC provider metadata is missing authorization or token endpoints.', 502);
+  }
+  if (!jwksUri) {
+    throw new AdminAuthError('OIDC provider metadata is missing jwks_uri.', 502);
   }
 
   return {
     ...baseConfig,
     authorizationEndpoint,
     tokenEndpoint,
+    jwksUri,
     clientId,
     clientSecret,
     issuer,
@@ -313,8 +322,19 @@ async function exchangeCodeForToken(config, code, codeVerifier) {
   return response.json();
 }
 
-function validateIdTokenClaims(idToken, expectedNonce, config) {
-  const claims = decodeJwtPayload(idToken);
+async function verifyIdToken(idToken, expectedNonce, config) {
+  let claims;
+  try {
+    const verified = await jwtVerify(idToken, remoteJwksFor(config.jwksUri), {
+      audience: config.clientId,
+      clockTolerance: ID_TOKEN_CLOCK_SKEW_SECONDS,
+      issuer: config.issuer || undefined,
+    });
+    claims = verified.payload;
+  } catch (err) {
+    throw new AdminAuthError('OIDC id token signature or claims are invalid.', 401);
+  }
+
   if (!expectedNonce || claims.nonce !== expectedNonce) {
     throw new AdminAuthError('OIDC id token nonce is invalid.', 401);
   }
@@ -342,17 +362,11 @@ function validateIdTokenClaims(idToken, expectedNonce, config) {
   }
 }
 
-function decodeJwtPayload(idToken) {
-  const parts = String(idToken).split('.');
-  if (parts.length !== 3 || !parts[1]) {
-    throw new AdminAuthError('OIDC id token is invalid.', 401);
+function remoteJwksFor(jwksUri) {
+  if (!JWKS_CACHE.has(jwksUri)) {
+    JWKS_CACHE.set(jwksUri, createRemoteJWKSet(new URL(jwksUri)));
   }
-
-  try {
-    return JSON.parse(fromBase64Url(parts[1]).toString('utf8'));
-  } catch (_) {
-    throw new AdminAuthError('OIDC id token is invalid.', 401);
-  }
+  return JWKS_CACHE.get(jwksUri);
 }
 
 async function sealCookie(name, payload, secret, options = {}) {

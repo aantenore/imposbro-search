@@ -209,9 +209,12 @@ function hasTrustedUpstreamIdentity(request) {
   if (!trustedHeader) {
     return false;
   }
+  if (!trustedValue) {
+    return false;
+  }
   const actual = request.headers.get(trustedHeader);
   if (!actual) return false;
-  return trustedValue ? actual === trustedValue : true;
+  return actual === trustedValue;
 }
 
 function canInjectServerCredentials(request, trustedIdentity = hasTrustedUpstreamIdentity(request)) {

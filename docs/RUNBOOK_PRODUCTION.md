@@ -67,8 +67,9 @@ adminUi:
 ```
 
 If the Admin UI proxy injects server-side keys, configure
-`ADMIN_UI_PROXY_TRUSTED_HEADER` and make the authenticated ingress/gateway set
-that header. Prefer Admin UI OIDC login when the UI is directly operator-facing.
+`ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE`, then make
+the authenticated ingress/gateway set that exact header/value. Prefer Admin UI
+OIDC login when the UI is directly operator-facing.
 
 ## Network Policy
 
@@ -116,8 +117,9 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 - `ALLOW_UNAUTHENTICATED_ADMIN=false` and `ALLOW_UNAUTHENTICATED_DATA=false`.
 - `ADMIN_API_KEY`, `DATA_API_KEY`, `SCOPED_API_KEYS`, or OIDC configured for
   every exposed control/data-plane path.
-- `ADMIN_UI_PROXY_TRUSTED_HEADER` set when the Admin UI proxy injects server
-  keys, with the authenticated ingress/gateway setting that header.
+- `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE` set when
+  the Admin UI proxy injects server keys, with the authenticated ingress/gateway
+  setting that exact header/value.
 - Ingress class, TLS secrets, hosts, and authentication annotations configured
   for every browser-facing endpoint.
 - `CORS_ORIGINS` set to explicit browser origins.
