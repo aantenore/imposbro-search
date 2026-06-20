@@ -205,6 +205,14 @@ export const api = {
         }),
 
         /**
+         * Preview routing rules against a document without persisting them
+         */
+        preview: (payload) => request('/admin/routing-rules/preview', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        }),
+
+        /**
          * Delete routing rules for a collection
          */
         deleteRules: (collection) => request(`/admin/routing-rules/${encodeSegment(collection)}`, {

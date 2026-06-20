@@ -8,7 +8,7 @@ and serialization throughout the API.
 import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from constants import DOCUMENT_ID_PATTERN, NAME_PATTERN, TYPESENSE_DEFAULT_PORT
 
@@ -155,23 +155,65 @@ class FieldRule(BaseModel):
     
     Attributes:
         field: Document field to evaluate
-        value: Value that triggers this rule
+        operator: Match operator. Defaults to legacy equals.
+        value: Value that triggers legacy/equals routing
+        values: Values that trigger in routing
+        pattern: Glob pattern that triggers glob routing
+        min/max: Inclusive numeric range bounds for range routing
+        priority: Lower values evaluate first; ties keep input order
         cluster: Target cluster when rule matches (use this OR clusters)
         clusters: Target clusters for fan-out (use this OR cluster)
     """
     field: str = Field(..., description="Document field to check")
-    value: str = Field(..., description="Value that triggers this routing rule")
+    operator: Literal["equals", "in", "glob", "range"] = Field(
+        default="equals",
+        description="Routing match operator",
+    )
+    value: Optional[str] = Field(None, description="Value that triggers equals routing")
+    values: Optional[List[str]] = Field(None, description="Values that trigger in routing")
+    pattern: Optional[str] = Field(None, description="Glob pattern that triggers routing")
+    min: Optional[float] = Field(None, description="Inclusive minimum for range routing")
+    max: Optional[float] = Field(None, description="Inclusive maximum for range routing")
+    priority: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Lower values evaluate first; ties keep input order",
+    )
     cluster: Optional[NameString] = Field(None, description="Single target cluster")
     clusters: Optional[List[NameString]] = Field(
         None, description="Target clusters for fan-out (replication)"
     )
 
+    @field_validator("field")
+    @classmethod
+    def validate_rule_field_name(cls, value: str) -> str:
+        if not FIELD_NAME_PATTERN.fullmatch(value):
+            raise ValueError(
+                "Routing field names may contain only letters, numbers, underscore, hyphen, and dot"
+            )
+        return value
+
     @model_validator(mode="after")
-    def require_cluster_or_clusters(self) -> Self:
+    def validate_rule(self) -> Self:
         if (self.cluster is None) == (self.clusters is None):
             raise ValueError("Set exactly one of 'cluster' or 'clusters'")
         if self.clusters is not None and len(self.clusters) == 0:
             raise ValueError("'clusters' must not be empty")
+        if self.operator == "equals" and self.value is None:
+            raise ValueError("'value' is required when operator is equals")
+        if self.operator == "in" and not self.values:
+            raise ValueError("'values' must not be empty when operator is in")
+        if self.operator == "glob" and not (self.pattern or self.value):
+            raise ValueError("'pattern' is required when operator is glob")
+        if self.operator == "range" and self.min is None and self.max is None:
+            raise ValueError("'min' or 'max' is required when operator is range")
+        if (
+            self.operator == "range"
+            and self.min is not None
+            and self.max is not None
+            and self.min > self.max
+        ):
+            raise ValueError("'min' must be less than or equal to 'max'")
         return self
 
 
@@ -190,6 +232,34 @@ class RoutingRules(BaseModel):
     collection: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
     rules: List[FieldRule] = Field(default_factory=list, description="Ordered list of routing rules")
     default_cluster: NameString = Field(default="default", description="Fallback cluster")
+
+
+class RoutingPreviewRequest(BaseModel):
+    """Request model for dry-running routing policy decisions."""
+    collection: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
+    document: Dict[str, Any] = Field(..., description="Document payload to evaluate")
+    rules: Optional[List[FieldRule]] = Field(
+        default=None,
+        description="Optional draft rules; persisted rules are used when omitted",
+    )
+    default_cluster: NameString = Field(
+        default="default",
+        description="Fallback cluster for draft rules",
+    )
+
+
+class RoutingPreviewResponse(BaseModel):
+    """Response model for routing dry-run decisions."""
+    collection: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
+    matched: bool = Field(..., description="Whether a rule matched")
+    matched_rule: Optional[Dict[str, Any]] = Field(None, description="Matched rule")
+    matched_rule_index: Optional[int] = Field(None, ge=0, description="Input rule index")
+    used_default: bool = Field(..., description="Whether fallback routing was used")
+    routed_to: List[NameString] = Field(default_factory=list, description="Resolved clusters")
+    target_clusters: List[str] = Field(
+        default_factory=list,
+        description="Configured target cluster identifiers before resolution",
+    )
 
 
 class IngestResponse(BaseModel):
