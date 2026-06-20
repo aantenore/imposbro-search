@@ -48,6 +48,11 @@ BENCHMARK_DOCUMENTS=10000 \
 BENCHMARK_INGEST_CONCURRENCY=32 \
 BENCHMARK_SEARCH_REQUESTS=500 \
 BENCHMARK_SEARCH_CONCURRENCY=16 \
+BENCHMARK_ENVIRONMENT=staging-eu \
+BENCHMARK_RELEASE=$(git rev-parse --short HEAD) \
+BENCHMARK_CLUSTER_SHAPE="query=3,indexing=5,typesense=2x3,kafka=3" \
+BENCHMARK_HELM_VALUES_REF=release-values/staging-eu.yaml \
+BENCHMARK_IMAGE_SET="query-api@sha256:...,indexing@sha256:...,admin-ui@sha256:..." \
 BENCHMARK_OUTPUT_JSON=artifacts/benchmark-baseline.json \
 BENCHMARK_OUTPUT_MARKDOWN=artifacts/benchmark-baseline.md \
 make benchmark-k8s
@@ -83,8 +88,11 @@ The harness prints:
 
 When `BENCHMARK_OUTPUT_MARKDOWN` is set, the harness also writes a compact
 release-evidence report with ingest, indexing, search, SLO, and request-error
-sections. Keep the JSON artifact beside the Markdown report; the Markdown is
-for release review and the JSON is for trend comparison.
+sections. The JSON and Markdown artifacts include publishable run metadata when
+`BENCHMARK_ENVIRONMENT`, `BENCHMARK_RELEASE`, `BENCHMARK_CLUSTER_SHAPE`,
+`BENCHMARK_HELM_VALUES_REF`, `BENCHMARK_IMAGE_SET`, and optional
+`BENCHMARK_EVIDENCE_NOTES` are set. Keep the JSON artifact beside the Markdown
+report; the Markdown is for release review and the JSON is for trend comparison.
 
 ## Release SLO Example
 
@@ -101,6 +109,11 @@ BENCHMARK_MIN_INGEST_DOCS_PER_SECOND=500 \
 BENCHMARK_MAX_INDEXING_VISIBLE_SECONDS=300 \
 BENCHMARK_MAX_SEARCH_P95_MS=250 \
 BENCHMARK_MAX_SEARCH_ERROR_RATE=0 \
+BENCHMARK_ENVIRONMENT=prod-eu \
+BENCHMARK_RELEASE=v1.0.0 \
+BENCHMARK_CLUSTER_SHAPE="query=6,indexing=12,typesense=4x3,kafka=3" \
+BENCHMARK_HELM_VALUES_REF=release-values/prod-eu.yaml \
+BENCHMARK_IMAGE_SET="query-api@sha256:...,indexing@sha256:...,admin-ui@sha256:..." \
 BENCHMARK_OUTPUT_JSON=artifacts/benchmark-release.json \
 BENCHMARK_OUTPUT_MARKDOWN=artifacts/benchmark-release.md \
 make benchmark-k8s
@@ -143,4 +156,6 @@ The existing collection must contain these fields:
 
 Keep benchmark JSON and Markdown artifacts with release evidence. They are
 intentionally not committed by default because they are environment-specific
-measurements.
+measurements. Before publishing broad scale claims, confirm that the Markdown
+metadata table has no important `n/a` fields for environment, release, cluster
+shape, images, and deployment values.
