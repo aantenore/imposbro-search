@@ -1,6 +1,6 @@
 # Values used only to validate Helm rendering in CI/local release gates.
 queryApi:
-  image: registry.example.com/imposbro-query-api:1.0.0
+  image: registry.example.com/imposbro-query-api@sha256:1111111111111111111111111111111111111111111111111111111111111111
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
@@ -31,7 +31,7 @@ queryApi:
           app.kubernetes.io/component: query-api
 
 adminUi:
-  image: registry.example.com/imposbro-admin-ui:1.0.0
+  image: registry.example.com/imposbro-admin-ui@sha256:2222222222222222222222222222222222222222222222222222222222222222
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
@@ -63,7 +63,7 @@ adminUi:
           app.kubernetes.io/component: admin-ui
 
 indexingService:
-  image: registry.example.com/imposbro-indexing-service:1.0.0
+  image: registry.example.com/imposbro-indexing-service@sha256:3333333333333333333333333333333333333333333333333333333333333333
   podDisruptionBudget:
     enabled: true
     minAvailable: 1

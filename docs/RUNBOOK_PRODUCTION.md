@@ -111,7 +111,7 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 
 ## Production Values Checklist
 
-- Immutable images for Query API, Admin UI, and indexing service.
+- Digest-pinned `@sha256` images for Query API, Admin UI, and indexing service.
 - `config.useSecret: true` with secrets supplied by a secure values file or
   external secret injection.
 - `ALLOW_UNAUTHENTICATED_ADMIN=false` and `ALLOW_UNAUTHENTICATED_DATA=false`.
@@ -120,6 +120,8 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
 - `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE` set when
   the Admin UI proxy injects server keys, with the authenticated ingress/gateway
   setting that exact header/value.
+- HTTPS OIDC issuer, JWKS, authorization, and token endpoints unless a local-only
+  Helm test sets `config.ALLOW_INSECURE_OIDC_URLS=true`.
 - Ingress class, TLS secrets, hosts, and authentication annotations configured
   for every browser-facing endpoint.
 - `CORS_ORIGINS` set to explicit browser origins.

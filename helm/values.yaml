@@ -114,7 +114,8 @@ monitoring:
 # Configuration for the query-api service
 queryApi:
   name: query-api
-  # Required: set to an immutable image reference, never a mutable :latest tag.
+  # Required: set to an immutable digest-pinned reference, for example
+  # registry.example.com/imposbro-query-api@sha256:<64 hex chars>.
   image: ""
   replicaCount: 1
   podDisruptionBudget:
@@ -176,7 +177,8 @@ queryApi:
 # Configuration for the admin-ui service
 adminUi:
   name: admin-ui
-  # Required: set to an immutable image reference, never a mutable :latest tag.
+  # Required: set to an immutable digest-pinned reference, for example
+  # registry.example.com/imposbro-admin-ui@sha256:<64 hex chars>.
   image: ""
   replicaCount: 1
   podDisruptionBudget:
@@ -232,7 +234,8 @@ adminUi:
 # Configuration for the indexing-service (Kafka consumer)
 indexingService:
   name: indexing-service
-  # Required: set to an immutable image reference, never a mutable :latest tag.
+  # Required: set to an immutable digest-pinned reference, for example
+  # registry.example.com/imposbro-indexing-service@sha256:<64 hex chars>.
   image: ""
   replicaCount: 1
   podDisruptionBudget:
@@ -355,6 +358,7 @@ config:
   OIDC_SCOPE_CLAIMS: "scope,scp,roles,groups,realm_access.roles"
   OIDC_SCOPE_MAPPING: ""
   OIDC_SUBJECT_CLAIM: "sub"
+  ALLOW_INSECURE_OIDC_URLS: "false" # Local-only escape hatch for non-HTTPS OIDC endpoints.
   AUTHZ_COLLECTION_POLICIES: ""
   AUTHZ_API_KEY_TENANT_BYPASS: "true"
   # Required when the Admin UI proxy injects server-side API keys in production.

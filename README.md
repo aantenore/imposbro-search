@@ -540,7 +540,7 @@ The Helm chart deploys pre-built images. You must first build the images and pus
 docker compose build admin_ui query_api indexing_service
 
 # 2. Tag the images for your registry
-# Replace 'your-registry-user' and '1.0.0' with your registry and immutable release tag
+# Replace 'your-registry-user' and '1.0.0' with your registry and release tag
 docker tag imposbro-search-admin_ui your-registry-user/imposbro-admin-ui:1.0.0
 docker tag imposbro-search-query_api your-registry-user/imposbro-query-api:1.0.0
 docker tag imposbro-search-indexing_service your-registry-user/imposbro-indexing-service:1.0.0
@@ -549,11 +549,16 @@ docker tag imposbro-search-indexing_service your-registry-user/imposbro-indexing
 docker push your-registry-user/imposbro-admin-ui:1.0.0
 docker push your-registry-user/imposbro-query-api:1.0.0
 docker push your-registry-user/imposbro-indexing-service:1.0.0
+
+# 4. Resolve the pushed digests and use these @sha256 references in Helm values
+docker buildx imagetools inspect your-registry-user/imposbro-admin-ui:1.0.0
+docker buildx imagetools inspect your-registry-user/imposbro-query-api:1.0.0
+docker buildx imagetools inspect your-registry-user/imposbro-indexing-service:1.0.0
 ```
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Create a production values file:** The chart intentionally fails render with placeholder images, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, or missing required auth configuration. Provide immutable image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE`, and have your authenticated ingress/gateway set that exact header/value. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, OIDC client settings, signed id-token validation settings, and `ADMIN_UI_SESSION_SECRET`.
+1.  **Create a production values file:** The chart intentionally fails render with placeholder images, image tags without `@sha256` digests, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, non-HTTPS OIDC endpoints, or missing required auth configuration. Provide digest-pinned image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE`, and have your authenticated ingress/gateway set that exact header/value. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, HTTPS OIDC provider endpoints, signed id-token validation settings, and `ADMIN_UI_SESSION_SECRET`.
     The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
     Enable `queryApi.ingress.enabled=true` and/or `adminUi.ingress.enabled=true` when the cluster ingress controller should own TLS and routing. Keep Admin UI behind an authenticated ingress/gateway whenever the proxy injects server-side keys.
     Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.
