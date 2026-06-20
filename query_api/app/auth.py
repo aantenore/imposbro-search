@@ -3,6 +3,7 @@ import fnmatch
 import hashlib
 import json
 import re
+from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 import jwt
@@ -59,6 +60,8 @@ DEFAULT_OIDC_SCOPE_MAPPING: Dict[str, List[str]] = {
 TENANT_FIELD_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 TENANT_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 VALID_TENANT_MODES = {"off", "required", "inject"}
+_JWKS_CLIENTS: Dict[str, PyJWKClient] = {}
+_JWKS_CLIENTS_LOCK = Lock()
 
 
 class OidcConfigError(ValueError):
@@ -201,6 +204,21 @@ def _static_public_key() -> str:
     return settings.OIDC_PUBLIC_KEY.replace("\\n", "\n").strip()
 
 
+def clear_oidc_jwks_cache() -> None:
+    """Clear cached JWKS clients, primarily for tests."""
+    with _JWKS_CLIENTS_LOCK:
+        _JWKS_CLIENTS.clear()
+
+
+def _jwks_client_for_url(jwks_url: str) -> PyJWKClient:
+    with _JWKS_CLIENTS_LOCK:
+        client = _JWKS_CLIENTS.get(jwks_url)
+        if client is None:
+            client = PyJWKClient(jwks_url)
+            _JWKS_CLIENTS[jwks_url] = client
+        return client
+
+
 def _decode_oidc_token(token: str) -> Dict[str, Any]:
     issuer = settings.OIDC_ISSUER.strip()
     audience = settings.OIDC_AUDIENCE.strip()
@@ -220,7 +238,7 @@ def _decode_oidc_token(token: str) -> Dict[str, Any]:
     key: Any = public_key
     if jwks_url:
         try:
-            key = PyJWKClient(jwks_url).get_signing_key_from_jwt(token).key
+            key = _jwks_client_for_url(jwks_url).get_signing_key_from_jwt(token).key
         except PyJWKClientError as exc:
             raise OidcTokenError("Unable to resolve OIDC signing key") from exc
 
