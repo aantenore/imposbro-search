@@ -1,5 +1,8 @@
 """Tests for optional data-plane rate limiting."""
+from fastapi.testclient import TestClient
 from unittest.mock import MagicMock
+
+from main import app
 
 
 def _enable_memory_rate_limit(monkeypatch, *, search_limit=1, ingest_limit=1):
@@ -90,6 +93,23 @@ def test_rate_limit_uses_authenticated_actor_buckets(client, monkeypatch):
     assert first.status_code == 404
     assert second_same_actor.status_code == 429
     assert first_other_actor.status_code == 404
+
+
+def test_rate_limit_uses_client_ip_for_unauthenticated_buckets(monkeypatch):
+    """Unauthenticated dev traffic is limited per client IP, not one global actor."""
+    _enable_memory_rate_limit(monkeypatch, search_limit=1)
+
+    with (
+        TestClient(app, client=("203.0.113.10", 5000)) as client_a,
+        TestClient(app, client=("203.0.113.11", 5000)) as client_b,
+    ):
+        first_a = client_a.get("/search/products?q=test&query_by=name")
+        second_a = client_a.get("/search/products?q=test&query_by=name")
+        first_b = client_b.get("/search/products?q=test&query_by=name")
+
+    assert first_a.status_code == 404
+    assert second_a.status_code == 429
+    assert first_b.status_code == 404
 
 
 def test_rate_limit_fail_open_when_backend_unavailable(client, monkeypatch):
