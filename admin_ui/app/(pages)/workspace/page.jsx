@@ -13,6 +13,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { getSearchableFields } from '../../lib/searchFields';
 import { useNotification, Notification } from '../../hooks/useNotification';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -53,13 +54,6 @@ function buildSampleDocument(collectionName, fields) {
 
 function stringifyJson(value) {
   return JSON.stringify(value, null, JSON_INDENT);
-}
-
-function getSearchableFields(fields) {
-  return fields
-    .filter((field) => ['string', 'string[]', 'float[]'].includes(field.type))
-    .map((field) => field.name)
-    .filter(Boolean);
 }
 
 function ResultDocument({ hit }) {
