@@ -158,6 +158,9 @@ Validate required external service and secret configuration.
 {{- fail "config.RATE_LIMIT_BACKEND=memory is only supported for a single Query API replica; use redis for replicated deployments" -}}
 {{- end -}}
 {{- end -}}
+{{- if lt (int .Values.config.INGEST_BATCH_MAX_DOCUMENTS) 1 -}}
+{{- fail "config.INGEST_BATCH_MAX_DOCUMENTS must be >= 1" -}}
+{{- end -}}
 {{- if $oidcEnabled -}}
 {{- $_ := required "config.OIDC_ISSUER is required when OIDC_ENABLED is true" .Values.config.OIDC_ISSUER -}}
 {{- $_ := required "config.OIDC_AUDIENCE is required when OIDC_ENABLED is true" .Values.config.OIDC_AUDIENCE -}}

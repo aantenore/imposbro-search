@@ -173,6 +173,32 @@ def ingest_one(query_api_url: str, collection: str, headers, document):
     return payload
 
 
+def ingest_batch(query_api_url: str, collection: str, headers, documents):
+    status, payload = request(
+        "POST",
+        f"{query_api_url}/ingest/{collection}/batch",
+        {"documents": documents},
+        headers,
+        timeout=60,
+    )
+    if status != 200:
+        raise RuntimeError(f"Unexpected batch ingest status {status}: {payload}")
+    accepted = int(payload.get("accepted", 0) or 0)
+    if accepted != len(documents):
+        raise RuntimeError(
+            "Batch ingest did not accept every document: "
+            f"accepted={accepted} requested={len(documents)} payload={payload}"
+        )
+    return payload
+
+
+def chunk_documents(documents, batch_size: int):
+    return [
+        documents[index:index + batch_size]
+        for index in range(0, len(documents), batch_size)
+    ]
+
+
 def search_one(query_api_url: str, collection: str, headers, payload):
     status, result = request(
         "POST",
@@ -290,6 +316,12 @@ def parse_args():
         type=int,
         default=env_int("BENCHMARK_INGEST_CONCURRENCY", 32),
         help="Concurrent ingest requests",
+    )
+    parser.add_argument(
+        "--ingest-batch-size",
+        type=int,
+        default=env_int("BENCHMARK_INGEST_BATCH_SIZE", 1),
+        help="Documents per ingest request. Use 1 for single-document ingest.",
     )
     parser.add_argument(
         "--search-requests",
@@ -411,6 +443,8 @@ def validate_args(args) -> None:
         raise SystemExit("--documents must be >= 1")
     if args.ingest_concurrency < 1:
         raise SystemExit("--ingest-concurrency must be >= 1")
+    if args.ingest_batch_size < 1:
+        raise SystemExit("--ingest-batch-size must be >= 1")
     if args.search_requests < 1:
         raise SystemExit("--search-requests must be >= 1")
     if args.search_concurrency < 1:
@@ -436,6 +470,7 @@ def build_run_metadata(args):
             "use_existing_collection": bool(getattr(args, "use_existing_collection", False)),
             "keep_collection": bool(getattr(args, "keep_collection", False)),
             "allow_partial": bool(getattr(args, "allow_partial", False)),
+            "ingest_batch_size": int(getattr(args, "ingest_batch_size", 1)),
         },
         "slo_thresholds": {
             "min_ingest_docs_per_second": getattr(args, "min_ingest_docs_per_second", None),
@@ -457,6 +492,11 @@ def build_summary(
     search_result,
 ):
     ingest_elapsed = max(ingest_result["elapsed_seconds"], 0.001)
+    accepted_documents = sum(
+        int(payload.get("accepted", 1) or 0)
+        for payload in ingest_result["payloads"]
+        if isinstance(payload, dict)
+    )
     search_total = search_result["successes"] + search_result["error_count"]
     search_error_rate = search_result["error_count"] / max(search_total, 1)
     search_payloads = search_result["payloads"]
@@ -474,11 +514,14 @@ def build_summary(
         "metadata": build_run_metadata(args),
         "ingest": {
             "concurrency": args.ingest_concurrency,
+            "batch_size": args.ingest_batch_size,
+            "requests": ingest_result["successes"],
+            "documents_accepted": accepted_documents,
             "successes": ingest_result["successes"],
             "error_count": ingest_result["error_count"],
             "errors": ingest_result["errors"],
             "elapsed_seconds": round(ingest_result["elapsed_seconds"], 3),
-            "docs_per_second": round(ingest_result["successes"] / ingest_elapsed, 2),
+            "docs_per_second": round(accepted_documents / ingest_elapsed, 2),
             "latency_ms": latency_summary(ingest_result["latencies_ms"]),
         },
         "indexing": {
@@ -507,6 +550,9 @@ def print_summary(summary, violations):
     print(
         "ingest:",
         f"documents={summary['documents']}",
+        f"accepted={summary['ingest']['documents_accepted']}",
+        f"requests={summary['ingest']['requests']}",
+        f"batch_size={summary['ingest']['batch_size']}",
         f"successes={summary['ingest']['successes']}",
         f"errors={summary['ingest']['error_count']}",
         f"docs_per_second={summary['ingest']['docs_per_second']}",
@@ -592,6 +638,7 @@ def render_markdown_report(summary) -> str:
         f"| Use existing collection | {markdown_value(mode.get('use_existing_collection'))} |",
         f"| Keep collection | {markdown_value(mode.get('keep_collection'))} |",
         f"| Allow partial responses | {markdown_value(mode.get('allow_partial'))} |",
+        f"| Ingest batch size | {markdown_value(mode.get('ingest_batch_size'))} |",
         f"| Notes | {markdown_text(metadata.get('evidence_notes'))} |",
         "",
         "## SLO Thresholds",
@@ -608,6 +655,9 @@ def render_markdown_report(summary) -> str:
         "| Metric | Value |",
         "| --- | ---: |",
         f"| Concurrency | {markdown_value(summary['ingest']['concurrency'])} |",
+        f"| Batch size | {markdown_value(summary['ingest'].get('batch_size', 1))} |",
+        f"| Requests | {markdown_value(summary['ingest'].get('requests', summary['ingest']['successes']))} |",
+        f"| Documents accepted | {markdown_value(summary['ingest'].get('documents_accepted', summary['ingest']['successes']))} |",
         f"| Successes | {markdown_value(summary['ingest']['successes'])} |",
         f"| Errors | {markdown_value(summary['ingest']['error_count'])} |",
         f"| Elapsed | {markdown_value(summary['ingest']['elapsed_seconds'], 's')} |",
@@ -710,17 +760,31 @@ def main() -> int:
         documents = [
             build_document(index, tenant, args.seed) for index in range(args.documents)
         ]
-        ingest_result = run_parallel(
-            args.documents,
-            args.ingest_concurrency,
-            lambda index: time_call(
-                ingest_one,
-                query_api_url,
-                collection,
-                ingest_headers,
-                documents[index],
-            ),
-        )
+        batches = chunk_documents(documents, args.ingest_batch_size)
+        if args.ingest_batch_size == 1:
+            ingest_result = run_parallel(
+                args.documents,
+                args.ingest_concurrency,
+                lambda index: time_call(
+                    ingest_one,
+                    query_api_url,
+                    collection,
+                    ingest_headers,
+                    documents[index],
+                ),
+            )
+        else:
+            ingest_result = run_parallel(
+                len(batches),
+                args.ingest_concurrency,
+                lambda index: time_call(
+                    ingest_batch,
+                    query_api_url,
+                    collection,
+                    ingest_headers,
+                    batches[index],
+                ),
+            )
         if ingest_result["error_count"]:
             raise RuntimeError(f"Ingest failures: {ingest_result['errors']}")
 

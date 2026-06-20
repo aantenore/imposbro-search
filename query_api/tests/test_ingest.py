@@ -90,6 +90,166 @@ def test_ingest_propagates_request_id_to_kafka(client):
     assert published["request_id"] == "trace-123"
 
 
+def test_batch_ingest_accepts_documents_and_propagates_request_id(client):
+    """Batch ingest publishes one existing Kafka document message per document."""
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        headers={"X-Request-ID": "trace-batch"},
+        json={
+            "documents": [
+                {"id": "doc-1", "name": "Product One"},
+                {"id": "doc-2", "name": "Product Two"},
+            ]
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.headers["x-request-id"] == "trace-batch"
+    assert r.json() == {
+        "status": "ok",
+        "requested": 2,
+        "accepted": 2,
+        "rejected": 0,
+        "request_id": "trace-batch",
+        "items": [
+            {
+                "index": 0,
+                "document_id": "doc-1",
+                "status": "ok",
+                "routed_to": "default-data-cluster",
+                "error": None,
+            },
+            {
+                "index": 1,
+                "document_id": "doc-2",
+                "status": "ok",
+                "routed_to": "default-data-cluster",
+                "error": None,
+            },
+        ],
+    }
+    client.app.state.kafka_service.publish_document.assert_has_calls(
+        [
+            call(
+                collection_name="products",
+                document={"id": "doc-1", "name": "Product One"},
+                target_cluster="default-data-cluster",
+                request_id="trace-batch",
+            ),
+            call(
+                collection_name="products",
+                document={"id": "doc-2", "name": "Product Two"},
+                target_cluster="default-data-cluster",
+                request_id="trace-batch",
+            ),
+        ]
+    )
+
+
+def test_batch_ingest_rejects_oversized_batches(client, monkeypatch):
+    """Batch size is operator-configurable and enforced before publishing."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "INGEST_BATCH_MAX_DOCUMENTS", 1)
+
+    r = client.post(
+        "/ingest/products/batch",
+        json={
+            "documents": [
+                {"id": "doc-1", "name": "Product One"},
+                {"id": "doc-2", "name": "Product Two"},
+            ]
+        },
+    )
+
+    assert r.status_code == 413
+    assert "maximum is 1" in r.json()["detail"]
+    client.app.state.kafka_service.publish_document.assert_not_called()
+
+
+def test_batch_ingest_reports_partial_document_rejections(client):
+    """Invalid documents are rejected per item while valid documents still publish."""
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        json={
+            "documents": [
+                {"id": "doc-1", "name": "Product One"},
+                {"name": "Missing ID"},
+            ]
+        },
+    )
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "partial"
+    assert data["accepted"] == 1
+    assert data["rejected"] == 1
+    assert data["items"][0]["status"] == "ok"
+    assert data["items"][1]["status"] == "rejected"
+    assert "id" in data["items"][1]["error"].lower()
+    assert client.app.state.kafka_service.publish_document.call_count == 1
+
+
+def test_batch_ingest_reports_no_target_rejections(client):
+    """No-target routing failures are per-document rejections in batch mode."""
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[]
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        json={"documents": [{"id": "doc-1", "name": "Product One"}]},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "rejected"
+    assert r.json()["items"][0]["status"] == "rejected"
+    assert "No target cluster available" in r.json()["items"][0]["error"]
+    client.app.state.kafka_service.publish_document.assert_not_called()
+
+
+def test_batch_ingest_publishes_one_message_per_fanout_target(client):
+    """Batch ingest keeps existing fan-out semantics for every accepted document."""
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[
+            (MagicMock(), "cluster-a"),
+            (MagicMock(), "cluster-b"),
+        ]
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        json={"documents": [{"id": "doc-1", "name": "Product One"}]},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["items"][0]["routed_to"] == "cluster-a,cluster-b"
+    client.app.state.kafka_service.publish_document.assert_has_calls(
+        [
+            call(
+                collection_name="products",
+                document={"id": "doc-1", "name": "Product One"},
+                target_cluster="cluster-a",
+                request_id=r.json()["request_id"],
+            ),
+            call(
+                collection_name="products",
+                document={"id": "doc-1", "name": "Product One"},
+                target_cluster="cluster-b",
+                request_id=r.json()["request_id"],
+            ),
+        ]
+    )
+
+
 def test_get_document_returns_first_matching_candidate_cluster(client):
     """GET /documents/{collection}/{id} retrieves from candidate search clusters."""
     client.app.state.federation_service.get_named_clients_for_search = MagicMock(

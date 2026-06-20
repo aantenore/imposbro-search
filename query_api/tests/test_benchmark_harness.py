@@ -110,10 +110,21 @@ def test_run_parallel_collects_successes_and_errors():
     assert sorted(payload["index"] for payload in result["payloads"]) == [0, 1, 3]
 
 
+def test_chunk_documents_groups_by_batch_size():
+    documents = [{"id": f"doc-{index}"} for index in range(5)]
+
+    assert benchmark.chunk_documents(documents, 2) == [
+        [{"id": "doc-0"}, {"id": "doc-1"}],
+        [{"id": "doc-2"}, {"id": "doc-3"}],
+        [{"id": "doc-4"}],
+    ]
+
+
 def test_build_summary_includes_publishable_run_metadata():
     args = argparse.Namespace(
         documents=2,
         ingest_concurrency=2,
+        ingest_batch_size=2,
         search_requests=1,
         search_concurrency=1,
         environment="prod-eu",
@@ -131,11 +142,12 @@ def test_build_summary_includes_publishable_run_metadata():
         max_search_error_rate=0.0,
     )
     ingest_result = {
-        "successes": 2,
+        "successes": 1,
         "error_count": 0,
         "errors": [],
         "elapsed_seconds": 0.5,
-        "latencies_ms": [10.0, 20.0],
+        "latencies_ms": [20.0],
+        "payloads": [{"accepted": 2}],
     }
     search_result = {
         "successes": 1,
@@ -161,8 +173,11 @@ def test_build_summary_includes_publishable_run_metadata():
     assert summary["metadata"]["release"] == "4b5d9d9"
     assert summary["metadata"]["cluster_shape"] == "query=3,indexing=5,typesense=2x3"
     assert summary["metadata"]["mode"]["allow_partial"] is False
+    assert summary["metadata"]["mode"]["ingest_batch_size"] == 2
     assert summary["metadata"]["slo_thresholds"]["max_search_p95_ms"] == 250.0
     assert summary["ingest"]["docs_per_second"] == 4.0
+    assert summary["ingest"]["documents_accepted"] == 2
+    assert summary["ingest"]["requests"] == 1
 
 
 def sample_summary():
@@ -184,6 +199,7 @@ def sample_summary():
                 "use_existing_collection": False,
                 "keep_collection": False,
                 "allow_partial": False,
+                "ingest_batch_size": 10,
             },
             "slo_thresholds": {
                 "min_ingest_docs_per_second": 50.0,
@@ -194,7 +210,10 @@ def sample_summary():
         },
         "ingest": {
             "concurrency": 16,
-            "successes": 1000,
+            "batch_size": 10,
+            "requests": 100,
+            "documents_accepted": 1000,
+            "successes": 100,
             "error_count": 0,
             "errors": [],
             "elapsed_seconds": 10.5,
@@ -241,6 +260,8 @@ def test_render_markdown_report_summarizes_release_evidence():
     assert "| Environment | prod-eu |" in report
     assert "| Cluster shape | query=3,indexing=5,typesense=2x3 |" in report
     assert "| Max search p95 | 250 ms |" in report
+    assert "| Ingest batch size | 10 |" in report
+    assert "| Documents accepted | 1000 |" in report
     assert "| Throughput | 95.24 docs/s |" in report
     assert "| Visible after | 24.2s |" in report
     assert "| Latency p95 | 52.4 ms |" in report

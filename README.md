@@ -324,6 +324,11 @@ missing documents as successful no-ops. When tenant policy is active for OIDC
 callers, delete events carry a server-side `id && tenant` filter so a tenant
 token cannot delete another tenant's document by guessing its ID.
 
+Batch ingest is available at `POST /ingest/{collection}/batch`. It accepts a
+bounded `{"documents":[...]}` payload, applies the same data-plane auth, tenant
+policy, routing, request-id propagation, and Kafka message shape as single
+document ingest, and returns per-document acceptance/rejection details.
+
 Search responses include `clusters_queried`, `clusters_responded`, `failed_clusters`, and `partial`.
 If at least one cluster responds, partial failures return `200` with `partial: true`; if every target cluster fails, the API returns `503`.
 Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_match:desc`, or `_vector_distance:asc`; complex geo/function sorts are rejected until they can be merged exactly across clusters. The JSON search endpoint accepts allowlisted Typesense parameters including `vector_query`, `query_by_weights`, `include_fields`, `exclude_fields`, highlighting options, and remote embedding retry/timeout controls. When `vector_query` is present, the gateway uses Typesense Multi Search so the data-cluster request is also sent as a POST body.
@@ -403,6 +408,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `DATA_API_KEY` | Coarse legacy data-plane API key; grants `/ingest/*`, `/documents/*`, and `/search/*` unless narrower `SCOPED_API_KEYS` are preferred |
 | `ALLOW_UNAUTHENTICATED_DATA` | Local-development bypass for data-plane auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_DATA_API_KEY` | Optional server-side key used by the Admin UI proxy for search/ingest/delete; defaults to `DATA_API_KEY` when omitted |
+| `INGEST_BATCH_MAX_DOCUMENTS` | Maximum documents accepted by one `/ingest/{collection}/batch` request; default `100` |
 | `RATE_LIMIT_ENABLED` | Enables fixed-window rate limiting for `/search/*`, document reads, `/ingest/*`, and document delete requests; default `false` for backwards-compatible upgrades |
 | `RATE_LIMIT_BACKEND` | Rate-limit counter backend: `redis` for multi-replica deployments, `memory` only for single-process local/test runs |
 | `RATE_LIMIT_WINDOW_SECONDS` | Fixed-window duration in seconds |
@@ -681,6 +687,7 @@ indexingService:
 * [x] Tenant-safe data-plane document read/export by ID
 * [x] Rate-limit Prometheus metrics, Grafana panels, and PrometheusRule alerts for blocked traffic and backend failures
 * [x] Kubernetes ingest/search benchmark harness with JSON/Markdown output, publishable run metadata, and configurable SLO thresholds
+* [x] Bounded batch ingest endpoint with per-document acceptance details and batch-aware benchmark mode
 * [x] Opt-in Helm NetworkPolicy for Query API, Admin UI, and indexing metrics exposure
 * [x] Opt-in Helm ServiceMonitor and PrometheusRule resources for production alerting
 * [x] Opt-in Helm PodDisruptionBudget for Query API, Admin UI, and indexing workers
