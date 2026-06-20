@@ -414,7 +414,7 @@ def _get_rate_limiter(request: Request) -> FixedWindowRateLimiter:
 
 def _rate_limit_identity(request: Request) -> str:
     actor = getattr(request.state, "auth_actor", "")
-    if actor:
+    if actor and getattr(request.state, "auth_scheme", "") != "none":
         return str(actor)
     if request.client and request.client.host:
         return f"ip:{request.client.host}"
