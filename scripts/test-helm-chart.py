@@ -340,6 +340,304 @@ def main() -> None:
     )
     require_contains(scoped_worker, "worker-secret")
 
+    print("==> Helm guardrail: images must be digest-pinned")
+    expect_failure(
+        "queryApi.image must be pinned by digest",
+        "--set",
+        "queryApi.image=registry.example.com/imposbro-query-api:1.0.0",
+    )
+
+    print("==> Helm guardrail: placeholder image repositories are rejected")
+    expect_failure(
+        "adminUi.image must be a non-placeholder image reference",
+        "--set",
+        "adminUi.image=your-registry-user/imposbro-admin-ui@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    )
+
+    print("==> Helm guardrail: latest image tags are rejected even with digest")
+    expect_failure(
+        "indexingService.image must not use the mutable :latest tag",
+        "--set",
+        "indexingService.image=registry.example.com/imposbro-indexing-service:latest@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    )
+
+    print("==> Helm guardrail: chart secrets mode is required")
+    expect_failure(
+        "config.useSecret must be true",
+        "--set",
+        "config.useSecret=false",
+    )
+
+    print("==> Helm guardrail: Kafka bootstrap URL is required")
+    expect_failure(
+        "config.KAFKA_BROKER_URL is required",
+        "--set",
+        "config.KAFKA_BROKER_URL=",
+    )
+
+    print("==> Helm guardrail: Redis URL is required")
+    expect_failure(
+        "config.REDIS_URL is required",
+        "--set",
+        "config.REDIS_URL=",
+    )
+
+    print("==> Helm guardrail: Typesense state nodes are required")
+    expect_failure(
+        "config.INTERNAL_STATE_NODES is required",
+        "--set",
+        "config.INTERNAL_STATE_NODES=",
+    )
+
+    print("==> Helm guardrail: Typesense data nodes are required")
+    expect_failure(
+        "config.DEFAULT_DATA_CLUSTER_NODES is required",
+        "--set",
+        "config.DEFAULT_DATA_CLUSTER_NODES=",
+    )
+
+    print("==> Helm guardrail: Typesense state API key is required")
+    expect_failure(
+        "config.INTERNAL_STATE_API_KEY is required",
+        "--set",
+        "config.INTERNAL_STATE_API_KEY=",
+    )
+
+    print("==> Helm guardrail: Typesense data API key is required")
+    expect_failure(
+        "config.DEFAULT_DATA_CLUSTER_API_KEY is required",
+        "--set",
+        "config.DEFAULT_DATA_CLUSTER_API_KEY=",
+    )
+
+    print("==> Helm guardrail: trusted proxy header is required for key injection")
+    expect_failure(
+        "config.ADMIN_UI_PROXY_TRUSTED_HEADER is required when the Admin UI proxy injects server-side API keys",
+        "--set",
+        "config.ADMIN_UI_PROXY_TRUSTED_HEADER=",
+    )
+
+    print("==> Helm guardrail: OIDC issuer is required")
+    expect_failure(
+        "config.OIDC_ISSUER is required when OIDC_ENABLED is true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+    )
+
+    print("==> Helm guardrail: OIDC signing key source is required")
+    expect_failure(
+        "config.OIDC_JWKS_URL or config.OIDC_PUBLIC_KEY is required when OIDC_ENABLED is true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=",
+        "--set",
+        "config.OIDC_PUBLIC_KEY=",
+    )
+
+    print("==> Helm guardrail: OIDC signing key sources are mutually exclusive")
+    expect_failure(
+        "config.OIDC_JWKS_URL and config.OIDC_PUBLIC_KEY are mutually exclusive",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.OIDC_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----fake-----END PUBLIC KEY-----",
+    )
+
+    print("==> Helm guardrail: OIDC algorithms must be asymmetric")
+    expect_failure(
+        "config.OIDC_ALGORITHMS must use asymmetric algorithms",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.OIDC_ALGORITHMS=HS256",
+    )
+
+    print("==> Helm guardrail: Query API OIDC issuer must use HTTPS")
+    expect_failure(
+        "config.OIDC_ISSUER must use https://",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=http://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+    )
+
+    print("==> Helm guardrail: Query API OIDC JWKS URL must use HTTPS")
+    expect_failure(
+        "config.OIDC_JWKS_URL must use https://",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=http://idp.example.com/.well-known/jwks.json",
+    )
+
+    print("==> Helm render: local-only insecure OIDC URLs can be explicitly allowed")
+    insecure_local_oidc = render(
+        "--set",
+        "config.ALLOW_INSECURE_OIDC_URLS=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=http://idp.local/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=http://idp.local/.well-known/jwks.json",
+    )
+    require_contains(insecure_local_oidc, 'OIDC_ISSUER: "http://idp.local/"')
+
+    print("==> Helm guardrail: Admin UI OIDC requires Query API OIDC")
+    expect_failure(
+        "config.OIDC_ENABLED=true is required when ADMIN_UI_OIDC_ENABLED is true",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+    )
+
+    print("==> Helm guardrail: Admin UI OIDC session secret length is enforced")
+    expect_failure(
+        "config.ADMIN_UI_SESSION_SECRET must be at least 32 characters",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.ADMIN_UI_OIDC_CLIENT_ID=imposbro-admin-ui",
+        "--set",
+        "config.ADMIN_UI_SESSION_SECRET=short",
+        "--set",
+        "config.ADMIN_UI_OIDC_ISSUER=https://idp.example.com/",
+    )
+
+    print("==> Helm guardrail: Admin UI explicit OIDC token endpoint needs authorization endpoint")
+    expect_failure(
+        "config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT is required when ADMIN_UI_OIDC_TOKEN_ENDPOINT is set",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.ADMIN_UI_OIDC_CLIENT_ID=imposbro-admin-ui",
+        "--set",
+        "config.ADMIN_UI_SESSION_SECRET=admin-ui-session-secret-32-bytes-minimum",
+        "--set",
+        "config.ADMIN_UI_OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT=https://idp.example.com/oauth2/token",
+        "--set",
+        "config.ADMIN_UI_OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+    )
+
+    print("==> Helm guardrail: Admin UI OIDC JWKS without issuer needs explicit endpoints")
+    expect_failure(
+        "config.ADMIN_UI_OIDC_ISSUER or explicit Admin UI OIDC authorization, token, and JWKS endpoints are required",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.ADMIN_UI_OIDC_CLIENT_ID=imposbro-admin-ui",
+        "--set",
+        "config.ADMIN_UI_SESSION_SECRET=admin-ui-session-secret-32-bytes-minimum",
+        "--set",
+        "config.ADMIN_UI_OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+    )
+
+    print("==> Helm guardrail: Admin UI OIDC scopes include openid")
+    expect_failure(
+        "config.ADMIN_UI_OIDC_SCOPES must include openid",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.ADMIN_UI_OIDC_CLIENT_ID=imposbro-admin-ui",
+        "--set",
+        "config.ADMIN_UI_SESSION_SECRET=admin-ui-session-secret-32-bytes-minimum",
+        "--set",
+        "config.ADMIN_UI_OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.ADMIN_UI_OIDC_SCOPES=profile email",
+    )
+
+    print("==> Helm guardrail: Admin UI OIDC endpoints must use HTTPS")
+    expect_failure(
+        "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT must use https://",
+        "--set",
+        "config.ADMIN_UI_OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ENABLED=true",
+        "--set",
+        "config.OIDC_ISSUER=https://idp.example.com/",
+        "--set",
+        "config.OIDC_AUDIENCE=imposbro-api",
+        "--set",
+        "config.OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+        "--set",
+        "config.ADMIN_UI_OIDC_CLIENT_ID=imposbro-admin-ui",
+        "--set",
+        "config.ADMIN_UI_SESSION_SECRET=admin-ui-session-secret-32-bytes-minimum",
+        "--set",
+        "config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT=https://idp.example.com/oauth2/authorize",
+        "--set",
+        "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT=http://idp.example.com/oauth2/token",
+        "--set",
+        "config.ADMIN_UI_OIDC_JWKS_URL=https://idp.example.com/.well-known/jwks.json",
+    )
+
     print("Helm chart validation passed.")
 
 
