@@ -2,7 +2,7 @@
   "name": "imposbro-search",
   "version": "1.0.0",
   "private": true,
-  "description": "Enterprise federated search on Typesense – root workspace",
+  "description": "Typesense multi-cluster routing and control plane – root workspace",
   "engines": {
     "node": ">=20.9.0"
   },
