@@ -63,6 +63,20 @@ def test_health_returns_200(client, monkeypatch):
     assert data["data_clusters"] == {"default-data-cluster": "ok"}
 
 
+def test_prometheus_http_metrics_are_exposed(client, monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "_check_redis_ok", lambda: True)
+    monkeypatch.setattr(main, "_check_kafka_ok", lambda: True)
+
+    assert client.get("/health").status_code == 200
+    metrics = client.get("/metrics").text
+
+    assert 'http_requests_total{handler="/health",method="GET",status="2xx"}' in metrics
+    assert 'http_request_duration_seconds_bucket{handler="/health"' in metrics
+    assert 'method="GET"}' in metrics
+
+
 def test_ready_returns_503_when_data_cluster_is_not_ready(client, monkeypatch):
     import main
 
