@@ -58,10 +58,35 @@ function redirectLocation(response) {
   return response.headers.get('location');
 }
 
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function testIdToken(nonce, claims = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  return [
+    base64UrlJson({ alg: 'none', typ: 'JWT' }),
+    base64UrlJson({
+      aud: AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID,
+      exp: now + 1200,
+      iat: now,
+      nonce,
+      sub: 'operator-1',
+      ...claims,
+    }),
+    'signature',
+  ].join('.');
+}
+
 async function createSessionCookie({
   returnTo = '/operations',
   expectedReturnTo = returnTo,
   accessToken = 'access-token',
+  idTokenClaims = {},
 } = {}) {
   const login = await loginRoute.GET(
     request(`http://admin.local/api/auth/login?return_to=${encodeURIComponent(returnTo)}`)
@@ -82,6 +107,7 @@ async function createSessionCookie({
 
     return new Response(JSON.stringify({
       access_token: accessToken,
+      id_token: testIdToken(authorizeUrl.searchParams.get('nonce'), idTokenClaims),
       token_type: 'Bearer',
       expires_in: 1200,
       scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
@@ -172,6 +198,75 @@ test('callback rejects missing or invalid state', async () => {
     );
     assert.equal(response.status, 401);
     assert.match((await response.json()).detail, /state/i);
+  });
+});
+
+test('callback rejects token responses without an id token', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const login = await loginRoute.GET(
+      request('http://admin.local/api/auth/login?return_to=/operations')
+    );
+    const authorizeUrl = new URL(redirectLocation(login));
+    const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      access_token: 'access-token',
+      token_type: 'Bearer',
+      expires_in: 1200,
+      scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    try {
+      const response = await callbackRoute.GET(
+        request(
+          `http://admin.local/api/auth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`,
+          { cookie: txCookie }
+        )
+      );
+      assert.equal(response.status, 502);
+      assert.match((await response.json()).detail, /id token/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('callback rejects id tokens that do not match the login nonce', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const login = await loginRoute.GET(
+      request('http://admin.local/api/auth/login?return_to=/operations')
+    );
+    const authorizeUrl = new URL(redirectLocation(login));
+    const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      access_token: 'access-token',
+      id_token: testIdToken('different-nonce'),
+      token_type: 'Bearer',
+      expires_in: 1200,
+      scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    try {
+      const response = await callbackRoute.GET(
+        request(
+          `http://admin.local/api/auth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`,
+          { cookie: txCookie }
+        )
+      );
+      assert.equal(response.status, 401);
+      assert.match((await response.json()).detail, /nonce/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

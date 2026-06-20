@@ -54,6 +54,29 @@ function request(url, headers = {}) {
   };
 }
 
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function testIdToken(nonce) {
+  const now = Math.floor(Date.now() / 1000);
+  return [
+    base64UrlJson({ alg: 'none', typ: 'JWT' }),
+    base64UrlJson({
+      aud: AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID,
+      exp: now + 1200,
+      iat: now,
+      nonce,
+      sub: 'operator-1',
+    }),
+    'signature',
+  ].join('.');
+}
+
 async function createSessionCookie(accessToken = 'session-access-token') {
   const login = await loginRoute.GET(request('http://admin.local/api/auth/login?return_to=/dashboard'));
   const authorizeUrl = new URL(login.headers.get('location'));
@@ -62,6 +85,7 @@ async function createSessionCookie(accessToken = 'session-access-token') {
 
   globalThis.fetch = async () => new Response(JSON.stringify({
     access_token: accessToken,
+    id_token: testIdToken(authorizeUrl.searchParams.get('nonce')),
     token_type: 'Bearer',
     expires_in: 1200,
     scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,

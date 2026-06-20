@@ -362,7 +362,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional service-to-service key used by the Admin UI proxy and indexing worker; defaults to `ADMIN_API_KEY` when omitted. If it differs from `ADMIN_API_KEY`, include it in `SCOPED_API_KEYS` with `admin:internal`, `admin`, or `*` scope |
 | `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
 | `ADMIN_UI_PROXY_TRUSTED_VALUE` | Optional expected value for `ADMIN_UI_PROXY_TRUSTED_HEADER` |
-| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login for the Admin UI; requires Query API `OIDC_ENABLED=true` so proxied bearer sessions can be validated |
+| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login for the Admin UI; callback responses must include an `id_token` whose nonce, audience, issuer when configured, and timestamps validate before the session cookie is sealed. Requires Query API `OIDC_ENABLED=true` so proxied bearer sessions can be validated |
 | `ADMIN_UI_SESSION_SECRET` | Secret used to seal Admin UI HttpOnly session cookies; required and at least 32 characters when Admin UI OIDC is enabled |
 | `ADMIN_UI_OIDC_CLIENT_ID` / `ADMIN_UI_OIDC_CLIENT_SECRET` | OIDC client credentials for the Admin UI login flow; client secret is optional for public-client PKCE providers |
 | `ADMIN_UI_OIDC_ISSUER` | OIDC issuer used for Discovery when explicit authorization/token endpoints are not set |
