@@ -48,6 +48,7 @@ async function proxyRequest(request, params = {}) {
     if (
       key.toLowerCase() !== 'host' &&
       key.toLowerCase() !== 'connection' &&
+      key.toLowerCase() !== 'cookie' &&
       key.toLowerCase() !== 'next-url'
     ) {
       headers.set(key, value);
