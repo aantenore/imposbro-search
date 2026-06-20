@@ -9,6 +9,21 @@ import {
   readAdminSession,
 } from '../../lib/adminAuth.js';
 
+const PROXY_HEADER_BLOCKLIST = new Set([
+  'connection',
+  'content-length',
+  'cookie',
+  'host',
+  'keep-alive',
+  'next-url',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
 export async function GET(request, { params }) {
   return proxyRequest(request, params);
 }
@@ -45,12 +60,7 @@ async function proxyRequest(request, params = {}) {
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {
-    if (
-      key.toLowerCase() !== 'host' &&
-      key.toLowerCase() !== 'connection' &&
-      key.toLowerCase() !== 'cookie' &&
-      key.toLowerCase() !== 'next-url'
-    ) {
+    if (!PROXY_HEADER_BLOCKLIST.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   });

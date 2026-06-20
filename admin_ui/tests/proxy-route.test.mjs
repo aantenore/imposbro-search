@@ -270,16 +270,22 @@ test('injects OIDC session bearer before falling back to server API keys', async
       const response = await routeModule.GET(
         {
           method: 'GET',
-          nextUrl: new URL('http://admin.local/api/admin/stats'),
-          headers: new Headers({ cookie: sessionCookie }),
-        },
-        { params: Promise.resolve({ path: ['admin', 'stats'] }) }
-      );
+        nextUrl: new URL('http://admin.local/api/admin/stats'),
+        headers: new Headers({
+          cookie: sessionCookie,
+          'content-length': '999',
+          'proxy-authorization': 'Basic leaked',
+        }),
+      },
+      { params: Promise.resolve({ path: ['admin', 'stats'] }) }
+    );
 
       assert.equal(response.status, 200);
       assert.equal(proxied.url, 'http://backend.internal/admin/stats');
       assert.equal(proxied.headers.authorization, 'Bearer operator-token');
       assert.equal(proxied.headers.cookie, undefined);
+      assert.equal(proxied.headers['content-length'], undefined);
+      assert.equal(proxied.headers['proxy-authorization'], undefined);
       assert.equal(proxied.headers['x-api-key'], undefined);
     } finally {
       globalThis.fetch = originalFetch;
