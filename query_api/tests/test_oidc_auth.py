@@ -336,7 +336,7 @@ def test_oidc_tenant_policy_adds_delete_filter(client, monkeypatch):
             }
         }),
     )
-    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+    client.app.state.federation_service.get_named_clients_for_delete.return_value = [
         ("cluster-a", MagicMock())
     ]
     token = _token(

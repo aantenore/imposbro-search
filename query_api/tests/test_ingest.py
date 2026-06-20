@@ -140,7 +140,7 @@ def test_get_document_returns_503_when_lookup_cannot_check_all_candidates(client
 
 def test_delete_document_publishes_delete_to_all_candidate_clusters(client):
     """DELETE /documents/{collection}/{id} fans out idempotent delete events."""
-    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+    client.app.state.federation_service.get_named_clients_for_delete = MagicMock(
         return_value=[("cluster-a", MagicMock()), ("cluster-b", MagicMock())]
     )
 
@@ -178,7 +178,7 @@ def test_delete_document_publishes_delete_to_all_candidate_clusters(client):
 
 def test_delete_document_requires_at_least_one_candidate_cluster(client):
     """Delete fails closed when no data cluster is available."""
-    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+    client.app.state.federation_service.get_named_clients_for_delete = MagicMock(
         return_value=[]
     )
 

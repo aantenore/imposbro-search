@@ -167,6 +167,7 @@ async def lifespan_test(app: FastAPI):
         return_value=(MagicMock(), "default-data-cluster")
     )
     mock_federation.get_named_clients_for_search = MagicMock(return_value=[])
+    mock_federation.get_named_clients_for_delete = MagicMock(return_value=[])
     mock_federation.get_clients_for_search = MagicMock(return_value=[])
 
     federation_service = mock_federation

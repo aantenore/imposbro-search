@@ -534,7 +534,7 @@ def delete_document(
     Deletion is asynchronous and idempotent. The indexing worker treats missing
     documents as successful no-ops so clients can safely retry requests.
     """
-    targets = federation.get_named_clients_for_search(collection_name)
+    targets = federation.get_named_clients_for_delete(collection_name)
     if not targets:
         raise HTTPException(
             status_code=503,
