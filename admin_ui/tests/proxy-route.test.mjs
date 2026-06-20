@@ -279,6 +279,7 @@ test('injects OIDC session bearer before falling back to server API keys', async
       assert.equal(response.status, 200);
       assert.equal(proxied.url, 'http://backend.internal/admin/stats');
       assert.equal(proxied.headers.authorization, 'Bearer operator-token');
+      assert.equal(proxied.headers.cookie, undefined);
       assert.equal(proxied.headers['x-api-key'], undefined);
     } finally {
       globalThis.fetch = originalFetch;
