@@ -210,6 +210,19 @@ class DeleteDocumentResponse(BaseModel):
     routed_to: str = Field(..., description="Comma-separated target cluster names")
 
 
+class DocumentResponse(BaseModel):
+    """Response model for document retrieval/export."""
+    status: str = Field(..., description="Operation status")
+    collection: str = Field(..., pattern=NAME_PATTERN, description="Collection name")
+    document_id: str = Field(
+        ...,
+        pattern=DOCUMENT_ID_PATTERN,
+        description="Retrieved document id",
+    )
+    found_in: str = Field(..., description="Cluster that returned the document")
+    document: Dict[str, Any] = Field(..., description="Retrieved document payload")
+
+
 class SearchRequest(BaseModel):
     """
     Federated search request.

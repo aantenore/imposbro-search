@@ -12,11 +12,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 from prometheus_client import Counter
+import typesense
 
 from auth import (
     authorize_delete_filter,
     authorize_ingest_document,
     authorize_search_request,
+    can_read_document,
 )
 from constants import DOCUMENT_ID_PATTERN, NAME_PATTERN
 from deps import (
@@ -25,7 +27,7 @@ from deps import (
     require_ingest_collection_api_key,
     require_search_collection_api_key,
 )
-from models import DeleteDocumentResponse, IngestResponse, SearchRequest
+from models import DeleteDocumentResponse, DocumentResponse, IngestResponse, SearchRequest
 from observability import get_request_id
 from services import FederationService, KafkaService
 
@@ -43,6 +45,11 @@ documents_deleted = Counter(
     "documents_deleted_total",
     "Total number of document delete requests accepted.",
     ["collection"],
+)
+documents_read = Counter(
+    "documents_read_total",
+    "Total number of document read/export requests by result.",
+    ["collection", "result"],
 )
 
 # Configuration for deep pagination
@@ -423,6 +430,81 @@ def ingest_document(
             e,
         )
         raise HTTPException(status_code=500, detail=f"Kafka producer error: {str(e)}")
+
+
+@router.get(
+    "/documents/{collection_name}/{document_id}",
+    response_model=DocumentResponse,
+    summary="Retrieve a document",
+    dependencies=[Depends(require_search_collection_api_key)],
+)
+def get_document(
+    request: Request,
+    collection_name: str = Path(
+        ...,
+        pattern=NAME_PATTERN,
+        description="Collection name",
+    ),
+    document_id: str = Path(
+        ...,
+        pattern=DOCUMENT_ID_PATTERN,
+        description="Document id to retrieve",
+    ),
+    federation: FederationService = Depends(get_federation_service),
+) -> DocumentResponse:
+    """
+    Retrieve one document from any cluster that may contain the collection.
+
+    Tenant policy is enforced after retrieval and unauthorized matches are
+    reported as not found so cross-tenant callers do not receive document data.
+    """
+    targets = federation.get_named_clients_for_search(collection_name)
+    if not targets:
+        documents_read.labels(collection=collection_name, result="not_found").inc()
+        raise HTTPException(
+            status_code=404,
+            detail=f"Collection '{collection_name}' not found on any registered cluster.",
+        )
+
+    failed_clusters: List[str] = []
+    for target_cluster_name, client in targets:
+        try:
+            document = client.collections[collection_name].documents[document_id].retrieve()
+        except typesense.exceptions.ObjectNotFound:
+            continue
+        except Exception as exc:
+            failed_clusters.append(target_cluster_name)
+            logger.warning(
+                "Document read failed for %s/%s on cluster %s request_id=%s: %s",
+                collection_name,
+                document_id,
+                target_cluster_name,
+                get_request_id(request),
+                exc,
+            )
+            continue
+
+        if can_read_document(request, collection_name, document):
+            documents_read.labels(collection=collection_name, result="found").inc()
+            return DocumentResponse(
+                status="ok",
+                collection=collection_name,
+                document_id=document_id,
+                found_in=target_cluster_name,
+                document=document,
+            )
+
+    if failed_clusters:
+        documents_read.labels(collection=collection_name, result="failed").inc()
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Document lookup failed on cluster(s): {', '.join(failed_clusters)}."
+            ),
+        )
+
+    documents_read.labels(collection=collection_name, result="not_found").inc()
+    raise HTTPException(status_code=404, detail="Document not found.")
 
 
 @router.delete(

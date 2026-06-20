@@ -13,9 +13,11 @@ from smoke_common import (
     create_vector_collection,
     delete_collection,
     delete_document,
+    get_document,
     ingest_vector_documents,
     load_dotenv,
     vector_ids,
+    wait_for_document_not_found,
     wait_for_ready,
     wait_for_missing_id,
     wait_for_vector_result,
@@ -102,6 +104,21 @@ def main() -> int:
             f"ids={ids[:5]}",
         )
 
+        status, retrieved = get_document(
+            query_api_url,
+            collection,
+            "near",
+            search_headers,
+        )
+        if retrieved.get("document", {}).get("id") != "near":
+            raise RuntimeError(f"Unexpected retrieved document: {retrieved}")
+        print(
+            "get-document:",
+            status,
+            f"document_id={retrieved.get('document_id')}",
+            f"found_in={retrieved.get('found_in')}",
+        )
+
         if not args.skip_admin_ui:
             proxy_result = wait_for_vector_result(
                 admin_ui_api_url,
@@ -147,6 +164,14 @@ def main() -> int:
             f"found={post_delete.get('found')}",
             f"ids={vector_ids(post_delete)[:5]}",
         )
+        missing_payload = wait_for_document_not_found(
+            query_api_url,
+            collection,
+            "far",
+            search_headers,
+            args.timeout_seconds,
+        )
+        print("post-delete-get:", missing_payload.get("detail"))
 
         print("smoke-ok:", collection)
         return 0

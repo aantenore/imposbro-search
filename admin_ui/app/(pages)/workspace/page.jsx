@@ -106,11 +106,13 @@ export default function WorkspacePage() {
   const [isLoadingCollections, setIsLoadingCollections] = useState(true);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [isIngesting, setIsIngesting] = useState(false);
+  const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [documentJson, setDocumentJson] = useState('{}');
   const [ingestResult, setIngestResult] = useState(null);
   const [deleteDocumentId, setDeleteDocumentId] = useState('');
+  const [documentReadResult, setDocumentReadResult] = useState(null);
   const [deleteResult, setDeleteResult] = useState(null);
   const [searchParams, setSearchParams] = useState({
     q: '',
@@ -169,6 +171,7 @@ export default function WorkspacePage() {
     let cancelled = false;
     setIsLoadingSchema(true);
     setIngestResult(null);
+    setDocumentReadResult(null);
     setDeleteResult(null);
     setDeleteDocumentId('');
     setSearchResult(null);
@@ -276,6 +279,32 @@ export default function WorkspacePage() {
       showError(err.message);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleLoadDocument = async () => {
+    if (!selectedCollection) {
+      showError('Select a collection before loading a document.');
+      return;
+    }
+
+    const documentId = deleteDocumentId.trim();
+    if (!documentId) {
+      showError('Document ID is required.');
+      return;
+    }
+
+    setIsLoadingDocument(true);
+    try {
+      const result = await api.search.getDocument(selectedCollection, documentId);
+      setDocumentReadResult(result);
+      setDeleteResult(null);
+      setDocumentJson(stringifyJson(result.document));
+      showSuccess(`Document ${result.document_id} loaded from ${result.found_in}.`);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setIsLoadingDocument(false);
     }
   };
 
@@ -431,10 +460,10 @@ export default function WorkspacePage() {
               <CardHeader className="px-0 pt-0">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <UploadCloud className="h-5 w-5 text-primary" />
-                  Ingest document
+                  Document data
                 </CardTitle>
                 <CardDescription>
-                  Submit one JSON object to the selected collection.
+                  Submit, load, or delete one document in the selected collection.
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-0 pb-0">
@@ -483,10 +512,21 @@ export default function WorkspacePage() {
                       value={deleteDocumentId}
                       onChange={(event) => {
                         setDeleteDocumentId(event.target.value);
+                        setDocumentReadResult(null);
                         setDeleteResult(null);
                       }}
                       placeholder="product-123"
                     />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      leftIcon={<FileJson size={16} />}
+                      loading={isLoadingDocument}
+                      disabled={!selectedCollection || isLoadingSchema}
+                      onClick={handleLoadDocument}
+                    >
+                      Load
+                    </Button>
                     <Button
                       type="submit"
                       variant="destructive"
@@ -497,6 +537,12 @@ export default function WorkspacePage() {
                       Delete
                     </Button>
                   </div>
+                  {documentReadResult && (
+                    <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-sm text-sky-200">
+                      <FileJson className="mr-2 inline h-4 w-4" />
+                      {documentReadResult.document_id} loaded from {documentReadResult.found_in}
+                    </div>
+                  )}
                   {deleteResult && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
                       <Trash2 className="mr-2 inline h-4 w-4" />

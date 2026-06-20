@@ -91,6 +91,30 @@ def test_scoped_search_key_cannot_delete_documents(client, monkeypatch):
     assert r.status_code == 401
 
 
+def test_scoped_search_key_can_read_documents_but_ingest_key_cannot(client, monkeypatch):
+    """Document retrieval is read-side data-plane access, not write-side ingest access."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {"name": "reader", "key": "search-secret", "scopes": ["search"]},
+        {"name": "writer", "key": "ingest-secret", "scopes": ["ingest"]},
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+
+    read_allowed = client.get(
+        "/documents/products/doc-1",
+        headers={"X-API-Key": "search-secret"},
+    )
+    read_denied = client.get(
+        "/documents/products/doc-1",
+        headers={"X-API-Key": "ingest-secret"},
+    )
+
+    assert read_allowed.status_code == 404
+    assert read_denied.status_code == 401
+
+
 def test_scoped_ingest_key_cannot_search(client, monkeypatch):
     """An ingest-scoped key can ingest but cannot query search endpoints."""
     from settings import settings
