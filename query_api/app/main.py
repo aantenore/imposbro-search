@@ -28,7 +28,8 @@ from unittest.mock import MagicMock
 import typesense
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from starlette.routing import Match
 
 from constants import APP_NAME, VERSION
 from observability import normalize_request_id
@@ -57,6 +58,17 @@ kafka_service: Optional[KafkaService] = None
 config_sync_service: Optional[ConfigSyncService] = None
 config_notifier: Optional[SyncConfigNotifier] = None
 rate_limiter_service: Optional[FixedWindowRateLimiter] = None
+
+HTTP_REQUESTS = Counter(
+    "http_requests_total",
+    "Total HTTP requests handled by the Query API.",
+    ["handler", "method", "status"],
+)
+HTTP_REQUEST_DURATION = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration in seconds for the Query API.",
+    ["handler", "method"],
+)
 
 
 def create_state_client() -> typesense.Client:
@@ -317,6 +329,49 @@ def _get_lifespan():
     return lifespan
 
 
+def _status_family(status_code: int) -> str:
+    """Return low-cardinality status labels compatible with existing alerts."""
+    return f"{status_code // 100}xx"
+
+
+def _route_template_from_routes(scope, routes) -> Optional[str]:
+    """
+    Resolve a stable route template for Prometheus labels.
+
+    FastAPI 0.138 keeps included routers as internal wrapper routes, so the
+    matcher must inspect the original router routes instead of assuming every
+    top-level route has a public ``path`` attribute.
+    """
+    partial_template = None
+    for route in routes:
+        match, _child_scope = route.matches(scope)
+        template = getattr(route, "path", None)
+        if match == Match.FULL:
+            if template:
+                return template
+            original_router = getattr(route, "original_router", None)
+            if original_router:
+                nested = _route_template_from_routes(scope, original_router.routes)
+                if nested:
+                    return nested
+            nested_routes = getattr(route, "routes", None)
+            if nested_routes:
+                nested = _route_template_from_routes(scope, nested_routes)
+                if nested:
+                    return nested
+        elif match == Match.PARTIAL and partial_template is None and template:
+            partial_template = template
+    return partial_template
+
+
+def _route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    if template:
+        return template
+    return _route_template_from_routes(request.scope, request.app.routes) or request.url.path
+
+
 # Create FastAPI application
 app = FastAPI(
     title="IMPOSBRO Federated Search & Admin API",
@@ -365,12 +420,37 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def http_metrics_middleware(request: Request, call_next):
+    """Record low-cardinality HTTP metrics without relying on route internals."""
+    started_at = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        handler = _route_template(request)
+        method = request.method
+        HTTP_REQUESTS.labels(
+            handler=handler,
+            method=method,
+            status=_status_family(status_code),
+        ).inc()
+        HTTP_REQUEST_DURATION.labels(handler=handler, method=method).observe(
+            time.perf_counter() - started_at
+        )
+
+
 # Include routers
 app.include_router(admin_router)
 app.include_router(search_router)
 
-# Add Prometheus metrics
-Instrumentator().instrument(app).expose(app)
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """Expose Prometheus metrics for Query API and data-plane counters."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/", tags=["Health"])
