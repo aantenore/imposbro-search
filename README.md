@@ -1,8 +1,38 @@
-# IMPOSBRO SEARCH (Enterprise Federated Architecture)
+# IMPOSBRO Search (Typesense Multi-Cluster Control Plane)
 
 Welcome to **IMPOSBRO SEARCH**. The name is an acronym for "my first open source project written with a broken arm", reflecting the project's challenging origins.
 
-This is a complete, enterprise-grade open-source search framework built on **Typesense**. It provides a robust solution for creating a federated search system with document-level sharding, high availability, and comprehensive management capabilities.
+IMPOSBRO Search is an open-source control plane for operating **many physical Typesense clusters** behind one API, one ingestion path, and one operator console. It adds document-level routing, fan-out, async indexing, auditability, backup/restore, and Kubernetes release guardrails around Typesense.
+
+It is **not** a generic search-engine replacement. Native Typesense multi-search/union search, Meilisearch federated search, Algolia multi-index search, and Elastic/OpenSearch cross-cluster search already cover large parts of the broad "federated search" market. IMPOSBRO's useful wedge is narrower: teams that want Typesense ergonomics but need to route and operate data across separate clusters for tenant, region, compliance, resilience, or scaling boundaries.
+
+**Sharp Product Promise**
+
+One configurable control plane for routing, ingesting, searching, observing, and operating many Typesense clusters.
+
+**Use This When**
+
+* You already want Typesense, but one cluster or one HA replica set is not the right operational boundary.
+* Documents must be placed by tenant, country, region, compliance boundary, customer tier, or scale domain.
+* You need async ingestion, cluster fan-out, partial-outage behavior, backup/restore, audit visibility, and operator workflows around multiple Typesense clusters.
+* You prefer a self-hostable, inspectable, configurable layer instead of a managed search platform's pricing or control-plane assumptions.
+
+**Do Not Use This When**
+
+* You only need to search several collections in one Typesense cluster; use native Typesense multi-search or union search.
+* You are already standardized on Elastic/OpenSearch and need broad native cross-cluster analytics.
+* You need a hosted relevance platform with managed ranking, analytics, merchandising, and support; Algolia, Coveo, Elastic, or OpenSearch managed offerings may be a better buy.
+* You only need a front-end federated search UI with grouped results across a few indices.
+
+**Market Positioning**
+
+| Alternative | What it already solves | Where IMPOSBRO is different |
+|---|---|---|
+| [Typesense multi-search / union search](https://typesense.org/docs/30.2/api/federated-multi-search.html) | Multiple searches in one request, including merged union results across collections. | Routes documents and queries across multiple physical Typesense clusters, with async indexing and operator state. |
+| [Typesense HA](https://typesense.org/docs/guide/high-availability.html) | Node-level high availability for one replicated dataset. | Keeps separate datasets/clusters as intentional routing and governance boundaries. |
+| [Meilisearch federated search](https://meilisearch.com/docs/capabilities/multi_search/getting_started/federated_search) | Merged multi-index results inside Meilisearch. | Focuses on Typesense cluster operations, routing, fan-out, and self-hosted control-plane workflows. |
+| [Algolia multi-index search](https://www.algolia.com/doc/guides/building-search-ui/ui-and-ux-patterns/multi-index-search/js) | UX-oriented search across multiple Algolia indices. | Avoids managed-platform lock-in for teams that need self-hosted Typesense infrastructure and custom routing. |
+| [Elastic cross-cluster search](https://www.elastic.co/docs/explore-analyze/cross-cluster-search) / [OpenSearch cross-cluster search](https://docs.opensearch.org/latest/search-plugins/cross-cluster-search/) | Native cross-cluster query for their ecosystems. | Targets teams choosing Typesense, not teams that should simply use Elastic/OpenSearch native capabilities. |
 
 ## Table of Contents
 - [✨ Core Features](#-core-features)
