@@ -151,6 +151,75 @@ def test_topic_subscription_pattern_excludes_dlq_topic():
     assert not re.match(pattern, "imposbro_search_sharded_dlq")
 
 
+def test_run_consumer_quarantines_invalid_json_and_commits_offset(monkeypatch):
+    sent = []
+    commits = []
+    closed = []
+    source_topic = "imposbro_search_sharded_products"
+
+    class FakeMessage:
+        topic = source_topic
+        partition = 0
+        offset = 41
+        value = b"{not-json"
+
+    class FakeConsumer:
+        def __init__(self):
+            self.polled = False
+
+        def poll(self, timeout_ms):
+            if self.polled:
+                consumer.shutdown_requested = True
+                return {}
+            self.polled = True
+            return {consumer.TopicPartition(source_topic, 0): [FakeMessage()]}
+
+        def commit(self, offsets):
+            commits.append(offsets)
+            consumer.shutdown_requested = True
+
+        def close(self):
+            closed.append("consumer")
+
+    class FakeDlqProducer:
+        def send(self, topic, value):
+            sent.append({"topic": topic, "value": value})
+
+        def flush(self):
+            sent.append({"flushed": True})
+
+        def close(self):
+            closed.append("producer")
+
+    monkeypatch.setenv("KAFKA_BROKER_URL", "kafka:29092")
+    monkeypatch.setenv("KAFKA_TOPIC_PREFIX", "imposbro_search_sharded")
+    monkeypatch.setattr(consumer, "shutdown_requested", False)
+    monkeypatch.setattr(
+        consumer,
+        "create_kafka_consumer",
+        lambda kafka_broker_url, topic_prefix: FakeConsumer(),
+    )
+    monkeypatch.setattr(
+        consumer,
+        "create_dlq_producer",
+        lambda kafka_broker_url: FakeDlqProducer(),
+    )
+
+    consumer.run_consumer({})
+
+    assert sent[0]["topic"] == "imposbro_search_sharded_dlq"
+    assert sent[0]["value"]["source_topic"] == source_topic
+    assert sent[0]["value"]["error"] == "InvalidKafkaMessageError"
+    assert sent[0]["value"]["message"] == "{not-json"
+    assert sent[1] == {"flushed": True}
+
+    committed_offsets = commits[0]
+    topic_partition = consumer.TopicPartition(source_topic, 0)
+    assert list(committed_offsets) == [topic_partition]
+    assert committed_offsets[topic_partition].offset == 42
+    assert closed == ["consumer", "producer"]
+
+
 class FakeDocumentOperations:
     def __init__(self):
         self.upserted = []
