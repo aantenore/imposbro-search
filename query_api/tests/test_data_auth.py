@@ -235,7 +235,7 @@ def test_collection_scoped_ingest_key_can_delete_matching_collection(client, mon
         }
     ]))
     monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
-    client.app.state.federation_service.get_named_clients_for_search = MagicMock(
+    client.app.state.federation_service.get_named_clients_for_delete = MagicMock(
         return_value=[("default-data-cluster", MagicMock())]
     )
 

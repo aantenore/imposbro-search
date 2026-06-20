@@ -385,6 +385,18 @@ class FederationService:
             for name in self._cluster_names_for_search(collection_name)
         ]
 
+    def get_named_clients_for_delete(
+        self, collection_name: str
+    ) -> List[Tuple[str, typesense.Client]]:
+        """
+        Get named clients that may contain historical copies for deletion.
+
+        Deletes are idempotent, so fan out to every registered data cluster. This
+        avoids orphaning documents after routing rules move a collection away
+        from a cluster that previously received writes.
+        """
+        return list(self.clients.items())
+
     def get_clients_for_search(self, collection_name: str) -> List[typesense.Client]:
         """
         Get all clients that might contain documents for a collection.
