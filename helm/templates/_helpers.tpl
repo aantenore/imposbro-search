@@ -55,10 +55,28 @@ Require production callers to provide immutable, non-placeholder images.
 {{- define "imposbro-search.requiredImage" -}}
 {{- $name := .name -}}
 {{- $value := required (printf "%s is required and must be an immutable image reference" $name) .value -}}
-{{- if or (contains "your-registry/" $value) (hasSuffix ":latest" $value) -}}
-{{- fail (printf "%s must be a non-placeholder image and must not use the mutable :latest tag (got %q)" $name $value) -}}
+{{- if or (contains "your-registry/" $value) (contains "your-registry-user/" $value) -}}
+{{- fail (printf "%s must be a non-placeholder image reference (got %q)" $name $value) -}}
+{{- end -}}
+{{- if or (hasSuffix ":latest" $value) (contains ":latest@" $value) -}}
+{{- fail (printf "%s must not use the mutable :latest tag (got %q)" $name $value) -}}
+{{- end -}}
+{{- if not (regexMatch "@sha256:[A-Fa-f0-9]{64}$" $value) -}}
+{{- fail (printf "%s must be pinned by digest with @sha256:<64 hex chars> (got %q)" $name $value) -}}
 {{- end -}}
 {{- $value -}}
+{{- end }}
+
+{{/*
+Require production OIDC endpoints to use HTTPS unless explicitly disabled for local-only testing.
+*/}}
+{{- define "imposbro-search.validateSecureOidcUrl" -}}
+{{- $name := .name -}}
+{{- $value := toString .value -}}
+{{- $allowInsecure := eq (toString .allowInsecure) "true" -}}
+{{- if and $value (not $allowInsecure) (not (hasPrefix "https://" $value)) -}}
+{{- fail (printf "%s must use https:// unless config.ALLOW_INSECURE_OIDC_URLS=true for local-only testing (got %q)" $name $value) -}}
+{{- end -}}
 {{- end }}
 
 {{/*
@@ -89,6 +107,7 @@ Validate required external service and secret configuration.
 {{- $_ := required "config.INTERNAL_STATE_API_KEY is required" .Values.config.INTERNAL_STATE_API_KEY -}}
 {{- $_ := required "config.DEFAULT_DATA_CLUSTER_API_KEY is required" .Values.config.DEFAULT_DATA_CLUSTER_API_KEY -}}
 {{- $oidcEnabled := eq (toString .Values.config.OIDC_ENABLED) "true" -}}
+{{- $allowInsecureOidcUrls := eq (toString .Values.config.ALLOW_INSECURE_OIDC_URLS) "true" -}}
 {{- if and (eq (toString .Values.config.ALLOW_UNAUTHENTICATED_ADMIN) "false") (not .Values.config.ADMIN_API_KEY) (not .Values.config.SCOPED_API_KEYS) (not $oidcEnabled) -}}
 {{- fail "config.ADMIN_API_KEY, config.SCOPED_API_KEYS, or config.OIDC_ENABLED=true is required when ALLOW_UNAUTHENTICATED_ADMIN is false" -}}
 {{- end -}}
@@ -143,6 +162,8 @@ Validate required external service and secret configuration.
 {{- $_ := required "config.OIDC_ISSUER is required when OIDC_ENABLED is true" .Values.config.OIDC_ISSUER -}}
 {{- $_ := required "config.OIDC_AUDIENCE is required when OIDC_ENABLED is true" .Values.config.OIDC_AUDIENCE -}}
 {{- $_ := required "config.OIDC_ALGORITHMS is required when OIDC_ENABLED is true" .Values.config.OIDC_ALGORITHMS -}}
+{{- include "imposbro-search.validateSecureOidcUrl" (dict "name" "config.OIDC_ISSUER" "value" .Values.config.OIDC_ISSUER "allowInsecure" $allowInsecureOidcUrls) -}}
+{{- include "imposbro-search.validateSecureOidcUrl" (dict "name" "config.OIDC_JWKS_URL" "value" .Values.config.OIDC_JWKS_URL "allowInsecure" $allowInsecureOidcUrls) -}}
 {{- if and (not .Values.config.OIDC_JWKS_URL) (not .Values.config.OIDC_PUBLIC_KEY) -}}
 {{- fail "config.OIDC_JWKS_URL or config.OIDC_PUBLIC_KEY is required when OIDC_ENABLED is true" -}}
 {{- end -}}
@@ -172,6 +193,10 @@ Validate required external service and secret configuration.
 {{- if and (not .Values.config.ADMIN_UI_OIDC_ISSUER) (not (and .Values.config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT .Values.config.ADMIN_UI_OIDC_TOKEN_ENDPOINT .Values.config.ADMIN_UI_OIDC_JWKS_URL)) -}}
 {{- fail "config.ADMIN_UI_OIDC_ISSUER or explicit Admin UI OIDC authorization, token, and JWKS endpoints are required when ADMIN_UI_OIDC_ENABLED is true" -}}
 {{- end -}}
+{{- include "imposbro-search.validateSecureOidcUrl" (dict "name" "config.ADMIN_UI_OIDC_ISSUER" "value" .Values.config.ADMIN_UI_OIDC_ISSUER "allowInsecure" $allowInsecureOidcUrls) -}}
+{{- include "imposbro-search.validateSecureOidcUrl" (dict "name" "config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT" "value" .Values.config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT "allowInsecure" $allowInsecureOidcUrls) -}}
+{{- include "imposbro-search.validateSecureOidcUrl" (dict "name" "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT" "value" .Values.config.ADMIN_UI_OIDC_TOKEN_ENDPOINT "allowInsecure" $allowInsecureOidcUrls) -}}
+{{- include "imposbro-search.validateSecureOidcUrl" (dict "name" "config.ADMIN_UI_OIDC_JWKS_URL" "value" .Values.config.ADMIN_UI_OIDC_JWKS_URL "allowInsecure" $allowInsecureOidcUrls) -}}
 {{- if and .Values.config.ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT (not .Values.config.ADMIN_UI_OIDC_TOKEN_ENDPOINT) -}}
 {{- fail "config.ADMIN_UI_OIDC_TOKEN_ENDPOINT is required when ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT is set" -}}
 {{- end -}}
