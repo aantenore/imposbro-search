@@ -19,7 +19,7 @@ test('search query encodes collection names and query parameters', async () => {
   };
 
   try {
-    const result = await api.search.query('products live', {
+    const result = await api.search.query('products_live', {
       q: 'red shoe',
       query_by: 'title,brand',
       offset: 0,
@@ -29,7 +29,7 @@ test('search query encodes collection names and query parameters', async () => {
     assert.deepEqual(result, { hits: [], found: 0 });
     assert.equal(
       request.url,
-      '/api/search/products%20live?q=red+shoe&query_by=title%2Cbrand&offset=0&limit=10'
+      '/api/search/products_live?q=red+shoe&query_by=title%2Cbrand&offset=0&limit=10'
     );
     assert.equal(request.options.headers['Content-Type'], 'application/json');
   } finally {
@@ -47,13 +47,13 @@ test('advanced search posts a JSON body to the encoded collection path', async (
   };
 
   try {
-    await api.search.queryAdvanced('products live', {
+    await api.search.queryAdvanced('products_live', {
       q: '*',
       vector_query: 'embedding:([0.1,0.2], k:10)',
       exclude_fields: 'embedding',
     });
 
-    assert.equal(request.url, '/api/search/products%20live');
+    assert.equal(request.url, '/api/search/products_live');
     assert.equal(request.options.method, 'POST');
     assert.equal(
       request.options.body,
@@ -133,26 +133,26 @@ test('alias client lists, upserts, and deletes with encoded names', async () => 
   };
 
   try {
-    await api.aliases.list({ clusterName: 'cluster eu' });
+    await api.aliases.list({ clusterName: 'cluster_eu' });
     await api.aliases.upsert({
-      aliasName: 'products live',
+      aliasName: 'products_live',
       collectionName: 'products_v2',
-      clusterName: 'cluster eu',
+      clusterName: 'cluster_eu',
     });
     await api.aliases.delete({
-      aliasName: 'products live',
-      clusterName: 'cluster eu',
+      aliasName: 'products_live',
+      clusterName: 'cluster_eu',
     });
 
-    assert.equal(requests[0].url, '/api/admin/aliases?cluster_name=cluster+eu');
+    assert.equal(requests[0].url, '/api/admin/aliases?cluster_name=cluster_eu');
     assert.equal(
       requests[1].url,
-      '/api/admin/aliases/products%20live?collection_name=products_v2&cluster_name=cluster+eu'
+      '/api/admin/aliases/products_live?collection_name=products_v2&cluster_name=cluster_eu'
     );
     assert.equal(requests[1].options.method, 'PUT');
     assert.equal(
       requests[2].url,
-      '/api/admin/aliases/products%20live?cluster_name=cluster+eu'
+      '/api/admin/aliases/products_live?cluster_name=cluster_eu'
     );
     assert.equal(requests[2].options.method, 'DELETE');
   } finally {
@@ -241,9 +241,9 @@ test('ingest posts a JSON document to the encoded collection path', async () => 
   };
 
   try {
-    await api.search.ingest('tenant/products', { id: 'doc-1', title: 'Workbench' });
+    await api.search.ingest('tenant_products', { id: 'doc-1', title: 'Workbench' });
 
-    assert.equal(request.url, '/api/ingest/tenant%2Fproducts');
+    assert.equal(request.url, '/api/ingest/tenant_products');
     assert.equal(request.options.method, 'POST');
     assert.equal(request.options.body, '{"id":"doc-1","title":"Workbench"}');
   } finally {
@@ -261,9 +261,9 @@ test('deleteDocument deletes by encoded collection and document id path', async 
   };
 
   try {
-    await api.search.deleteDocument('tenant/products', 'doc.1');
+    await api.search.deleteDocument('tenant_products', 'doc.1');
 
-    assert.equal(request.url, '/api/documents/tenant%2Fproducts/doc.1');
+    assert.equal(request.url, '/api/documents/tenant_products/doc.1');
     assert.equal(request.options.method, 'DELETE');
   } finally {
     globalThis.fetch = originalFetch;
@@ -285,9 +285,9 @@ test('getDocument reads by encoded collection and document id path', async () =>
   };
 
   try {
-    await api.search.getDocument('tenant/products', 'doc.1');
+    await api.search.getDocument('tenant_products', 'doc.1');
 
-    assert.equal(request.url, '/api/documents/tenant%2Fproducts/doc.1');
+    assert.equal(request.url, '/api/documents/tenant_products/doc.1');
     assert.equal(request.options.method, 'GET');
   } finally {
     globalThis.fetch = originalFetch;

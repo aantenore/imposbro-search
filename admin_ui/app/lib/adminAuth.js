@@ -5,6 +5,7 @@ const DEFAULT_RETURN_TO = '/dashboard';
 const DEFAULT_SESSION_TTL_SECONDS = 3600;
 const TX_COOKIE_NAME = 'imposbro_admin_oidc_tx';
 const TX_TTL_SECONDS = 600;
+const ID_TOKEN_CLOCK_SKEW_SECONDS = 60;
 const SEAL_AAD = Buffer.from('imposbro-admin-ui-session-v1');
 
 export class AdminAuthError extends Error {
@@ -98,6 +99,10 @@ export async function createCallbackResponse(request) {
   if (!tokenSet.access_token) {
     throw new AdminAuthError('OIDC token endpoint did not return an access token.', 502);
   }
+  if (!tokenSet.id_token) {
+    throw new AdminAuthError('OIDC token endpoint did not return an id token.', 502);
+  }
+  validateIdTokenClaims(tokenSet.id_token, tx.nonce, config);
 
   const expiresIn = Number(tokenSet.expires_in || config.sessionTtlSeconds);
   const sessionMaxAge = Math.max(1, Math.min(config.sessionTtlSeconds, expiresIn));
@@ -306,6 +311,48 @@ async function exchangeCodeForToken(config, code, codeVerifier) {
     throw new AdminAuthError(`OIDC token exchange failed with HTTP ${response.status}.`, 502);
   }
   return response.json();
+}
+
+function validateIdTokenClaims(idToken, expectedNonce, config) {
+  const claims = decodeJwtPayload(idToken);
+  if (!expectedNonce || claims.nonce !== expectedNonce) {
+    throw new AdminAuthError('OIDC id token nonce is invalid.', 401);
+  }
+
+  const audiences = Array.isArray(claims.aud)
+    ? claims.aud.map((audience) => String(audience))
+    : [String(claims.aud || '')];
+  if (!audiences.includes(config.clientId)) {
+    throw new AdminAuthError('OIDC id token audience is invalid.', 401);
+  }
+
+  if (config.issuer && claims.iss !== config.issuer) {
+    throw new AdminAuthError('OIDC id token issuer is invalid.', 401);
+  }
+
+  const now = nowSeconds();
+  const expiresAt = Number(claims.exp);
+  if (!Number.isFinite(expiresAt) || expiresAt + ID_TOKEN_CLOCK_SKEW_SECONDS <= now) {
+    throw new AdminAuthError('OIDC id token is expired.', 401);
+  }
+
+  const issuedAt = Number(claims.iat);
+  if (!Number.isFinite(issuedAt) || issuedAt - ID_TOKEN_CLOCK_SKEW_SECONDS > now) {
+    throw new AdminAuthError('OIDC id token issued-at claim is invalid.', 401);
+  }
+}
+
+function decodeJwtPayload(idToken) {
+  const parts = String(idToken).split('.');
+  if (parts.length !== 3 || !parts[1]) {
+    throw new AdminAuthError('OIDC id token is invalid.', 401);
+  }
+
+  try {
+    return JSON.parse(fromBase64Url(parts[1]).toString('utf8'));
+  } catch (_) {
+    throw new AdminAuthError('OIDC id token is invalid.', 401);
+  }
 }
 
 async function sealCookie(name, payload, secret, options = {}) {
