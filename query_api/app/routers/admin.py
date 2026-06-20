@@ -31,6 +31,8 @@ from deps import (
 from models import (
     Cluster,
     CollectionSchema,
+    RoutingPreviewRequest,
+    RoutingPreviewResponse,
     RoutingRules,
     OperationResponse,
     AuditLogResponse,
@@ -1019,6 +1021,35 @@ def get_routing_map(
 
 
 @router.post(
+    "/routing-rules/preview",
+    response_model=RoutingPreviewResponse,
+    summary="Preview routing rules without saving",
+    dependencies=[Depends(require_admin_read_key)],
+)
+def preview_routing_rules(
+    request: RoutingPreviewRequest,
+    federation: FederationService = Depends(get_federation_service),
+) -> RoutingPreviewResponse:
+    """Dry-run a document against draft or persisted routing rules."""
+    rules_config = None
+    if request.rules is not None:
+        rules_config = {
+            "collection": request.collection,
+            "rules": [
+                rule.model_dump(exclude_none=True, exclude_defaults=True)
+                for rule in request.rules
+            ],
+            "default_cluster": request.default_cluster,
+        }
+    preview = federation.preview_routing(
+        request.collection,
+        request.document,
+        rules_config=rules_config,
+    )
+    return RoutingPreviewResponse(**preview)
+
+
+@router.post(
     "/routing-rules",
     status_code=201,
     summary="Set routing rules",
@@ -1052,7 +1083,10 @@ def set_routing_rules(
 
     rollback_snapshot = _federation_runtime_snapshot(federation)
     try:
-        rules_list = [r.model_dump(exclude_none=True) for r in rules_config.rules]
+        rules_list = [
+            r.model_dump(exclude_none=True, exclude_defaults=True)
+            for r in rules_config.rules
+        ]
         federation.set_routing_rules(
             collection=collection_name,
             rules=rules_list,

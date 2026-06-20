@@ -176,6 +176,103 @@ def test_delete_candidates_include_all_clusters_despite_current_routing():
     ]
 
 
+def test_routing_rules_support_v2_operators_priority_and_fanout():
+    federation = FederationService()
+    federation.clients = {
+        "cluster-a": object(),
+        "cluster-b": object(),
+        "cluster-c": object(),
+    }
+    federation.set_routing_rules(
+        "products",
+        [
+            {
+                "field": "region",
+                "operator": "in",
+                "values": ["IT", "FR"],
+                "clusters": ["cluster-a", "cluster-b"],
+                "priority": 10,
+            },
+            {
+                "field": "sku",
+                "operator": "glob",
+                "pattern": "vip-*",
+                "cluster": "cluster-c",
+                "priority": 0,
+            },
+            {
+                "field": "price",
+                "operator": "range",
+                "min": 100,
+                "max": 200,
+                "cluster": "cluster-b",
+            },
+            {
+                "field": "country",
+                "value": "DE",
+                "cluster": "cluster-a",
+            },
+        ],
+        "cluster-c",
+    )
+
+    assert federation.get_targets_for_document(
+        "products",
+        {"region": "IT"},
+    ) == [
+        (federation.clients["cluster-a"], "cluster-a"),
+        (federation.clients["cluster-b"], "cluster-b"),
+    ]
+    assert federation.get_targets_for_document(
+        "products",
+        {"region": "IT", "sku": "vip-001"},
+    ) == [(federation.clients["cluster-c"], "cluster-c")]
+    assert federation.get_targets_for_document(
+        "products",
+        {"price": 150},
+    ) == [(federation.clients["cluster-b"], "cluster-b")]
+    assert federation.get_targets_for_document(
+        "products",
+        {"country": "DE"},
+    ) == [(federation.clients["cluster-a"], "cluster-a")]
+    assert federation.get_targets_for_document(
+        "products",
+        {"country": "ES"},
+    ) == [(federation.clients["cluster-c"], "cluster-c")]
+
+
+def test_routing_preview_reports_matched_rule_without_mutating_state():
+    federation = FederationService()
+    federation.clients = {
+        "cluster-a": object(),
+        "cluster-b": object(),
+    }
+    federation.routing_rules = {
+        "products": {
+            "rules": [
+                {
+                    "field": "tenant",
+                    "operator": "equals",
+                    "value": "acme",
+                    "cluster": "cluster-a",
+                }
+            ],
+            "default_cluster": "cluster-b",
+        }
+    }
+
+    preview = federation.preview_routing("products", {"tenant": "acme"})
+    fallback = federation.preview_routing("products", {"tenant": "other"})
+
+    assert preview["matched"] is True
+    assert preview["matched_rule_index"] == 0
+    assert preview["routed_to"] == ["cluster-a"]
+    assert fallback["matched"] is False
+    assert fallback["used_default"] is True
+    assert fallback["routed_to"] == ["cluster-b"]
+    assert federation.routing_rules["products"]["rules"][0]["value"] == "acme"
+
+
 def test_register_cluster_rejects_unreachable_declared_nodes(monkeypatch):
     federation = FederationService()
 
