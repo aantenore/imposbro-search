@@ -506,6 +506,43 @@ def test_oidc_tenant_policy_injects_missing_ingest_tenant(client, monkeypatch):
     assert published["document"]["tenant_id"] == "tenant-a"
 
 
+def test_oidc_tenant_policy_injects_missing_batch_ingest_tenant(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    from settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "AUTHZ_COLLECTION_POLICIES",
+        json.dumps({
+            "collections": {
+                "products": {
+                    "mode": "inject",
+                    "tenant_field": "tenant_id",
+                    "tenant_claim": "tenant_id",
+                }
+            }
+        }),
+    )
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"documents": [{"id": "doc-1", "name": "Product"}]},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["accepted"] == 1
+    published = client.app.state.kafka_service.publish_document.call_args.kwargs
+    assert published["document"]["tenant_id"] == "tenant-a"
+
+
 def test_oidc_tenant_policy_injects_missing_nested_ingest_tenant(client, monkeypatch):
     _configure_oidc(monkeypatch)
     from settings import settings
@@ -574,6 +611,40 @@ def test_oidc_tenant_policy_rejects_cross_tenant_ingest(client, monkeypatch):
     )
 
     assert r.status_code == 403
+
+
+def test_oidc_tenant_policy_rejects_cross_tenant_batch_item(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    from settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "AUTHZ_COLLECTION_POLICIES",
+        json.dumps({
+            "collections": {
+                "products": {
+                    "mode": "required",
+                    "tenant_field": "tenant_id",
+                    "tenant_claim": "tenant_id",
+                }
+            }
+        }),
+    )
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"documents": [{"id": "doc-1", "tenant_id": "tenant-b"}]},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "rejected"
+    assert r.json()["items"][0]["status"] == "rejected"
+    client.app.state.kafka_service.publish_document.assert_not_called()
 
 
 def test_oidc_tenant_policy_rejects_cross_tenant_nested_ingest(client, monkeypatch):

@@ -27,9 +27,18 @@ from deps import (
     require_ingest_collection_api_key,
     require_search_collection_api_key,
 )
-from models import DeleteDocumentResponse, DocumentResponse, IngestResponse, SearchRequest
+from models import (
+    BatchIngestItemResult,
+    BatchIngestRequest,
+    BatchIngestResponse,
+    DeleteDocumentResponse,
+    DocumentResponse,
+    IngestResponse,
+    SearchRequest,
+)
 from observability import get_request_id
 from services import FederationService, KafkaService
+from settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +222,42 @@ def _execute_typesense_search(
     return client.collections[collection_name].documents.search(search_params)
 
 
+def _publish_ingest_document(
+    *,
+    request: Request,
+    collection_name: str,
+    document: Dict[str, Any],
+    federation: FederationService,
+    kafka: KafkaService,
+    request_id: str,
+) -> Tuple[str, str]:
+    doc_id = document.get("id")
+    if not doc_id:
+        raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
+
+    document = authorize_ingest_document(request, collection_name, document)
+    targets = federation.get_targets_for_document(collection_name, document)
+    if not targets:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No target cluster available for document. "
+                "Ensure at least one data cluster is registered and routing is configured."
+            ),
+        )
+
+    for _client, target_cluster_name in targets:
+        kafka.publish_document(
+            collection_name=collection_name,
+            document=document,
+            target_cluster=target_cluster_name,
+            request_id=request_id,
+        )
+    routed_to = ",".join(name for _, name in targets)
+    documents_ingested.labels(collection=collection_name).inc()
+    return str(doc_id), routed_to
+
+
 async def _perform_federated_search(
     response: Response,
     collection_name: str,
@@ -392,44 +437,121 @@ def ingest_document(
     Returns:
         IngestResponse with status and routing information
     """
-    doc_id = document.get("id")
-    if not doc_id:
-        raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
-    document = authorize_ingest_document(request, collection_name, document)
-
-    # Get all targets (single or fan-out to multiple clusters)
-    targets = federation.get_targets_for_document(collection_name, document)
-
-    if not targets:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "No target cluster available for document. "
-                "Ensure at least one data cluster is registered and routing is configured."
-            ),
-        )
-
+    request_id = get_request_id(request)
     try:
-        for _client, target_cluster_name in targets:
-            kafka.publish_document(
-                collection_name=collection_name,
-                document=document,
-                target_cluster=target_cluster_name,
-                request_id=get_request_id(request),
-            )
-        routed_to = ",".join(name for _, name in targets)
-        documents_ingested.labels(collection=collection_name).inc()
-
+        doc_id, routed_to = _publish_ingest_document(
+            request=request,
+            collection_name=collection_name,
+            document=document,
+            federation=federation,
+            kafka=kafka,
+            request_id=request_id,
+        )
         return IngestResponse(
-            status="ok", document_id=str(doc_id), routed_to=routed_to
+            status="ok", document_id=doc_id, routed_to=routed_to
         )
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         logger.error(
             "Failed to publish document to Kafka request_id=%s: %s",
-            get_request_id(request),
+            request_id,
             e,
         )
         raise HTTPException(status_code=500, detail=f"Kafka producer error: {str(e)}")
+
+
+@router.post(
+    "/ingest/{collection_name}/batch",
+    response_model=BatchIngestResponse,
+    summary="Ingest multiple documents",
+    dependencies=[Depends(require_ingest_collection_api_key)],
+)
+def ingest_documents_batch(
+    request: Request,
+    collection_name: str = Path(
+        ...,
+        pattern=NAME_PATTERN,
+        description="Collection name",
+    ),
+    payload: BatchIngestRequest = Body(...),
+    federation: FederationService = Depends(get_federation_service),
+    kafka: KafkaService = Depends(get_kafka_service),
+) -> BatchIngestResponse:
+    """
+    Ingest multiple documents through the same routing and Kafka path as single ingest.
+
+    Kafka messages stay atomic: each accepted document-target pair is published
+    as the existing single-document event consumed by the indexing worker.
+    """
+    requested = len(payload.documents)
+    if requested > settings.INGEST_BATCH_MAX_DOCUMENTS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Batch contains {requested} documents; "
+                f"maximum is {settings.INGEST_BATCH_MAX_DOCUMENTS}."
+            ),
+        )
+
+    request_id = get_request_id(request)
+    items: List[BatchIngestItemResult] = []
+    accepted = 0
+    for index, document in enumerate(payload.documents):
+        document_id = document.get("id")
+        try:
+            accepted_document_id, routed_to = _publish_ingest_document(
+                request=request,
+                collection_name=collection_name,
+                document=document,
+                federation=federation,
+                kafka=kafka,
+                request_id=request_id,
+            )
+            accepted += 1
+            items.append(
+                BatchIngestItemResult(
+                    index=index,
+                    document_id=accepted_document_id,
+                    status="ok",
+                    routed_to=routed_to,
+                )
+            )
+        except HTTPException as exc:
+            items.append(
+                BatchIngestItemResult(
+                    index=index,
+                    document_id=str(document_id) if document_id is not None else None,
+                    status="rejected",
+                    error=str(exc.detail),
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to publish batch document to Kafka request_id=%s index=%s: %s",
+                request_id,
+                index,
+                exc,
+            )
+            items.append(
+                BatchIngestItemResult(
+                    index=index,
+                    document_id=str(document_id) if document_id is not None else None,
+                    status="rejected",
+                    error=f"Kafka producer error: {str(exc)}",
+                )
+            )
+
+    rejected = requested - accepted
+    status = "ok" if rejected == 0 else "rejected" if accepted == 0 else "partial"
+    return BatchIngestResponse(
+        status=status,
+        requested=requested,
+        accepted=accepted,
+        rejected=rejected,
+        request_id=request_id,
+        items=items,
+    )
 
 
 @router.get(

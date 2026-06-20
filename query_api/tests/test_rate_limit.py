@@ -62,6 +62,33 @@ def test_ingest_rate_limit_returns_429_after_configured_budget(client, monkeypat
     assert second.json()["detail"] == "Rate limit exceeded"
 
 
+def test_batch_ingest_rate_limit_counts_one_http_request(client, monkeypatch):
+    """Batch ingest consumes one ingest rate-limit slot for the HTTP request."""
+    _enable_memory_rate_limit(monkeypatch, ingest_limit=1)
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+
+    first = client.post(
+        "/ingest/products/batch",
+        json={
+            "documents": [
+                {"id": "doc-1", "name": "Product"},
+                {"id": "doc-2", "name": "Product"},
+            ]
+        },
+    )
+    second = client.post(
+        "/ingest/products/batch",
+        json={"documents": [{"id": "doc-3", "name": "Product"}]},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["accepted"] == 2
+    assert second.status_code == 429
+    assert second.json()["detail"] == "Rate limit exceeded"
+
+
 def test_rate_limit_uses_authenticated_actor_buckets(client, monkeypatch):
     """Different API-key actors receive separate buckets."""
     from settings import settings

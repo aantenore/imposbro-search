@@ -46,6 +46,7 @@ collection:
 ```bash
 BENCHMARK_DOCUMENTS=10000 \
 BENCHMARK_INGEST_CONCURRENCY=32 \
+BENCHMARK_INGEST_BATCH_SIZE=100 \
 BENCHMARK_SEARCH_REQUESTS=500 \
 BENCHMARK_SEARCH_CONCURRENCY=16 \
 BENCHMARK_ENVIRONMENT=staging-eu \
@@ -72,6 +73,7 @@ Tune it without editing the Makefile:
 ```bash
 BENCHMARK_DOCKER_DOCUMENTS=2000 \
 BENCHMARK_DOCKER_INGEST_CONCURRENCY=32 \
+BENCHMARK_INGEST_BATCH_SIZE=50 \
 BENCHMARK_DOCKER_SEARCH_REQUESTS=250 \
 BENCHMARK_DOCKER_SEARCH_CONCURRENCY=16 \
 BENCHMARK_DOCKER_OUTPUT_JSON=artifacts/benchmark-docker-2k.json \
@@ -93,6 +95,10 @@ sections. The JSON and Markdown artifacts include publishable run metadata when
 `BENCHMARK_HELM_VALUES_REF`, `BENCHMARK_IMAGE_SET`, and optional
 `BENCHMARK_EVIDENCE_NOTES` are set. Keep the JSON artifact beside the Markdown
 report; the Markdown is for release review and the JSON is for trend comparison.
+Set `BENCHMARK_INGEST_BATCH_SIZE=1` to measure single-document request overhead,
+or a larger value to exercise `/ingest/{collection}/batch`. Throughput is always
+reported as accepted documents per second; ingest latency is request latency, so
+larger batch sizes should be compared against runs with the same batch size.
 
 ## Release SLO Example
 
@@ -103,6 +109,7 @@ not met:
 ```bash
 BENCHMARK_DOCUMENTS=100000 \
 BENCHMARK_INGEST_CONCURRENCY=64 \
+BENCHMARK_INGEST_BATCH_SIZE=100 \
 BENCHMARK_SEARCH_REQUESTS=2000 \
 BENCHMARK_SEARCH_CONCURRENCY=32 \
 BENCHMARK_MIN_INGEST_DOCS_PER_SECOND=500 \

@@ -263,6 +263,19 @@ def ingest_vector_documents(query_api_url: str, collection: str, ingest_headers)
     return results
 
 
+def ingest_vector_documents_batch(query_api_url: str, collection: str, ingest_headers):
+    status, ingested = request(
+        "POST",
+        f"{query_api_url}/ingest/{collection}/batch",
+        {"documents": VECTOR_DOCS},
+        ingest_headers,
+        timeout=30,
+    )
+    if ingested.get("accepted") != len(VECTOR_DOCS):
+        raise RuntimeError(f"Batch vector ingest rejected documents: {ingested}")
+    return status, ingested
+
+
 def wait_for_search_count(
     query_api_url: str,
     collection: str,

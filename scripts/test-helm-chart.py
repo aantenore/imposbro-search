@@ -166,6 +166,7 @@ def main() -> None:
     require_contains(manifest, "api.imposbro.example.com")
     require_contains(manifest, "admin.imposbro.example.com")
     require_contains(manifest, "REQUEST_ID_HEADER")
+    require_contains(manifest, "INGEST_BATCH_MAX_DOCUMENTS")
     require_contains(manifest, "RATE_LIMIT_ENABLED")
     require_contains(manifest, "ImposbroQueryApiRateLimitBlocked")
     require_contains(manifest, "query_api_rate_limit_backend_errors_total")
@@ -277,6 +278,13 @@ def main() -> None:
         "config.RATE_LIMIT_BACKEND=memory",
         "--set",
         "queryApi.replicaCount=2",
+    )
+
+    print("==> Helm guardrail: ingest batch size must be positive")
+    expect_failure(
+        "config.INGEST_BATCH_MAX_DOCUMENTS must be >= 1",
+        "--set",
+        "config.INGEST_BATCH_MAX_DOCUMENTS=0",
     )
 
     print("==> Helm guardrail: scoped-only admin auth needs worker internal key")
