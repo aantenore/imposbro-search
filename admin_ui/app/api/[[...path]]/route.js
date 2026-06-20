@@ -24,6 +24,16 @@ const PROXY_HEADER_BLOCKLIST = new Set([
   'upgrade',
 ]);
 
+const RESPONSE_HEADER_ALLOWLIST = new Set([
+  'retry-after',
+  'x-request-id',
+  'x-pagination-info',
+  'x-pagination-warning',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
+]);
+
 export async function GET(request, { params }) {
   return proxyRequest(request, params);
 }
@@ -59,8 +69,9 @@ async function proxyRequest(request, params = {}) {
   const url = `${backendUrl.replace(/\/$/, '')}/${path}${search}`;
 
   const headers = new Headers();
+  const headerBlocklist = proxyHeaderBlocklistFor(request);
   request.headers.forEach((value, key) => {
-    if (!PROXY_HEADER_BLOCKLIST.has(key.toLowerCase())) {
+    if (!headerBlocklist.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   });
@@ -150,13 +161,14 @@ async function proxyRequest(request, params = {}) {
       return new Response(data, {
         status: res.status,
         statusText: res.statusText,
-        headers: { 'Content-Type': res.headers.get('Content-Type') || 'text/plain' },
+        headers: responseHeadersFromBackend(res, 'text/plain'),
       });
     }
 
     return Response.json(json, {
       status: res.status,
       statusText: res.statusText,
+      headers: responseHeadersFromBackend(res, 'application/json'),
     });
   } catch (err) {
     return Response.json(
@@ -164,6 +176,31 @@ async function proxyRequest(request, params = {}) {
       { status: 502 }
     );
   }
+}
+
+function proxyHeaderBlocklistFor(request) {
+  const blocklist = new Set(PROXY_HEADER_BLOCKLIST);
+  const connection = request.headers.get('connection') || '';
+  for (const token of connection.split(',')) {
+    const headerName = token.trim().toLowerCase();
+    if (headerName) {
+      blocklist.add(headerName);
+    }
+  }
+  return blocklist;
+}
+
+function responseHeadersFromBackend(response, fallbackContentType) {
+  const headers = new Headers({
+    'Content-Type': response.headers.get('Content-Type') || fallbackContentType,
+  });
+  response.headers.forEach((value, key) => {
+    const normalized = key.toLowerCase();
+    if (RESPONSE_HEADER_ALLOWLIST.has(normalized)) {
+      headers.set(key, value);
+    }
+  });
+  return headers;
 }
 
 function hasTrustedUpstreamIdentity(request) {
