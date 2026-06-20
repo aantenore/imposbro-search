@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # Local-development escape hatch. Keep false in shared, exposed, or production environments.
     ALLOW_UNAUTHENTICATED_DATA: bool = False
 
+    # Maximum documents accepted by one /ingest/{collection}/batch request.
+    INGEST_BATCH_MAX_DOCUMENTS: int = Field(default=100, ge=1)
+
     # Optional fixed-window data-plane rate limiting for /search/* and /ingest/*.
     # Use Redis backend for multi-replica deployments; memory is for tests or
     # single-process local runs only.

@@ -14,7 +14,7 @@ from smoke_common import (
     delete_collection,
     delete_document,
     get_document,
-    ingest_vector_documents,
+    ingest_vector_documents_batch,
     load_dotenv,
     vector_ids,
     wait_for_document_not_found,
@@ -82,10 +82,16 @@ def main() -> int:
         created = True
         print("collection:", status, collection, created_payload.get("message"))
 
-        for status, doc_id, ingested in ingest_vector_documents(
+        status, batch_ingested = ingest_vector_documents_batch(
             query_api_url, collection, ingest_headers
-        ):
-            print("ingest:", status, doc_id, f"routed_to={ingested.get('routed_to')}")
+        )
+        for item in batch_ingested.get("items", []):
+            print(
+                "batch-ingest:",
+                status,
+                item.get("document_id"),
+                f"routed_to={item.get('routed_to')}",
+            )
 
         result = wait_for_vector_result(
             query_api_url,

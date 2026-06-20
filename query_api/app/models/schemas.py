@@ -199,6 +199,34 @@ class IngestResponse(BaseModel):
     routed_to: str = Field(..., description="Target cluster name")
 
 
+class BatchIngestRequest(BaseModel):
+    """Request model for batch document ingestion."""
+    documents: List[Dict[str, Any]] = Field(
+        ...,
+        min_length=1,
+        description="Documents to ingest; each document must include id",
+    )
+
+
+class BatchIngestItemResult(BaseModel):
+    """Per-document result for batch ingestion."""
+    index: int = Field(..., ge=0, description="Zero-based input document index")
+    document_id: Optional[str] = Field(None, description="Input document id when present")
+    status: str = Field(..., description="ok or rejected")
+    routed_to: Optional[str] = Field(None, description="Comma-separated target clusters")
+    error: Optional[str] = Field(None, description="Rejection or publish error")
+
+
+class BatchIngestResponse(BaseModel):
+    """Response model for batch document ingestion."""
+    status: str = Field(..., description="ok, partial, or rejected")
+    requested: int = Field(..., ge=0, description="Number of requested documents")
+    accepted: int = Field(..., ge=0, description="Number of documents accepted")
+    rejected: int = Field(..., ge=0, description="Number of documents rejected")
+    request_id: str = Field(..., description="Request id propagated to Kafka messages")
+    items: List[BatchIngestItemResult] = Field(..., description="Per-document results")
+
+
 class DeleteDocumentResponse(BaseModel):
     """Response model for asynchronous document deletion."""
     status: str = Field(..., description="Operation status")

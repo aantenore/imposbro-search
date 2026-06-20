@@ -222,6 +222,39 @@ def test_collection_scoped_ingest_key_only_grants_matching_collection(client, mo
     assert denied.status_code == 401
 
 
+def test_collection_scoped_ingest_key_allows_matching_batch(client, monkeypatch):
+    """Batch ingest uses the same collection-scoped authorization as single ingest."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DATA_API_KEY", "")
+    monkeypatch.setattr(settings, "SCOPED_API_KEYS", json.dumps([
+        {
+            "name": "orders-writer",
+            "key": "orders-secret",
+            "scopes": ["ingest:orders_*"],
+        }
+    ]))
+    monkeypatch.setattr(settings, "ALLOW_UNAUTHENTICATED_DATA", False)
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+
+    matching = client.post(
+        "/ingest/orders_2026/batch",
+        headers={"X-API-Key": "orders-secret"},
+        json={"documents": [{"id": "doc-1", "name": "Order"}]},
+    )
+    denied = client.post(
+        "/ingest/products_2026/batch",
+        headers={"X-API-Key": "orders-secret"},
+        json={"documents": [{"id": "doc-2", "name": "Product"}]},
+    )
+
+    assert matching.status_code == 200
+    assert matching.json()["accepted"] == 1
+    assert denied.status_code == 401
+
+
 def test_collection_scoped_ingest_key_can_delete_matching_collection(client, monkeypatch):
     """Collection-scoped ingest keys grant document lifecycle writes for that collection."""
     from settings import settings
