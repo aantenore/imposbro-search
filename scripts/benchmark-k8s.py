@@ -332,6 +332,36 @@ def parse_args():
         help="Optional path for a human-readable benchmark report",
     )
     parser.add_argument(
+        "--environment",
+        default=os.getenv("BENCHMARK_ENVIRONMENT", ""),
+        help="Environment name recorded in benchmark artifacts",
+    )
+    parser.add_argument(
+        "--release",
+        default=os.getenv("BENCHMARK_RELEASE", ""),
+        help="Release, commit, or build identifier recorded in benchmark artifacts",
+    )
+    parser.add_argument(
+        "--cluster-shape",
+        default=os.getenv("BENCHMARK_CLUSTER_SHAPE", ""),
+        help="Human-readable cluster shape recorded in benchmark artifacts",
+    )
+    parser.add_argument(
+        "--helm-values-ref",
+        default=os.getenv("BENCHMARK_HELM_VALUES_REF", ""),
+        help="Reference to the Helm values or deployment config used for the run",
+    )
+    parser.add_argument(
+        "--image-set",
+        default=os.getenv("BENCHMARK_IMAGE_SET", ""),
+        help="Image tags or digests used for the benchmarked deployment",
+    )
+    parser.add_argument(
+        "--evidence-notes",
+        default=os.getenv("BENCHMARK_EVIDENCE_NOTES", ""),
+        help="Optional operator notes recorded in benchmark artifacts",
+    )
+    parser.add_argument(
         "--use-existing-collection",
         action="store_true",
         default=env_bool("BENCHMARK_USE_EXISTING_COLLECTION"),
@@ -389,6 +419,33 @@ def validate_args(args) -> None:
         raise SystemExit("--per-page must be between 1 and 250")
 
 
+def optional_text(args, name: str):
+    value = getattr(args, name, "")
+    return value or None
+
+
+def build_run_metadata(args):
+    return {
+        "environment": optional_text(args, "environment"),
+        "release": optional_text(args, "release"),
+        "cluster_shape": optional_text(args, "cluster_shape"),
+        "helm_values_ref": optional_text(args, "helm_values_ref"),
+        "image_set": optional_text(args, "image_set"),
+        "evidence_notes": optional_text(args, "evidence_notes"),
+        "mode": {
+            "use_existing_collection": bool(getattr(args, "use_existing_collection", False)),
+            "keep_collection": bool(getattr(args, "keep_collection", False)),
+            "allow_partial": bool(getattr(args, "allow_partial", False)),
+        },
+        "slo_thresholds": {
+            "min_ingest_docs_per_second": getattr(args, "min_ingest_docs_per_second", None),
+            "max_indexing_visible_seconds": getattr(args, "max_indexing_visible_seconds", None),
+            "max_search_p95_ms": getattr(args, "max_search_p95_ms", None),
+            "max_search_error_rate": getattr(args, "max_search_error_rate", None),
+        },
+    }
+
+
 def build_summary(
     args,
     query_api_url: str,
@@ -414,6 +471,7 @@ def build_summary(
         "collection": collection,
         "tenant": tenant,
         "documents": args.documents,
+        "metadata": build_run_metadata(args),
         "ingest": {
             "concurrency": args.ingest_concurrency,
             "successes": ingest_result["successes"],
@@ -496,12 +554,21 @@ def markdown_value(value, suffix: str = "") -> str:
     return f"{text}{suffix}"
 
 
+def markdown_text(value) -> str:
+    if value in (None, ""):
+        return "n/a"
+    return str(value).replace("\n", " ").replace("|", "\\|")
+
+
 def render_markdown_report(summary) -> str:
     """Render a compact benchmark report suitable for release evidence."""
     ingest_latency = summary["ingest"]["latency_ms"]
     search_latency = summary["search"]["latency_ms"]
     violations = summary.get("slo_violations", [])
     status = str(summary.get("status", "unknown")).upper()
+    metadata = summary.get("metadata", {})
+    mode = metadata.get("mode", {})
+    slo_thresholds = metadata.get("slo_thresholds", {})
 
     lines = [
         "# IMPOSBRO Benchmark Report",
@@ -512,6 +579,29 @@ def render_markdown_report(summary) -> str:
         f"- Collection: `{summary.get('collection', 'n/a')}`",
         f"- Tenant: `{summary.get('tenant', 'n/a')}`",
         f"- Documents: {markdown_value(summary.get('documents'))}",
+        "",
+        "## Run Metadata",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        f"| Environment | {markdown_text(metadata.get('environment'))} |",
+        f"| Release | {markdown_text(metadata.get('release'))} |",
+        f"| Cluster shape | {markdown_text(metadata.get('cluster_shape'))} |",
+        f"| Helm values | {markdown_text(metadata.get('helm_values_ref'))} |",
+        f"| Images | {markdown_text(metadata.get('image_set'))} |",
+        f"| Use existing collection | {markdown_value(mode.get('use_existing_collection'))} |",
+        f"| Keep collection | {markdown_value(mode.get('keep_collection'))} |",
+        f"| Allow partial responses | {markdown_value(mode.get('allow_partial'))} |",
+        f"| Notes | {markdown_text(metadata.get('evidence_notes'))} |",
+        "",
+        "## SLO Thresholds",
+        "",
+        "| Threshold | Value |",
+        "| --- | ---: |",
+        f"| Min ingest throughput | {markdown_value(slo_thresholds.get('min_ingest_docs_per_second'), ' docs/s')} |",
+        f"| Max indexing visibility | {markdown_value(slo_thresholds.get('max_indexing_visible_seconds'), 's')} |",
+        f"| Max search p95 | {markdown_value(slo_thresholds.get('max_search_p95_ms'), ' ms')} |",
+        f"| Max search error rate | {markdown_value(slo_thresholds.get('max_search_error_rate'))} |",
         "",
         "## Ingest",
         "",
@@ -573,7 +663,7 @@ def render_markdown_report(summary) -> str:
         "## Evidence Notes",
         "",
         "- Keep the JSON artifact beside this report for machine comparison.",
-        "- Record cluster shape, image tags, and Helm values separately with the release.",
+        "- Fill missing run metadata before publishing production-sized results.",
         "",
     ])
     return "\n".join(lines)

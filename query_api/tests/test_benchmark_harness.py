@@ -110,6 +110,61 @@ def test_run_parallel_collects_successes_and_errors():
     assert sorted(payload["index"] for payload in result["payloads"]) == [0, 1, 3]
 
 
+def test_build_summary_includes_publishable_run_metadata():
+    args = argparse.Namespace(
+        documents=2,
+        ingest_concurrency=2,
+        search_requests=1,
+        search_concurrency=1,
+        environment="prod-eu",
+        release="4b5d9d9",
+        cluster_shape="query=3,indexing=5,typesense=2x3",
+        helm_values_ref="s3://release/imposbro-values.yaml",
+        image_set="query@sha256:abc,indexing@sha256:def,admin@sha256:123",
+        evidence_notes="baseline before tenant rollout",
+        use_existing_collection=False,
+        keep_collection=False,
+        allow_partial=False,
+        min_ingest_docs_per_second=500.0,
+        max_indexing_visible_seconds=300.0,
+        max_search_p95_ms=250.0,
+        max_search_error_rate=0.0,
+    )
+    ingest_result = {
+        "successes": 2,
+        "error_count": 0,
+        "errors": [],
+        "elapsed_seconds": 0.5,
+        "latencies_ms": [10.0, 20.0],
+    }
+    search_result = {
+        "successes": 1,
+        "error_count": 0,
+        "errors": [],
+        "elapsed_seconds": 0.1,
+        "latencies_ms": [12.0],
+        "payloads": [{"found": 2, "partial": False}],
+    }
+
+    summary = benchmark.build_summary(
+        args,
+        "https://api.example.com",
+        "benchmark_20260620",
+        "tenant_a",
+        ingest_result,
+        3.2,
+        {"found": 2, "clusters_responded": 2, "partial": False},
+        search_result,
+    )
+
+    assert summary["metadata"]["environment"] == "prod-eu"
+    assert summary["metadata"]["release"] == "4b5d9d9"
+    assert summary["metadata"]["cluster_shape"] == "query=3,indexing=5,typesense=2x3"
+    assert summary["metadata"]["mode"]["allow_partial"] is False
+    assert summary["metadata"]["slo_thresholds"]["max_search_p95_ms"] == 250.0
+    assert summary["ingest"]["docs_per_second"] == 4.0
+
+
 def sample_summary():
     return {
         "status": "passed",
@@ -118,6 +173,25 @@ def sample_summary():
         "collection": "benchmark_20260620",
         "tenant": "tenant_a",
         "documents": 1000,
+        "metadata": {
+            "environment": "prod-eu",
+            "release": "4b5d9d9",
+            "cluster_shape": "query=3,indexing=5,typesense=2x3",
+            "helm_values_ref": "s3://release/imposbro-values.yaml",
+            "image_set": "query@sha256:abc,indexing@sha256:def,admin@sha256:123",
+            "evidence_notes": "baseline before tenant rollout",
+            "mode": {
+                "use_existing_collection": False,
+                "keep_collection": False,
+                "allow_partial": False,
+            },
+            "slo_thresholds": {
+                "min_ingest_docs_per_second": 50.0,
+                "max_indexing_visible_seconds": 60.0,
+                "max_search_p95_ms": 250.0,
+                "max_search_error_rate": 0.01,
+            },
+        },
         "ingest": {
             "concurrency": 16,
             "successes": 1000,
@@ -163,6 +237,10 @@ def test_render_markdown_report_summarizes_release_evidence():
 
     assert "# IMPOSBRO Benchmark Report" in report
     assert "- Status: **PASSED**" in report
+    assert "## Run Metadata" in report
+    assert "| Environment | prod-eu |" in report
+    assert "| Cluster shape | query=3,indexing=5,typesense=2x3 |" in report
+    assert "| Max search p95 | 250 ms |" in report
     assert "| Throughput | 95.24 docs/s |" in report
     assert "| Visible after | 24.2s |" in report
     assert "| Latency p95 | 52.4 ms |" in report
