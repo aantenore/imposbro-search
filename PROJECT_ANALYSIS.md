@@ -1,6 +1,6 @@
 # IMPOSBRO Search – Analysis and Improvements
 
-## Current Product Verdict (2026-06-19)
+## Current Product Verdict (2026-06-20)
 
 IMPOSBRO Search is useful, but only with a clear wedge: **a Typesense-focused federation/control plane** for teams that want Typesense ergonomics while distributing data across multiple physical clusters by tenant, region, compliance boundary, or scaling domain.
 
@@ -39,6 +39,14 @@ The market does validate the problem, but it also narrows the room for different
 **Best ICP:** platform/search teams with multi-tenant, regional, compliance, or scaling reasons to keep separate Typesense clusters while exposing one API, one admin workflow, and one ingestion path.
 
 **Sharp product promise:** “One configurable control plane for routing, ingesting, searching, observing, and operating many Typesense clusters.”
+
+### Hardening Refresh (2026-06-20)
+
+- Admin UI OIDC callback now requires an `id_token` and validates nonce, audience, issuer when configured, and timestamps before sealing the browser session. This closes the login transaction-binding gap while the Query API continues to validate proxied bearer-token signatures.
+- Admin UI client/proxy tests now use Typesense-compatible collection, alias, and cluster names so the test contract matches backend path validation.
+- Indexing service upgraded `requests` to `2.34.2`, which also resolves to `urllib3 2.7.0` in the Python 3.11/3.12 runtime path. `pip-audit --local` now reports only Starlette findings.
+- Residual dependency risk: Starlette `0.49.3` has 2026 advisory fixes only in Starlette `1.x`, but FastAPI `0.128.8` currently requires `starlette<1.0.0`. Do not force this upgrade until FastAPI publishes a compatible release or the service moves off FastAPI's Starlette integration.
+- Latest validation: `make ci`, Admin UI production build, `npm --prefix admin_ui audit --omit=dev`, `pip-audit --local`, and `make smoke-docker` were run. The only non-green audit item is the FastAPI/Starlette compatibility blocker above.
 
 ### Build-vs-buy
 
@@ -110,6 +118,8 @@ The market does validate the problem, but it also narrows the room for different
 48. **Rate-limit observability**: Query API now exports low-cardinality Prometheus metrics for allowed/blocked rate-limit decisions and backend failures; Helm renders alert rules and Grafana shows rate-limit blocks/errors.
 49. **Data lifecycle delete**: Query API now exposes `DELETE /documents/{collection}/{document_id}` as an async data-plane mutation. It fans out delete events to every candidate data cluster, propagates request ids, enforces ingest/data scoped authorization, uses tenant-safe filtered deletes for OIDC tenant policies, and the worker treats missing documents as idempotent no-ops with `indexing_documents_deleted_total` metrics.
 50. **Data lifecycle read/export**: Query API now exposes `GET /documents/{collection}/{document_id}` as a read-side data-plane operation. It checks every candidate data cluster, enforces search/data scoped authorization, returns tenant-mismatched OIDC documents as 404, exposes low-cardinality `documents_read_total`, and is available from the Admin UI Workspace.
+51. **Admin UI OIDC transaction binding**: The Admin UI callback now requires an `id_token` and validates nonce, audience, issuer when configured, and timestamps before sealing the browser session cookie.
+52. **Dependency audit reduction**: Indexing service now uses `requests==2.34.2`, resolving the actionable Python audit finding while leaving only Starlette advisories that require a future FastAPI-compatible Starlette `1.x` path.
 
 ### Fixes
 
