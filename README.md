@@ -51,17 +51,20 @@ One configurable control plane for routing, ingesting, searching, observing, and
 
 * **Advanced Document-Level Sharding:** Define routing rules based on document fields (e.g., `country`, `tenant_id`) to distribute documents across multiple physical clusters. Routing supports exact, list, glob, and numeric range matches with priorities, dry-run previews, **fan-out routing**, and per-cluster HTTP/HTTPS transport.
 * **Resilient Scatter-Gather Search:** Queries are automatically sent to all relevant external clusters, with results merged and re-ranked. The system gracefully handles partial failures if a shard is unavailable.
-* **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
-* **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
-* **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, aliases, schema reconciliation, routing rules, operations, and audit visibility from your browser.
-* **Operational Backup/Restore & Audit:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows. Operators can inspect recent sanitized admin audit events from the Operations page.
-* **Production-Oriented Foundation:** Includes Kafka ordering, Prometheus/Grafana observability, Kubernetes guardrails, and explicit degraded-mode behavior. See the roadmap for the remaining consistency, migration, hosted-CI, and scale-evidence work before treating it as enterprise-ready.
+* **Durable Asynchronous Indexing:** PostgreSQL allocates an identity sequence and transactional outbox event before Kafka publication. Workers apply envelope v2 at least once with PostgreSQL target checkpoints, monotonic fencing, safe tombstones, bounded retries, and an explicit DLQ workflow. The platform intentionally does not make a false exactly-once claim across PostgreSQL and Typesense.
+* **Transactional HA Control Plane:** PostgreSQL is the production source of truth for revisioned state, compare-and-swap mutations, audit, outboxes, routing rollouts, and worker checkpoints. Redis accelerates notifications and quotas but is never the revision authority; legacy Typesense state is read-only migration input.
+* **Safe Routing Migrations:** Routing changes move through draft, validation, dual-write, resumable backfill, concurrent-event repair, exact parity, measured cutover, drain, completion, or rollback. Search and delete coverage prevents historical documents from disappearing during the move.
+* **Enterprise Operator UI:** The Next.js console exposes authoritative revisions, conflicts, rollout evidence, degraded states, recovery actions, audit, confirmations, OIDC sessions, keyboard interaction, and browser-tested WCAG A/AA basics.
+* **Recovery and Tamper Evidence:** State/audit/export APIs, hash-chained audit, encrypted PostgreSQL backup/restore tools, guarded DLQ resolution, SLO dashboards/alerts, and machine-readable live evidence support operations without undocumented database edits.
+* **Enterprise Delivery Contract:** The repository contains fail-closed enterprise configuration, hardened Helm delivery, immutable supply-chain workflows, and local/live quality gates. A green source tree is not a customer certification: deployment-specific IdP, TLS, HA, load, DR, alert-delivery, and organizational evidence remains tied to each released environment. See [`docs/ENTERPRISE_DELIVERY_CONTRACT.md`](docs/ENTERPRISE_DELIVERY_CONTRACT.md).
 
 ---
 
 ## 🏛️ Architecture Overview
 
-IMPOSBRO Search is built on a distributed microservices architecture designed for resilience, scalability, and maintainability. It decouples the API from the indexing process, ensures high availability of its configuration, and provides a clear separation of concerns between components.
+IMPOSBRO separates pure routing/authorization policy from provider adapters. A
+PostgreSQL commit is authoritative; Kafka and Redis carry asynchronous work and
+wake-ups, while every request uses one immutable federation snapshot.
 
 ```mermaid
 graph TD;
@@ -74,9 +77,10 @@ graph TD;
         C[Query API - FastAPI];
     end
 
-    subgraph Data_and_Messaging
-        D[Kafka - Message Queue];
-        E[Typesense HA Cluster - Internal State];
+    subgraph Durable_Control_and_Messaging
+        D[Kafka - Ordered Delivery];
+        E[PostgreSQL - CAS State, Audit, Outboxes, Checkpoints];
+        R[Redis - Notifications and Distributed Quotas];
     end
 
     subgraph Async_Workers
@@ -94,13 +98,15 @@ graph TD;
 
     B -->|Proxies API Calls| C;
 
-    C -->|Publishes Documents| D;
-    C -->|Manages State| E;
+    C -->|Atomic State and Event Commit| E;
+    C -->|Outbox Publishes Envelope v2| D;
+    C <-->|Revision Wake-up / Rate Limit| R;
     C -->|Searches Across| G;
     C -->|Searches Across| H;
     C -->|Searches Across| I;
 
-    D -->|Streams Documents| F;
+    D -->|At-least-once Envelope v2| F;
+    F -->|Fenced Target Checkpoints| E;
     F -->|Indexes Documents| G;
     F -->|Indexes Documents| H;
     F -->|Indexes Documents| I;
@@ -122,11 +128,14 @@ imposbro-search/
 │       ├── models/               # Pydantic schemas
 │       │   ├── __init__.py
 │       │   └── schemas.py        # Request/response models
-│       ├── services/             # Business logic layer
+│       ├── domain/               # Provider-independent rollout state machine
+│       ├── control_plane/        # PostgreSQL CAS/audit/outbox ports + adapters
+│       ├── indexing_events/      # Sequenced event/outbox ports + adapters
+│       ├── services/             # Application services and provider adapters
 │       │   ├── __init__.py
 │       │   ├── federation.py     # Cluster & routing management
 │       │   ├── kafka_producer.py # Kafka message publishing
-│       │   └── state_manager.py  # Typesense state persistence
+│       │   └── state_manager.py  # Desired-state orchestration/reconciliation
 │       └── routers/              # API endpoints
 │           ├── __init__.py
 │           ├── admin.py          # Cluster, collection, routing APIs
@@ -153,11 +162,15 @@ imposbro-search/
 │           ├── clusters/
 │           ├── collections/
 │           ├── operations/
-│           └── routing/
+│           ├── routing/
+│           └── routing-rollouts/
 │
 ├── indexing_service/             # Kafka consumer service
 │   └── app/
-│       ├── main.py               # Entry point with config fetching
+│       ├── main.py               # Entry point, consumer lifecycle and health
+│       ├── event_envelope.py     # Strict canonical envelope v2 validation
+│       ├── checkpoint_store.py   # Fenced per-target checkpoint adapters
+│       └── telemetry.py          # Payload-safe OpenTelemetry boundary spans
 │       └── consumer.py           # Kafka consumer with graceful shutdown
 │
 ├── monitoring/                   # Observability stack
@@ -246,7 +259,9 @@ Docker Compose binds published ports to `127.0.0.1` by default through `HOST_BIN
 2.  **Register External Clusters:** Go to the **Clusters** page and register two or more external Typesense instances (e.g., `cluster-us`, `cluster-eu`).
 3.  **Create a Collection:** Go to the **Collections** page and create a collection (e.g., `products`). Use **Reconcile** there after restoring state or adding/recovering clusters to recreate missing desired schemas.
 4.  **Define Routing Rules:** Go to the **Routing** page to configure how documents are sharded.
-5.  **Back Up Control-Plane State:** Go to the **Operations** page to export a masked snapshot, or a restore-ready snapshot when raw cluster API keys must be included.
+5.  **Inspect Control-Plane State:** Go to **Operations** for a masked snapshot.
+    Enterprise backup uses the encrypted PostgreSQL workflow; plaintext
+    restore-ready export is development-only.
 6.  **Ingest Sharded Data:** Use `curl` or any HTTP client to push documents.
 
     ```bash
@@ -345,25 +360,30 @@ labelled `upper_bound` because duplicates may exist outside the fetched window.
 
 ### Administration
 
+`/api/v1` is canonical. The historical unversioned paths remain temporary
+compatibility aliases and emit deprecation metadata.
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/admin/federation/clusters` | GET | List all registered clusters |
-| `/admin/federation/clusters` | POST | Register a new cluster |
-| `/admin/federation/clusters/{name}` | DELETE | Remove a cluster |
-| `/admin/collections` | POST | Create a collection on all clusters |
-| `/admin/collections/reconcile` | POST | Create any missing desired collection schemas on registered clusters |
-| `/admin/collections/{name}` | GET | Get collection schema |
-| `/admin/collections/{name}` | DELETE | Delete a collection |
-| `/admin/aliases` | GET | List collection aliases on a cluster |
-| `/admin/aliases/{alias}` | PUT | Create or update a collection alias for zero-downtime reindexing |
-| `/admin/aliases/{alias}` | DELETE | Delete a collection alias |
-| `/admin/routing-rules` | POST | Set routing rules for a collection |
-| `/admin/routing-rules/preview` | POST | Preview draft or persisted routing rules without saving |
-| `/admin/routing-rules/{collection}` | DELETE | Delete routing rules |
-| `/admin/routing-map` | GET | Get complete routing configuration |
-| `/admin/audit-log` | GET | List recent successful admin mutations without exposing secrets |
-| `/admin/state/export` | GET | Export control-plane state for backup; masks cluster API keys unless `include_secrets=true` |
-| `/admin/state/import` | POST | Validate or import a control-plane state snapshot; defaults to dry-run, apply with `?apply=true` |
+| `/api/v1/admin/federation/clusters` | GET/POST | List or register desired Typesense clusters with revision metadata |
+| `/api/v1/admin/federation/clusters/{name}` | DELETE | Commit removal before provider reconciliation |
+| `/api/v1/admin/collections` | POST | Commit a collection schema and reconcile it to routed clusters |
+| `/api/v1/admin/collections/reconcile` | POST | Reconcile missing desired schemas on registered clusters |
+| `/api/v1/admin/collections/{name}` | GET/DELETE | Read desired schema or commit a routing tombstone and converge deletion |
+| `/api/v1/admin/aliases` | GET | List aliases on a selected cluster |
+| `/api/v1/admin/aliases/{alias}` | PUT/DELETE | Commit desired alias state before provider reconciliation |
+| `/api/v1/admin/routing-rules` | POST | Set routing rules for a collection using revision CAS |
+| `/api/v1/admin/routing-rules/preview` | POST | Preview rules against a document without persistence |
+| `/api/v1/admin/routing-rules/{collection}` | DELETE | Remove routing rules with revision CAS |
+| `/api/v1/admin/routing-map` | GET | Get complete routing configuration and revision |
+| `/api/v1/admin/routing-rollouts` | GET/POST | List rollouts or create a side-effect-free draft |
+| `/api/v1/admin/routing-rollouts/{id}/transitions` | POST | Apply a legal versioned lifecycle transition |
+| `/api/v1/admin/routing-rollouts/{id}/backfill/steps` | POST | Run one bounded, resumable server-measured backfill/repair step |
+| `/api/v1/admin/routing-rollouts/{id}/parity-verifications` | POST | Measure and persist exact parity evidence |
+| `/api/v1/admin/audit-log` | GET | List sanitized operator audit events |
+| `/api/v1/admin/audit-log/export` | GET | Export an ascending, digest-identified audit segment with `no-store` |
+| `/api/v1/admin/state/export` | GET | Export masked state; raw-secret opt-in is rejected outside development |
+| `/api/v1/admin/state/import` | POST | Dry-run validate or CAS/import an approved restore-ready snapshot |
 
 ### Health Checks
 
@@ -382,8 +402,14 @@ All configuration is done via environment variables. See `.env.example` for the 
 
 | Variable | Description |
 |----------|-------------|
+| `DEPLOYMENT_PROFILE` | `development`, `production`, or fail-closed `enterprise`. Enterprise validates durable stores, identity/tenancy, TLS, audit, quotas, readiness, logs, traces, and release metadata at startup |
+| `CONTROL_PLANE_STORE_BACKEND` / `CONTROL_PLANE_DATABASE_URL` | Authoritative state adapter and PostgreSQL URL. Replicated production/enterprise deployments require `postgres`; run the serialized Alembic migration first |
+| `CONTROL_PLANE_RECONCILE_SECONDS` | Durable revision polling interval; Redis is only a low-latency wake-up path |
+| `INDEXING_EVENT_STORE_BACKEND` | Durable per-identity sequence and indexing-outbox adapter; enterprise requires `postgres` |
+| `INDEXING_CHECKPOINT_BACKEND` | Worker checkpoint adapter; replicated production/enterprise requires PostgreSQL fencing, not memory or Typesense compatibility modes |
 | `KAFKA_BROKER_URL` | Kafka broker connection string |
 | `KAFKA_TOPIC_PREFIX` | Prefix for Kafka topics |
+| `KAFKA_SECURITY_PROTOCOL` / `KAFKA_SASL_*` / `KAFKA_SSL_*` | Kafka TLS/SASL and trust material. Enterprise accepts only verified `SSL` or `SASL_SSL` transport |
 | `KAFKA_METADATA_MAX_AGE_MS` | Kafka consumer metadata refresh interval; keep low enough to discover newly created collection topics |
 | `INDEXING_MAX_PROCESSING_ATTEMPTS` | Bounded indexing attempts before a poison message is published to the DLQ |
 | `INDEXING_METRICS_ENABLED` | Enables the indexing worker Prometheus metrics server |
@@ -410,13 +436,15 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search` (search/read), `ingest` (document writes/deletes), `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
 | `INTERNAL_QUERY_API_ADMIN_API_KEY` | Optional service-to-service key used by the Admin UI proxy and indexing worker; defaults to `ADMIN_API_KEY` when omitted. If it differs from `ADMIN_API_KEY`, include it in `SCOPED_API_KEYS` with `admin:internal`, `admin`, or `*` scope |
-| `ADMIN_UI_PROXY_TRUSTED_HEADER` | Required in production when the Admin UI proxy injects server-side API keys; set by an authenticated ingress/gateway |
-| `ADMIN_UI_PROXY_TRUSTED_VALUE` | Required expected value for `ADMIN_UI_PROXY_TRUSTED_HEADER` when the proxy injects server-side API keys |
-| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login for the Admin UI; callback responses must include a signed `id_token` whose signature, nonce, audience, issuer when configured, and timestamps validate before the session cookie is sealed. Requires Query API `OIDC_ENABLED=true` so proxied bearer sessions can be validated |
+| `ADMIN_UI_PUBLIC_ORIGIN` / `ADMIN_UI_SECURITY_PROFILE` | Exact public HTTPS origin and `enterprise` browser boundary. Unsafe BFF methods require matching Origin and same-origin Fetch Metadata |
+| `ADMIN_UI_SERVER_CREDENTIAL_MODE` | `disabled` by default in production/enterprise; `development` is local only. `trusted-header-legacy` is a temporary double-opt-in compatibility risk and is forbidden by the enterprise chart |
+| `ADMIN_UI_PROXY_TRUSTED_HEADER` / `ADMIN_UI_PROXY_TRUSTED_VALUE` | Used only by explicit legacy server-key mode; the trusted edge must strip caller copies. Prefer end-to-end OIDC |
+| `ADMIN_UI_OIDC_ENABLED` | Enables browser OIDC Authorization Code + PKCE login; signed ID-token signature, nonce, audience, mandatory exact issuer, and timestamps are validated before sealing the session. Query API OIDC must validate the proxied access token |
 | `ADMIN_UI_SESSION_SECRET` | Secret used to seal Admin UI HttpOnly session cookies; required and at least 32 characters when Admin UI OIDC is enabled |
 | `ADMIN_UI_OIDC_CLIENT_ID` / `ADMIN_UI_OIDC_CLIENT_SECRET` | OIDC client credentials for the Admin UI login flow; client secret is optional for public-client PKCE providers |
-| `ADMIN_UI_OIDC_ISSUER` | OIDC issuer used for Discovery when explicit authorization/token/JWKS endpoints are not set |
-| `ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT` / `ADMIN_UI_OIDC_TOKEN_ENDPOINT` / `ADMIN_UI_OIDC_JWKS_URL` | Optional explicit provider endpoints; provide all three when not relying on Discovery |
+| `ADMIN_UI_OIDC_ISSUER` | Mandatory exact OIDC issuer, whether discovery or explicit endpoints are used |
+| `ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT` / `ADMIN_UI_OIDC_TOKEN_ENDPOINT` / `ADMIN_UI_OIDC_JWKS_URL` | Optional explicit HTTPS endpoints; by default each must share the issuer origin, with a deliberate origin allowlist for split providers |
+| `ADMIN_UI_OIDC_FETCH_TIMEOUT_MS` | Bounded discovery/token/JWKS timeout (default 5000 ms) |
 | `ADMIN_UI_OIDC_SCOPES` | Space-separated scopes requested by the Admin UI login flow; defaults to `openid profile email imposbro:admin imposbro:data` |
 | `ADMIN_UI_OIDC_REDIRECT_URI` | Optional callback URL override; defaults to the request origin plus `/api/auth/callback` |
 | `ADMIN_UI_SESSION_TTL_SECONDS` | Max Admin UI session lifetime; also capped by the provider token `expires_in` |
@@ -438,11 +466,25 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `OIDC_SUBJECT_CLAIM` | Claim used to derive the hashed audit actor, default `sub` |
 | `AUTHZ_COLLECTION_POLICIES` | Optional JSON tenant policy per collection/pattern; can inject search filters, validate/inject ingest tenant fields, and constrain document deletes |
 | `AUTHZ_API_KEY_TENANT_BYPASS` | Lets legacy API-key clients bypass tenant policy by default; set `false` when all clients use OIDC tenant claims |
+| `AUTHZ_REQUIRE_COLLECTION_POLICY` | Deny collections without a matching tenant policy independently of deployment transport profile; defaults to `false` and is mandatory in enterprise mode |
 | `AUDIT_LOG_ENABLED` | Enables best-effort audit logging for successful admin mutations |
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
+| `OTEL_SDK_DISABLED` / `OTEL_TRACES_EXPORTER` | OpenTelemetry switch and exporter (`none` or OTLP). Enterprise requires enabled OTLP tracing |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Bounded OTLP/HTTP destination; enterprise requires HTTPS and credentials only through secret-provided headers |
+| `OTEL_BUILD_ID` / `OTEL_SERVICE_REVISION` / `OTEL_DEPLOYMENT_ENVIRONMENT` | Low-cardinality release identity attached to traces and diagnostics; placeholder development values are rejected in enterprise |
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Document IDs in the delete path allow alphanumeric characters, hyphen, underscore, and dot. Registered clusters persist `protocol` alongside host and port; legacy state snapshots without it load as `http`, while unsupported protocols are rejected during import. HTTPS uses the runtime's standard certificate trust. Custom CA bundles and mTLS are not modeled by this small transport patch. Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_documents_deleted_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
+Collection and cluster names in API paths must be alphanumeric with hyphens or
+underscores. Document IDs allow alphanumeric characters, hyphen, underscore,
+and dot. Registered clusters persist protocol alongside host and port; legacy
+snapshots without it load as `http`, while enterprise rejects plaintext data
+clusters. Kafka, Redis, PostgreSQL, Typesense, OIDC, and OTLP transports expose
+typed TLS/trust settings; Helm can mount a private CA and client material from
+an external Secret. Admin responses, logs, traces, metrics, and evidence redact
+credentials and document payloads. For Kubernetes, prefer External Secrets or
+a pre-created Secret, OIDC with deny-by-default tenant policy, and the
+enterprise values contract. The Admin UI authenticates operators end to end;
+production server-held key injection is disabled by default.
 
 Rate limiting is optional and config-driven. When `RATE_LIMIT_ENABLED=true`,
 read-side data access (`/search/*` and `GET /documents/*`) and write-side data
@@ -505,7 +547,15 @@ Example tenant policy:
 
 ### Control-plane backup and restore
 
-For a restore-ready backup, export with secrets into a secure location:
+Masked state exports are useful for review and migration dry-runs. Enterprise
+backup uses `scripts/ops/backup-control-plane-postgres.sh`, which creates a
+PostgreSQL custom archive encrypted directly to an approved `age` recipient and
+preserves state, audit, outboxes, sequences and checkpoints. Store external
+Secret versions through the organization-owned secret manager, not inside the
+state snapshot.
+
+The raw-secret endpoint exists only for isolated development compatibility and
+is rejected by production/enterprise profiles:
 
 ```bash
 curl -H "X-API-Key: $ADMIN_API_KEY" \
@@ -531,7 +581,7 @@ curl -X POST "http://localhost:8000/admin/state/import?apply=true" \
   --data-binary @imposbro-state-backup.json
 ```
 
-Exports without `include_secrets=true` are safe for inspection but intentionally cannot be applied because cluster API keys are masked.
+Exports without `include_secrets=true` are safe for inspection but intentionally cannot be applied because cluster API keys are masked. Never weaken the deployment profile to obtain a raw snapshot; use the encrypted backup/clean-restore runbook.
 Snapshots include registered clusters, routing rules, desired collection schemas, and per-cluster collection aliases. Applying a snapshot reloads the control-plane state, reconciles desired schemas when aliases are present, and restores alias bindings.
 The Admin UI **Operations** page exposes the same flow with download, file upload, dry-run validation, and an explicit apply confirmation.
 
@@ -542,7 +592,11 @@ The Admin UI **Operations** page exposes the same flow with download, file uploa
 IMPOSBRO has two different scaling surfaces:
 
 * **Application workloads** (`query_api`, `indexing_service`, and `admin_ui`) are stateless or horizontally coordinated and are the workloads this repository scales directly.
-* **Stateful dependencies** (Typesense state/data clusters, Kafka, and Redis) should be scaled with their own operator, managed service, or dedicated runbook. Do not scale production Typesense clusters by copying Compose service blocks as a release procedure.
+* **Stateful dependencies** (PostgreSQL control plane, Typesense data clusters,
+  Kafka, and Redis) should be scaled with their own operator, managed service,
+  or dedicated runbook. The internal Typesense state cluster is a legacy
+  migration source, not the enterprise authority. Do not scale production
+  dependencies by copying Compose service blocks as a release procedure.
 
 For local multi-instance validation, use the scale overlay. It removes per-replica host port bindings and publishes one local Query API endpoint through nginx:
 
@@ -609,10 +663,26 @@ docker buildx imagetools inspect your-registry-user/imposbro-indexing-service:1.
 
 ### Step 2: Configure and Deploy the Helm Chart
 
-1.  **Create a production values file:** The chart intentionally fails render with placeholder images, image tags without `@sha256` digests, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, non-HTTPS OIDC endpoints, or missing required auth configuration. Provide digest-pinned image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE`, and have your authenticated ingress/gateway set that exact header/value. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, HTTPS OIDC provider endpoints, signed id-token validation settings, and `ADMIN_UI_SESSION_SECRET`.
-    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`. `READINESS_POLICY=serving` keeps initialized Query API pods behind the Kubernetes Service during a downstream outage, allowing the search API to return explicit partial results. Set it to `strict` only when removing degraded pods from service is the intended policy.
-    Enable `queryApi.ingress.enabled=true` and/or `adminUi.ingress.enabled=true` when the cluster ingress controller should own TLS and routing. Keep Admin UI behind an authenticated ingress/gateway whenever the proxy injects server-side keys.
-    Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.
+1.  **Create a production values file:** Start from
+    `helm/enterprise-ci-values.yaml` as a non-secret shape reference. The chart
+    rejects placeholder or non-digest images, volatile state/checkpoints,
+    missing migrations, unauthenticated or uncovered tenants, plaintext
+    dependency transports, wildcard CORS, disabled audit/rate-limit/tracing,
+    unsafe Admin UI credential mode, missing HTTPS public origin, absent
+    disruption/placement controls, permissive network boundaries, and inline
+    production secrets. Use External Secrets or a pre-created Secret and set
+    real environment endpoints, IdP, OTLP collector, trust bundle, resource/SLO
+    budgets, and release identity.
+    The chart exposes per-workload replicas, HPA/KEDA, PodDisruptionBudget,
+    Ingress TLS, resource/probe budgets, service account, security contexts,
+    affinity and topology spread, NetworkPolicy, ServiceMonitor, and
+    PrometheusRule. Enterprise readiness is strict; use the more available
+    `serving` readiness policy only as an explicit non-enterprise/degraded-mode
+    decision.
+    Enable Query API/Admin UI ingress only with exact HTTPS hosts and verify the
+    controller preserves security headers and strips untrusted identity
+    headers. Model DNS and every PostgreSQL, Kafka, Redis, Typesense, IdP, OTLP,
+    and monitoring flow in the environment's egress policy.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
     ```bash
     helm install imposbro-release ./helm -f production-values.yaml
@@ -669,7 +739,7 @@ indexingService:
 
 * [x] **Finalize Helm chart** for Kubernetes deployment
 * [x] **Multi-field routing federation** with document-level sharding
-* [x] **Resilient HA cluster state management** with Typesense
+* [x] **Transactional HA control plane** with PostgreSQL CAS, audit and outboxes
 * [x] **Modular backend architecture** with separation of concerns (services/, routers/, models/)
 * [x] **Reusable frontend component library** (Button, Card, Modal, Input, etc.)
 * [x] **Redis Pub/Sub config sync** for multi-instance consistency
@@ -683,10 +753,14 @@ indexingService:
 * [x] Real-time metrics on Admin UI dashboard (polling `/admin/stats` and `/health`)
 * [x] Cursor-style pagination (`offset`/`limit` and `next_offset` on search)
 * [x] Admin API key authentication (optional `ADMIN_API_KEY`, `X-API-Key` / Bearer)
-* [x] Helm Secrets for production (optional `config.useSecret`, Secret template)
+* [x] External Secrets/pre-created Secret integration with component-scoped
+  `secretKeyRef`, deterministic rotation rollouts, and enterprise rejection of
+  inline release secrets
 * [x] Document fan-out (routing rule `clusters` for multi-cluster replication)
 * [x] Grafana dashboard panels (documents by collection, error rate, indexing retries, DLQ)
-* [x] Admin UI Operations workflow for masked export, restore-ready export, dry-run import, and apply confirmation
+* [x] Admin UI Operations workflow for masked export and dry-run/apply import,
+  with raw-secret export confined to development and encrypted PostgreSQL
+  backup/restore for enterprise
 * [x] Admin UI schema reconciliation workflow with per-cluster report
 * [x] Helm release validation for immutable images, required external services, required secrets, and trusted Admin UI proxy key injection
 * [x] Admin UI fan-out routing editor, search pagination, advanced search tuning fields, cluster health details, and audit filters
@@ -714,10 +788,15 @@ indexingService:
 
 ### 🚧 Future
 
-* [ ] Hosted CI workflow once GitHub credentials include the `workflow` scope
-* [ ] Publish benchmark results from a production-sized Kubernetes run
-* [ ] Versioned routing rollout workflow (dual-write, backfill, cutover, drain, rollback) so policy changes cannot hide historical documents
-* [ ] Optimistic concurrency/CAS for control-plane mutations plus durable reconciliation for replicas that miss Redis Pub/Sub notifications
+The remaining items are release/environment evidence, not hidden source-code
+features:
+
+* [ ] Green hosted CI and signed release attestation on the exact reviewed commit
+* [ ] Production-shaped load result for the intended cluster and document profile
+* [ ] Deployment OIDC/JWKS, secret and certificate rotation drills
+* [ ] Kubernetes restart/node-drain and live alert-delivery evidence
+* [ ] Timed off-site backup restore, deletion convergence, and regional DR exercise
+* [ ] Independent security review and first customer production acceptance
 
 ---
 

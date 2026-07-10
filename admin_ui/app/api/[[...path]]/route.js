@@ -4,8 +4,12 @@
  */
 
 import {
+  authErrorResponse,
   buildLoginUrl,
+  enforceBrowserMutationProtection,
   isAdminOidcEnabled,
+  isAdminUiProductionLike,
+  noStoreHeaders,
   readAdminSession,
 } from '../../lib/adminAuth.js';
 
@@ -25,13 +29,24 @@ const PROXY_HEADER_BLOCKLIST = new Set([
 ]);
 
 const RESPONSE_HEADER_ALLOWLIST = new Set([
+  'etag',
   'retry-after',
+  'x-api-version',
+  'x-control-plane-revision',
   'x-request-id',
   'x-pagination-info',
   'x-pagination-warning',
   'x-ratelimit-limit',
   'x-ratelimit-remaining',
   'x-ratelimit-reset',
+]);
+
+const FORBIDDEN_TRUSTED_IDENTITY_HEADERS = new Set([
+  ...PROXY_HEADER_BLOCKLIST,
+  'authorization',
+  'origin',
+  'sec-fetch-site',
+  'x-api-key',
 ]);
 
 export async function GET(request, { params }) {
@@ -59,14 +74,32 @@ async function proxyRequest(request, params = {}) {
   const pathParam = resolvedParams?.path;
   const path = Array.isArray(pathParam) ? pathParam.join('/') : (pathParam || '');
   if (path.startsWith('auth/')) {
-    return Response.json({ detail: 'Admin UI auth route not found.' }, { status: 404 });
+    return proxyJson(
+      { detail: 'Admin UI auth route not found.', code: 'admin_auth_route_not_found' },
+      404
+    );
+  }
+
+  try {
+    enforceBrowserMutationProtection(request);
+  } catch (error) {
+    return authErrorResponse(error);
   }
 
   const search = request.nextUrl.search || '';
   const backendUrl = process.env.INTERNAL_QUERY_API_URL || 'http://localhost:8000';
+  let backendApiPrefix;
+  try {
+    backendApiPrefix = internalApiPrefix();
+  } catch (_) {
+    return proxyJson(
+      { detail: 'Admin UI proxy is unavailable.', code: 'proxy_configuration_invalid' },
+      500
+    );
+  }
   const adminApiKey = process.env.INTERNAL_QUERY_API_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
   const dataApiKey = process.env.INTERNAL_QUERY_API_DATA_API_KEY || process.env.DATA_API_KEY || '';
-  const url = `${backendUrl.replace(/\/$/, '')}/${path}${search}`;
+  const url = `${backendUrl.replace(/\/$/, '')}${backendApiPrefix}/${path}${search}`;
 
   const headers = new Headers();
   const headerBlocklist = proxyHeaderBlocklistFor(request);
@@ -83,8 +116,7 @@ async function proxyRequest(request, params = {}) {
     path.startsWith('documents/')
   );
   let callerProvidedCredentials = headers.has('x-api-key') || headers.has('authorization');
-  const trustedIdentity = hasTrustedUpstreamIdentity(request);
-  const canInjectCredentials = canInjectServerCredentials(request, trustedIdentity);
+  const canInjectCredentials = canInjectServerCredentials(request);
 
   if (!callerProvidedCredentials) {
     try {
@@ -94,26 +126,27 @@ async function proxyRequest(request, params = {}) {
         callerProvidedCredentials = true;
       }
     } catch (err) {
-      return Response.json(
-        { detail: err.message || 'Admin UI OIDC session is misconfigured.' },
-        { status: err.status || 500 }
-      );
+      return authErrorResponse(err);
     }
   }
 
   if (
     !callerProvidedCredentials &&
     isAdminOidcEnabled() &&
-    (needsAdminKey || needsDataKey) &&
-    !trustedIdentity
+    (needsAdminKey || needsDataKey)
   ) {
-    return Response.json(
-      {
-        detail: 'Admin UI login required.',
-        login_url: buildLoginUrl(request),
-      },
-      { status: 401 }
-    );
+    try {
+      return proxyJson(
+        {
+          detail: 'Admin UI login required.',
+          code: 'admin_login_required',
+          login_url: buildLoginUrl(request),
+        },
+        401
+      );
+    } catch (error) {
+      return authErrorResponse(error);
+    }
   }
 
   if (
@@ -121,9 +154,12 @@ async function proxyRequest(request, params = {}) {
     ((adminApiKey && needsAdminKey) || (dataApiKey && needsDataKey)) &&
     !canInjectCredentials
   ) {
-    return Response.json(
-      { detail: 'Admin UI proxy credential injection requires a trusted upstream identity.' },
-      { status: 401 }
+    return proxyJson(
+      {
+        detail: 'Admin UI server credentials are unavailable for this request.',
+        code: 'server_credential_injection_disabled',
+      },
+      401
     );
   }
 
@@ -171,9 +207,9 @@ async function proxyRequest(request, params = {}) {
       headers: responseHeadersFromBackend(res, 'application/json'),
     });
   } catch (err) {
-    return Response.json(
-      { detail: err.message || 'Backend unreachable' },
-      { status: 502 }
+    return proxyJson(
+      { detail: 'Query API temporarily unavailable.', code: 'query_api_unavailable' },
+      502
     );
   }
 }
@@ -187,11 +223,15 @@ function proxyHeaderBlocklistFor(request) {
       blocklist.add(headerName);
     }
   }
+  const trustedHeader = trustedIdentityHeaderName();
+  if (trustedHeader) {
+    blocklist.add(trustedHeader);
+  }
   return blocklist;
 }
 
 function responseHeadersFromBackend(response, fallbackContentType) {
-  const headers = new Headers({
+  const headers = noStoreHeaders({
     'Content-Type': response.headers.get('Content-Type') || fallbackContentType,
   });
   response.headers.forEach((value, key) => {
@@ -204,7 +244,7 @@ function responseHeadersFromBackend(response, fallbackContentType) {
 }
 
 function hasTrustedUpstreamIdentity(request) {
-  const trustedHeader = process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '';
+  const trustedHeader = trustedIdentityHeaderName();
   const trustedValue = process.env.ADMIN_UI_PROXY_TRUSTED_VALUE || '';
   if (!trustedHeader) {
     return false;
@@ -212,15 +252,54 @@ function hasTrustedUpstreamIdentity(request) {
   if (!trustedValue) {
     return false;
   }
-  const actual = request.headers.get(trustedHeader);
+  let actual;
+  try {
+    actual = request.headers.get(trustedHeader);
+  } catch (_) {
+    return false;
+  }
   if (!actual) return false;
   return actual === trustedValue;
 }
 
-function canInjectServerCredentials(request, trustedIdentity = hasTrustedUpstreamIdentity(request)) {
-  const trustedHeader = process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '';
-  if (!trustedHeader) {
-    return process.env.NODE_ENV !== 'production';
+function trustedIdentityHeaderName() {
+  const value = String(process.env.ADMIN_UI_PROXY_TRUSTED_HEADER || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(value) || FORBIDDEN_TRUSTED_IDENTITY_HEADERS.has(value)) {
+    return '';
   }
-  return trustedIdentity;
+  return value;
+}
+
+function canInjectServerCredentials(request) {
+  const configuredMode = String(process.env.ADMIN_UI_SERVER_CREDENTIAL_MODE || '')
+    .trim()
+    .toLowerCase();
+  const productionLike = isAdminUiProductionLike();
+  const mode = configuredMode || (productionLike ? 'disabled' : 'development');
+
+  if (mode === 'disabled') {
+    return false;
+  }
+  if (mode === 'development') {
+    return !productionLike;
+  }
+  if (mode === 'trusted-header-legacy') {
+    const legacyEnabled = String(process.env.ADMIN_UI_ALLOW_LEGACY_TRUSTED_HEADER || '')
+      .trim()
+      .toLowerCase() === 'true';
+    return legacyEnabled && hasTrustedUpstreamIdentity(request);
+  }
+  return false;
+}
+
+function proxyJson(payload, status, headers = {}) {
+  return Response.json(payload, { status, headers: noStoreHeaders(headers) });
+}
+
+function internalApiPrefix() {
+  const value = process.env.INTERNAL_QUERY_API_PREFIX || '/api/v1';
+  if (!/^\/api\/v[1-9][0-9]*$/.test(value)) {
+    throw new Error('INTERNAL_QUERY_API_PREFIX must match /api/v<major>');
+  }
+  return value;
 }

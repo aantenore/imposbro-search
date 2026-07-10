@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from typing import Dict, Tuple
 
 from prometheus_client import REGISTRY, Counter, Gauge, start_http_server
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_METRICS_PORT = 9108
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
+RESOURCE_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 CLUSTER_CONFIG_FETCHES = Counter(
     "indexing_cluster_config_fetch_total",
@@ -20,6 +22,18 @@ CLUSTER_CONFIG_FETCHES = Counter(
 LOADED_CLUSTERS = Gauge(
     "indexing_loaded_clusters",
     "Number of Typesense data cluster clients loaded by the indexing worker.",
+)
+WORKER_CONFIG_LOADED = Gauge(
+    "indexing_worker_config_loaded",
+    "Whether the indexing worker has loaded at least one data-cluster config.",
+)
+WORKER_CONSUMER_ACTIVE = Gauge(
+    "indexing_worker_consumer_active",
+    "Whether the indexing worker has an active Kafka consumer.",
+)
+WORKER_READY = Gauge(
+    "indexing_worker_ready",
+    "Whether cluster config is loaded and the Kafka consumer is active.",
 )
 INDEXED_DOCUMENTS = Counter(
     "indexing_documents_indexed_total",
@@ -40,6 +54,26 @@ DLQ_MESSAGES = Counter(
     "indexing_dlq_messages_total",
     "Total messages published to the indexing dead-letter topic.",
     ["source_topic", "error"],
+)
+INDEXING_EVENTS = Counter(
+    "indexing_events_total",
+    "Logical indexing events by envelope, operation, and final outcome.",
+    ["envelope_version", "operation", "result"],
+)
+IDEMPOTENCY_DECISIONS = Counter(
+    "indexing_idempotency_decisions_total",
+    "Per-target ordering and idempotency decisions.",
+    ["backend", "operation", "decision"],
+)
+CHECKPOINT_OPERATIONS = Counter(
+    "indexing_checkpoint_operations_total",
+    "Durable checkpoint operations by backend and outcome.",
+    ["backend", "result"],
+)
+CHECKPOINT_SCOPES = Counter(
+    "indexing_checkpoint_scopes_total",
+    "Event-scoped checkpoint fence outcomes by backend.",
+    ["backend", "result"],
 )
 
 
@@ -94,6 +128,38 @@ def start_metrics_server_from_env() -> bool:
 
 def message_labels(message: Dict) -> Tuple[str, str]:
     """Return low-cardinality collection and cluster labels for a Kafka payload."""
-    collection = message.get("collection") or "unknown"
-    target_cluster = message.get("target_cluster") or "default"
-    return str(collection), str(target_cluster)
+    identity = message.get("identity")
+    if isinstance(identity, dict):
+        collection = identity.get("collection") or "unknown"
+    else:
+        collection = message.get("collection") or "unknown"
+    targets = message.get("target_clusters")
+    if isinstance(targets, list) and len(targets) == 1:
+        target_cluster = targets[0]
+    elif isinstance(targets, list) and len(targets) > 1:
+        target_cluster = "multiple"
+    else:
+        target_cluster = message.get("target_cluster") or "default"
+    return (
+        _resource_label(collection, "unknown"),
+        _resource_label(target_cluster, "unknown"),
+    )
+
+
+def envelope_version_label(message: Dict) -> str:
+    value = message.get("envelope_version")
+    if value is None:
+        return "legacy"
+    return "2" if value == 2 and not isinstance(value, bool) else "unsupported"
+
+
+def operation_label(message: Dict) -> str:
+    value = message.get("operation") or message.get("action") or "upsert"
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"upsert", "delete", "tombstone"} else "unknown"
+
+
+def _resource_label(value, default: str) -> str:
+    if isinstance(value, str) and RESOURCE_LABEL_PATTERN.fullmatch(value):
+        return value
+    return default

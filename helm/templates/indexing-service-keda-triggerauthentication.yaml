@@ -1,0 +1,22 @@
+{{- if and .Values.indexingService.keda.enabled .Values.indexingService.keda.authenticationRef.create -}}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "imposbro-search.kedaAuthenticationName" . }}
+  labels:
+    {{- include "imposbro-search.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexing-service
+spec:
+  secretTargetRef:
+    - parameter: username
+      name: {{ default (include "imposbro-search.secretName" .) .Values.indexingService.keda.authenticationRef.secretName | quote }}
+      key: {{ .Values.indexingService.keda.authenticationRef.usernameKey | quote }}
+    - parameter: password
+      name: {{ default (include "imposbro-search.secretName" .) .Values.indexingService.keda.authenticationRef.secretName | quote }}
+      key: {{ .Values.indexingService.keda.authenticationRef.passwordKey | quote }}
+    {{- with .Values.indexingService.keda.authenticationRef.caKey }}
+    - parameter: ca
+      name: {{ default (include "imposbro-search.secretName" $) $.Values.indexingService.keda.authenticationRef.secretName | quote }}
+      key: {{ . | quote }}
+    {{- end }}
+{{- end }}

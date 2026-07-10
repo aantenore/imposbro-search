@@ -1,0 +1,295 @@
+# Render-only enterprise profile used by chart quality gates. Remote references
+# are deliberately non-secret; no credential value is stored in this file or
+# in the rendered Helm release.
+
+queryApi:
+  image: registry.example.com/imposbro-query-api@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: api.enterprise.example.com
+        path: /
+        pathType: Prefix
+    tls:
+      - secretName: enterprise-api-edge-tls
+        hosts: [api.enterprise.example.com]
+  topologySpreadConstraints:
+    - maxSkew: 1
+      minDomains: 2
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: query-api
+
+adminUi:
+  image: registry.example.com/imposbro-admin-ui@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: admin.enterprise.example.com
+        path: /
+        pathType: Prefix
+    tls:
+      - secretName: enterprise-admin-edge-tls
+        hosts: [admin.enterprise.example.com]
+  topologySpreadConstraints:
+    - maxSkew: 1
+      minDomains: 2
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: admin-ui
+
+indexingService:
+  image: registry.example.com/imposbro-indexing-service@sha256:3333333333333333333333333333333333333333333333333333333333333333
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  keda:
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+    kafka:
+      lagThreshold: "25"
+      sasl: scram_sha512
+      tls: enable
+      unsafeSsl: "false"
+    authenticationRef:
+      create: true
+      name: imposbro-enterprise-kafka-auth
+      caKey: TLS_CA_CERT
+  topologySpreadConstraints:
+    - maxSkew: 1
+      minDomains: 2
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: indexing-service
+
+availability:
+  podAntiAffinity:
+    enabled: true
+    type: preferred
+    topologyKey: kubernetes.io/hostname
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+networkPolicy:
+  enabled: true
+  ingressController:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: ingress-nginx
+  prometheus:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
+  queryApi:
+    health:
+      from:
+        - ipBlock: {cidr: 10.0.0.0/8}
+    egress: &restrictedEgress
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - {protocol: UDP, port: 53}
+          - {protocol: TCP, port: 53}
+      - to:
+          - ipBlock: {cidr: 0.0.0.0/0}
+        ports:
+          - {protocol: TCP, port: 443}
+          - {protocol: TCP, port: 5432}
+          - {protocol: TCP, port: 6379}
+          - {protocol: TCP, port: 8000}
+          - {protocol: TCP, port: 8108}
+          - {protocol: TCP, port: 9093}
+  adminUi:
+    health:
+      from:
+        - ipBlock: {cidr: 10.0.0.0/8}
+    egress: *restrictedEgress
+  indexingService:
+    health:
+      ingress:
+        from:
+          - ipBlock: {cidr: 10.0.0.0/8}
+    egress: *restrictedEgress
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels: {release: prometheus}
+  prometheusRule:
+    enabled: true
+    labels: {release: prometheus}
+
+secrets:
+  providedKeys:
+    - CONTROL_PLANE_DATABASE_URL
+    - REDIS_URL
+    - INTERNAL_STATE_API_KEY
+    - DEFAULT_DATA_CLUSTER_API_KEY
+    - ADMIN_API_KEY
+    - INTERNAL_QUERY_API_ADMIN_API_KEY
+    - KAFKA_SASL_USERNAME
+    - KAFKA_SASL_PASSWORD
+    - ADMIN_UI_SESSION_SECRET
+    - TLS_CA_CERT
+  rolloutVersion: enterprise-fixture-v1
+  workloadKeys:
+    migration:
+      - CONTROL_PLANE_DATABASE_URL
+    queryApi:
+      - CONTROL_PLANE_DATABASE_URL
+      - REDIS_URL
+      - ADMIN_API_KEY
+      - KAFKA_SASL_USERNAME
+      - KAFKA_SASL_PASSWORD
+    indexingService:
+      - CONTROL_PLANE_DATABASE_URL
+      - INTERNAL_QUERY_API_ADMIN_API_KEY
+      - KAFKA_SASL_USERNAME
+      - KAFKA_SASL_PASSWORD
+    adminUi:
+      - ADMIN_UI_OIDC_CLIENT_SECRET
+      - ADMIN_UI_SESSION_SECRET
+  externalSecret:
+    enabled: true
+    secretStoreRef:
+      name: enterprise-secret-store
+      kind: ClusterSecretStore
+    target:
+      name: imposbro-enterprise-runtime
+      creationPolicy: Owner
+      deletionPolicy: Retain
+    data:
+      - secretKey: CONTROL_PLANE_DATABASE_URL
+        remoteRef: {key: imposbro/enterprise, property: controlPlaneDatabaseUrl}
+      - secretKey: REDIS_URL
+        remoteRef: {key: imposbro/enterprise, property: redisUrl}
+      - secretKey: INTERNAL_STATE_API_KEY
+        remoteRef: {key: imposbro/enterprise, property: internalStateApiKey}
+      - secretKey: DEFAULT_DATA_CLUSTER_API_KEY
+        remoteRef: {key: imposbro/enterprise, property: dataClusterApiKey}
+      - secretKey: ADMIN_API_KEY
+        remoteRef: {key: imposbro/enterprise, property: internalAdminApiKey}
+      - secretKey: INTERNAL_QUERY_API_ADMIN_API_KEY
+        remoteRef: {key: imposbro/enterprise, property: internalAdminApiKey}
+      - secretKey: KAFKA_SASL_USERNAME
+        remoteRef: {key: imposbro/enterprise, property: kafkaUsername}
+      - secretKey: KAFKA_SASL_PASSWORD
+        remoteRef: {key: imposbro/enterprise, property: kafkaPassword}
+      - secretKey: ADMIN_UI_SESSION_SECRET
+        remoteRef: {key: imposbro/enterprise, property: adminSessionSecret}
+      - secretKey: TLS_CA_CERT
+        remoteRef: {key: imposbro/enterprise, property: privateCaPem}
+
+tls:
+  trustBundle:
+    enabled: true
+    existingSecret: imposbro-enterprise-runtime
+    caKey: TLS_CA_CERT
+    mountPath: /etc/imposbro/tls
+
+migrations:
+  enabled: true
+  lockTimeoutSeconds: 300
+
+config:
+  useSecret: false
+  DEPLOYMENT_PROFILE: enterprise
+  OTEL_SDK_DISABLED: "false"
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector.enterprise.internal
+  OTEL_DEPLOYMENT_ENVIRONMENT: enterprise
+  OTEL_BUILD_ID: enterprise-fixture-build
+  OTEL_SERVICE_REVISION: abcdef1234567890
+  CONTROL_PLANE_STORE_BACKEND: postgres
+  INDEXING_EVENT_STORE_BACKEND: postgres
+  INDEXING_OUTBOX_POLL_SECONDS: "1"
+  INDEXING_OUTBOX_BATCH_SIZE: "100"
+  INDEXING_CHECKPOINT_BACKEND: postgres
+  INDEXING_CHECKPOINT_LOCK_TIMEOUT_MS: "5000"
+  INDEXING_ALLOW_VOLATILE_CHECKPOINTS: "false"
+  INDEXING_ALLOW_TYPESENSE_CHECKPOINTS: "false"
+  PGSSLMODE: verify-full
+  PGSSLROOTCERT: /etc/imposbro/tls/ca.crt
+  KAFKA_BROKER_URL: kafka.enterprise.internal:9093
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  KAFKA_SASL_MECHANISM: SCRAM-SHA-512
+  KAFKA_SSL_CAFILE: /etc/imposbro/tls/ca.crt
+  KAFKA_SSL_CHECK_HOSTNAME: "true"
+  REDIS_URL: ""
+  INTERNAL_STATE_NODES: typesense-state-1.enterprise.internal,typesense-state-2.enterprise.internal,typesense-state-3.enterprise.internal
+  INTERNAL_STATE_PROTOCOL: https
+  DEFAULT_DATA_CLUSTER_NODES: typesense-data-1.enterprise.internal,typesense-data-2.enterprise.internal,typesense-data-3.enterprise.internal
+  DEFAULT_DATA_CLUSTER_PROTOCOL: https
+  DEFAULT_DATA2_CLUSTER_PROTOCOL: https
+  INTERNAL_QUERY_API_URL: http://imposbro-release-imposbro-search-query-api:80
+  CORS_ORIGINS: https://admin.enterprise.example.com
+  READINESS_POLICY: strict
+  ALLOW_UNAUTHENTICATED_ADMIN: "false"
+  ALLOW_UNAUTHENTICATED_DATA: "false"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_BACKEND: redis
+  RATE_LIMIT_FAIL_CLOSED: "true"
+  INTERNAL_STATE_API_KEY_REF: env:IMPOSBRO_SECRET_INTERNAL_STATE_API_KEY
+  DEFAULT_DATA_CLUSTER_API_KEY_REF: env:IMPOSBRO_SECRET_DEFAULT_DATA_CLUSTER_API_KEY
+  DEFAULT_DATA2_CLUSTER_API_KEY_REF: ""
+  OIDC_ENABLED: "true"
+  OIDC_ISSUER: https://identity.enterprise.example.com
+  OIDC_AUDIENCE: imposbro-search
+  OIDC_JWKS_URL: https://identity.enterprise.example.com/.well-known/jwks.json
+  AUTHZ_COLLECTION_POLICIES: '{"collections":{"products":{"mode":"required","tenant_field":"tenant_id","tenant_claim":"tenant_id"}}}'
+  AUTHZ_API_KEY_TENANT_BYPASS: "false"
+  AUTHZ_REQUIRE_COLLECTION_POLICY: "true"
+  AUDIT_LOG_ENABLED: "true"
+  AUDIT_LOG_MAX_RESULTS: "100"
+  ADMIN_UI_PUBLIC_ORIGIN: https://admin.enterprise.example.com
+  ADMIN_UI_SECURITY_PROFILE: enterprise
+  ADMIN_UI_SERVER_CREDENTIAL_MODE: disabled
+  ADMIN_UI_ALLOW_LEGACY_TRUSTED_HEADER: "false"
+  ADMIN_UI_ENTERPRISE_MODE: "false"
+  ADMIN_UI_OIDC_ENABLED: "true"
+  ADMIN_UI_OIDC_ISSUER: https://identity.enterprise.example.com
+  ADMIN_UI_OIDC_ALLOWED_ENDPOINT_ORIGINS: ""
+  ADMIN_UI_OIDC_ALLOW_INSECURE_LOCALHOST: "false"
+  ADMIN_UI_OIDC_FETCH_TIMEOUT_MS: "5000"
+  ADMIN_UI_OIDC_CLIENT_ID: imposbro-admin-ui
+  ADMIN_UI_OIDC_REDIRECT_URI: https://admin.enterprise.example.com/api/auth/callback

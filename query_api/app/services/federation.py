@@ -9,9 +9,42 @@ import copy
 import fnmatch
 import logging
 import typesense
-from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from domain.routing_rollout import RoutingRollout
+from secret_resolver import (
+    SecretResolver,
+    build_secret_resolver,
+    materialize_cluster_secret,
+    validate_cluster_secret_config,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FederationRuntimeSnapshot:
+    """One atomically replaceable view used by concurrent data-plane requests."""
+
+    revision: int
+    clusters_config: Dict[str, Dict]
+    clients: Dict[str, typesense.Client]
+    routing_rules: Dict[str, Dict]
+    collection_schemas: Dict[str, Dict]
+    collection_aliases: Dict[str, Dict[str, Dict[str, str]]]
+    routing_rollouts: Dict[str, Dict[str, Any]]
+
+
+class _RotatingTypesenseClient:
+    """Resolve a referenced API key for every top-level Typesense operation."""
+
+    def __init__(self, factory: Callable[[], typesense.Client]):
+        self._factory = factory
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._factory(), name)
 
 
 class FederationService:
@@ -28,13 +61,91 @@ class FederationService:
         routing_rules: Dictionary mapping collection names to their routing rules
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        secret_resolver: Optional[SecretResolver] = None,
+        allow_inline_secrets: bool = True,
+    ):
         """Initialize the FederationService with empty configurations."""
-        self.clusters_config: Dict[str, Dict] = {}
-        self.clients: Dict[str, typesense.Client] = {}
-        self.routing_rules: Dict[str, Dict] = {}
-        self.collection_schemas: Dict[str, Dict] = {}
-        self.collection_aliases: Dict[str, Dict[str, Dict[str, str]]] = {}
+        self.secret_resolver = secret_resolver or build_secret_resolver(
+            "/run/secrets/imposbro"
+        )
+        self.allow_inline_secrets = allow_inline_secrets
+        self._runtime = FederationRuntimeSnapshot(
+            revision=0,
+            clusters_config={},
+            clients={},
+            routing_rules={},
+            collection_schemas={},
+            collection_aliases={},
+            routing_rollouts={},
+        )
+
+    @property
+    def applied_revision(self) -> int:
+        return self._runtime.revision
+
+    @property
+    def clusters_config(self) -> Dict[str, Dict]:
+        return self._runtime.clusters_config
+
+    @clusters_config.setter
+    def clusters_config(self, value: Dict[str, Dict]) -> None:
+        self._runtime = replace(self._runtime, clusters_config=value)
+
+    @property
+    def clients(self) -> Dict[str, typesense.Client]:
+        return self._runtime.clients
+
+    @clients.setter
+    def clients(self, value: Dict[str, typesense.Client]) -> None:
+        self._runtime = replace(self._runtime, clients=value)
+
+    @property
+    def routing_rules(self) -> Dict[str, Dict]:
+        return self._runtime.routing_rules
+
+    @routing_rules.setter
+    def routing_rules(self, value: Dict[str, Dict]) -> None:
+        self._runtime = replace(self._runtime, routing_rules=value)
+
+    @property
+    def collection_schemas(self) -> Dict[str, Dict]:
+        return self._runtime.collection_schemas
+
+    @collection_schemas.setter
+    def collection_schemas(self, value: Dict[str, Dict]) -> None:
+        self._runtime = replace(self._runtime, collection_schemas=value)
+
+    @property
+    def collection_aliases(self) -> Dict[str, Dict[str, Dict[str, str]]]:
+        return self._runtime.collection_aliases
+
+    @collection_aliases.setter
+    def collection_aliases(self, value: Dict[str, Dict[str, Dict[str, str]]]) -> None:
+        self._runtime = replace(self._runtime, collection_aliases=value)
+
+    @property
+    def routing_rollouts(self) -> Dict[str, Dict[str, Any]]:
+        return self._runtime.routing_rollouts
+
+    @routing_rollouts.setter
+    def routing_rollouts(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self._runtime = replace(self._runtime, routing_rollouts=value)
+
+    def runtime_snapshot(self) -> FederationRuntimeSnapshot:
+        """Return the current snapshot so one request can keep a coherent view."""
+        return self._runtime
+
+    def replace_runtime(self, **changes: Any) -> None:
+        """Atomically replace selected immutable runtime snapshot fields."""
+        self._runtime = replace(self._runtime, **changes)
+
+    def mark_applied_revision(self, revision: int) -> None:
+        if revision < self._runtime.revision:
+            raise ValueError("Federation applied revision cannot move backwards")
+        self._runtime = replace(self._runtime, revision=revision)
 
     @staticmethod
     def split_hosts(hosts: str) -> List[str]:
@@ -69,6 +180,7 @@ class FederationService:
         port: str,
         api_key: str,
         protocol: str = "http",
+        connection_timeout_seconds: float = 5,
     ) -> typesense.Client:
         """Create a Typesense client pinned to one node for readiness checks."""
         protocol = FederationService.normalize_protocol(protocol)
@@ -76,7 +188,7 @@ class FederationService:
             {
                 "nodes": [{"host": host, "port": str(port), "protocol": protocol}],
                 "api_key": api_key,
-                "connection_timeout_seconds": 5,
+                "connection_timeout_seconds": connection_timeout_seconds,
             }
         )
 
@@ -86,36 +198,48 @@ class FederationService:
         port: str,
         api_key: str,
         protocol: str = "http",
+        connection_timeout_seconds: float = 5,
     ) -> List[Dict[str, str]]:
-        """Check every declared Typesense node by listing collections."""
+        """Check every declared Typesense node concurrently by listing collections."""
         protocol = FederationService.normalize_protocol(protocol)
-        statuses: List[Dict[str, str]] = []
-        for host in FederationService.split_hosts(hosts):
+        declared_hosts = FederationService.split_hosts(hosts)
+
+        def check_node(host: str) -> Dict[str, str]:
             try:
                 client = FederationService.create_single_node_client(
                     host,
                     port,
                     api_key,
                     protocol,
+                    connection_timeout_seconds,
                 )
                 client.collections.retrieve()
-                statuses.append({"host": host, "status": "ok"})
+                return {"host": host, "status": "ok"}
             except Exception as exc:
-                statuses.append(
-                    {
-                        "host": host,
-                        "status": "error",
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-        return statuses
+                return {
+                    "host": host,
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+        if not declared_hosts:
+            return []
+        worker_count = min(len(declared_hosts), 8)
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="typesense-health",
+        ) as executor:
+            return list(executor.map(check_node, declared_hosts))
 
     @staticmethod
     def create_client_config(
         name: str,
         nodes_str: str,
-        api_key: str,
+        api_key: Optional[str] = None,
         protocol: str = "http",
+        *,
+        api_key_ref: Optional[str] = None,
+        allow_inline_secrets: bool = True,
     ) -> Dict:
         """
         Create a cluster configuration dictionary.
@@ -128,16 +252,29 @@ class FederationService:
         Returns:
             Configuration dictionary
         """
-        return {
+        config = {
             "name": name,
             "host": nodes_str,
             "port": 8108,
             "protocol": FederationService.normalize_protocol(protocol),
-            "api_key": api_key,
         }
+        if api_key_ref:
+            config["api_key_ref"] = api_key_ref
+        if api_key:
+            config["api_key"] = api_key
+        validate_cluster_secret_config(
+            config,
+            allow_inline=allow_inline_secrets,
+        )
+        return config
 
     @staticmethod
-    def create_client(config: Dict) -> typesense.Client:
+    def create_client(
+        config: Dict,
+        *,
+        secret_resolver: Optional[SecretResolver] = None,
+        allow_inline_secrets: bool = True,
+    ) -> typesense.Client:
         """
         Create a Typesense client from a configuration dictionary.
 
@@ -147,27 +284,63 @@ class FederationService:
         Returns:
             Configured Typesense client
         """
-        config = FederationService.normalize_cluster_config(config)
-        port = str(config.get("port", 8108))
-        nodes = [
-            {"host": h, "port": port, "protocol": config["protocol"]}
-            for h in FederationService.split_hosts(config["host"])
-        ]
-        return typesense.Client(
-            {
-                "nodes": nodes,
-                "api_key": config["api_key"],
-                "connection_timeout_seconds": 5,
-            }
+        normalized = FederationService.normalize_cluster_config(config)
+        resolver = secret_resolver or build_secret_resolver("/run/secrets/imposbro")
+
+        def factory() -> typesense.Client:
+            api_key = materialize_cluster_secret(
+                normalized,
+                allow_inline=allow_inline_secrets,
+                resolver=resolver,
+            )
+            port = str(normalized.get("port", 8108))
+            nodes = [
+                {"host": h, "port": port, "protocol": normalized["protocol"]}
+                for h in FederationService.split_hosts(normalized["host"])
+            ]
+            return typesense.Client(
+                {
+                    "nodes": nodes,
+                    "api_key": api_key,
+                    "connection_timeout_seconds": 5,
+                }
+            )
+
+        # Validate and resolve once so invalid startup/import state fails early.
+        initial_client = factory()
+        if normalized.get("api_key_ref"):
+            return _RotatingTypesenseClient(factory)  # type: ignore[return-value]
+        return initial_client
+
+    def build_client(self, config: Dict) -> typesense.Client:
+        """Build a policy-aware client for one persisted cluster config."""
+        return self.create_client(
+            config,
+            secret_resolver=self.secret_resolver,
+            allow_inline_secrets=self.allow_inline_secrets,
         )
+
+    def materialize_cluster_config(self, config: Dict) -> Dict[str, Any]:
+        """Return an ephemeral worker config with a fresh raw API key."""
+        normalized = self.normalize_cluster_config(config)
+        api_key = materialize_cluster_secret(
+            normalized,
+            allow_inline=self.allow_inline_secrets,
+            resolver=self.secret_resolver,
+        )
+        normalized.pop("api_key_ref", None)
+        normalized["api_key"] = api_key
+        return normalized
 
     def register_cluster(
         self,
         name: str,
         host: str,
         port: int,
-        api_key: str,
+        api_key: Optional[str] = None,
         protocol: str = "http",
+        *,
+        api_key_ref: Optional[str] = None,
     ) -> None:
         """
         Register a new cluster with the federation.
@@ -185,21 +358,29 @@ class FederationService:
             raise ValueError(f"Cluster '{name}' is already registered.")
 
         protocol = self.normalize_protocol(protocol)
-        statuses = self.node_statuses(host, str(port), api_key, protocol)
+        config: Dict[str, Any] = {
+            "name": name,
+            "host": host,
+            "port": port,
+            "protocol": protocol,
+        }
+        if api_key_ref:
+            config["api_key_ref"] = api_key_ref
+        if api_key:
+            config["api_key"] = api_key
+        resolved_api_key = materialize_cluster_secret(
+            config,
+            allow_inline=self.allow_inline_secrets,
+            resolver=self.secret_resolver,
+        )
+        statuses = self.node_statuses(host, str(port), resolved_api_key, protocol)
         failed = [node for node in statuses if node.get("status") != "ok"]
         if not statuses or failed:
             raise ValueError(
                 f"Cluster '{name}' is not reachable on all configured node(s): {failed or statuses}"
             )
 
-        config = {
-            "name": name,
-            "host": host,
-            "port": port,
-            "protocol": protocol,
-            "api_key": api_key,
-        }
-        self.clients[name] = self.create_client(config)
+        self.clients[name] = self.build_client(config)
         self.clusters_config[name] = config
         logger.info(f"Cluster '{name}' registered successfully.")
 
@@ -266,7 +447,11 @@ class FederationService:
                 )
         return created
 
-    def cluster_node_statuses(self, cluster_name: str) -> List[Dict[str, str]]:
+    def cluster_node_statuses(
+        self,
+        cluster_name: str,
+        connection_timeout_seconds: float = 5,
+    ) -> List[Dict[str, str]]:
         """Return readiness status for every node configured in a registered cluster."""
         config = self.clusters_config.get(cluster_name)
         if not config:
@@ -274,8 +459,13 @@ class FederationService:
         return self.node_statuses(
             config["host"],
             str(config.get("port", 8108)),
-            config["api_key"],
+            materialize_cluster_secret(
+                config,
+                allow_inline=self.allow_inline_secrets,
+                resolver=self.secret_resolver,
+            ),
             config.get("protocol", "http"),
+            connection_timeout_seconds,
         )
 
     def reconcile_collection_schemas(self) -> Dict[str, Dict[str, List[str]]]:
@@ -307,18 +497,22 @@ class FederationService:
             report[cluster_name] = cluster_report
         return report
 
-    def _resolve_default_cluster(self) -> Optional[str]:
+    def _resolve_default_cluster(
+        self,
+        runtime: Optional[FederationRuntimeSnapshot] = None,
+    ) -> Optional[str]:
         """
         Resolve the virtual 'default' cluster to an actual registered cluster.
         The admin API exposes 'default' as the internal HA cluster; for routing
         we need a real data cluster (e.g. default-data-cluster).
         """
-        if "default" in self.clients:
+        clients = (runtime or self._runtime).clients
+        if "default" in clients:
             return "default"
-        if "default-data-cluster" in self.clients:
+        if "default-data-cluster" in clients:
             return "default-data-cluster"
-        if self.clients:
-            return next(iter(self.clients.keys()))
+        if clients:
+            return next(iter(clients.keys()))
         return None
 
     def get_client_for_cluster(self, cluster_name: str) -> Optional[typesense.Client]:
@@ -326,11 +520,16 @@ class FederationService:
         name = self.resolve_cluster_name(cluster_name)
         return self.clients.get(name) if name else None
 
-    def resolve_cluster_name(self, cluster_name: str) -> Optional[str]:
+    def resolve_cluster_name(
+        self,
+        cluster_name: str,
+        runtime: Optional[FederationRuntimeSnapshot] = None,
+    ) -> Optional[str]:
         """Return the real registered cluster name for a public cluster identifier."""
+        runtime = runtime or self._runtime
         if cluster_name == "default":
-            return self._resolve_default_cluster()
-        return cluster_name if cluster_name in self.clients else None
+            return self._resolve_default_cluster(runtime)
+        return cluster_name if cluster_name in runtime.clients else None
 
     @staticmethod
     def _document_value(document: Dict[str, Any], path: str) -> Any:
@@ -409,11 +608,13 @@ class FederationService:
     def _targets_for_names(
         self,
         target_names: List[str],
+        runtime: Optional[FederationRuntimeSnapshot] = None,
     ) -> List[Tuple[typesense.Client, str]]:
+        runtime = runtime or self._runtime
         result: List[Tuple[typesense.Client, str]] = []
         for target_name in target_names:
-            resolved_name = self.resolve_cluster_name(target_name)
-            client = self.clients.get(resolved_name) if resolved_name else None
+            resolved_name = self.resolve_cluster_name(target_name, runtime)
+            client = runtime.clients.get(resolved_name) if resolved_name else None
             if client:
                 result.append((client, resolved_name))
             else:
@@ -423,11 +624,13 @@ class FederationService:
     def _default_targets(
         self,
         default_cluster: str = "default",
+        runtime: Optional[FederationRuntimeSnapshot] = None,
     ) -> List[Tuple[typesense.Client, str]]:
-        default_name = self.resolve_cluster_name(default_cluster)
+        runtime = runtime or self._runtime
+        default_name = self.resolve_cluster_name(default_cluster, runtime)
         if default_name is None:
             return []
-        client = self.clients.get(default_name)
+        client = runtime.clients.get(default_name)
         return [(client, default_name)] if client else []
 
     def preview_routing(
@@ -436,13 +639,15 @@ class FederationService:
         document: Dict[str, Any],
         *,
         rules_config: Optional[Dict[str, Any]] = None,
+        runtime: Optional[FederationRuntimeSnapshot] = None,
     ) -> Dict[str, Any]:
-        collection_rules = rules_config or self.routing_rules.get(collection_name, {})
+        runtime = runtime or self._runtime
+        collection_rules = rules_config or runtime.routing_rules.get(collection_name, {})
         rules = collection_rules.get("rules", [])
         for index, rule in self._ordered_rules_with_index(rules):
             if self._rule_matches(rule, document):
                 target_names = self._rule_targets(rule)
-                targets = self._targets_for_names(target_names)
+                targets = self._targets_for_names(target_names, runtime)
                 return {
                     "collection": collection_name,
                     "matched": True,
@@ -454,7 +659,7 @@ class FederationService:
                 }
 
         default_cluster = collection_rules.get("default_cluster", "default")
-        targets = self._default_targets(default_cluster)
+        targets = self._default_targets(default_cluster, runtime)
         return {
             "collection": collection_name,
             "matched": False,
@@ -464,6 +669,69 @@ class FederationService:
             "routed_to": [name for _, name in targets],
             "target_clusters": [default_cluster],
         }
+
+    def _rollout_for_collection(
+        self,
+        collection_name: str,
+        runtime: Optional[FederationRuntimeSnapshot] = None,
+    ) -> Optional[RoutingRollout]:
+        """Return the newest relevant rollout, failing closed on corrupt state."""
+        runtime = runtime or self._runtime
+        rollouts = [
+            RoutingRollout.from_dict(payload)
+            for payload in runtime.routing_rollouts.values()
+            if payload.get("collection") == collection_name
+        ]
+        if not rollouts:
+            return None
+        terminal = {"completed", "cancelled", "rolled_back"}
+        active = [item for item in rollouts if item.phase.value not in terminal]
+        candidates = active or rollouts
+        return max(candidates, key=lambda item: (item.updated_at, item.rollout_id))
+
+    def _routing_policies(
+        self,
+        collection_name: str,
+        *,
+        access: str,
+        runtime: Optional[FederationRuntimeSnapshot] = None,
+    ) -> List[Dict[str, Any]]:
+        """Resolve active/candidate policies for one coherent runtime snapshot."""
+        runtime = runtime or self._runtime
+        if runtime.routing_rules.get(collection_name, {}).get("disabled") is True:
+            return []
+        rollout = self._rollout_for_collection(collection_name, runtime)
+        if rollout is None:
+            return [runtime.routing_rules.get(collection_name, {})]
+        read_modes, write_modes = rollout.policy_modes()
+        modes = read_modes if access == "read" else write_modes
+        policies = {
+            "active": rollout.active_policy,
+            "candidate": rollout.candidate_policy,
+        }
+        return [copy.deepcopy(policies[mode]) for mode in modes]
+
+    def _targets_for_policy_document(
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        policy: Dict[str, Any],
+        runtime: Optional[FederationRuntimeSnapshot] = None,
+    ) -> List[Tuple[typesense.Client, str]]:
+        runtime = runtime or self._runtime
+        preview = self.preview_routing(
+            collection_name,
+            document,
+            rules_config=policy,
+            runtime=runtime,
+        )
+        target_names = preview.get("target_clusters") or []
+        if preview.get("used_default"):
+            return self._default_targets(
+                target_names[0] if target_names else "default",
+                runtime,
+            )
+        return self._targets_for_names(target_names, runtime)
 
     def get_client_for_document(
         self, collection_name: str, document: Dict
@@ -493,39 +761,97 @@ class FederationService:
         Return all (client, cluster_name) pairs for a document (single or fan-out).
         Use this for ingest when replicating to multiple clusters.
         """
-        preview = self.preview_routing(collection_name, document)
-        target_names = preview.get("target_clusters") or []
-        if preview.get("used_default"):
-            return self._default_targets(target_names[0] if target_names else "default")
-        return self._targets_for_names(target_names)
+        targets, _revision, _rollout_id = self.get_indexing_route(
+            collection_name,
+            document,
+        )
+        return targets
 
-    def _cluster_names_for_search(self, collection_name: str) -> List[str]:
+    def get_indexing_route(
+        self,
+        collection_name: str,
+        document: Dict,
+    ) -> Tuple[List[Tuple[typesense.Client, str]], int, Optional[str]]:
+        """Return targets and routing metadata from one immutable snapshot."""
+        runtime = self._runtime
+        targets: List[Tuple[typesense.Client, str]] = []
+        seen = set()
+        for policy in self._routing_policies(
+            collection_name,
+            access="write",
+            runtime=runtime,
+        ):
+            for client, cluster_name in self._targets_for_policy_document(
+                collection_name,
+                document,
+                policy,
+                runtime,
+            ):
+                if cluster_name not in seen:
+                    seen.add(cluster_name)
+                    targets.append((client, cluster_name))
+        rollout = self._rollout_for_collection(collection_name, runtime)
+        return targets, runtime.revision, rollout.rollout_id if rollout else None
+
+    def get_delete_route(
+        self,
+        collection_name: str,
+    ) -> Tuple[List[Tuple[str, typesense.Client]], int, Optional[str]]:
+        """Return deletion fan-out and routing metadata from one snapshot."""
+        runtime = self._runtime
+        if runtime.routing_rules.get(collection_name, {}).get("disabled") is True:
+            return [], runtime.revision, None
+        rollout = self._rollout_for_collection(collection_name, runtime)
+        return (
+            list(runtime.clients.items()),
+            runtime.revision,
+            rollout.rollout_id if rollout else None,
+        )
+
+    def _cluster_names_for_search(
+        self,
+        collection_name: str,
+        runtime: Optional[FederationRuntimeSnapshot] = None,
+    ) -> List[str]:
         """Return cluster names that may contain documents for a collection."""
-        rules = self.routing_rules.get(collection_name, {})
-        if not rules.get("rules"):
-            return list(self.clients.keys())
-
+        runtime = runtime or self._runtime
+        rollout = self._rollout_for_collection(collection_name, runtime)
         cluster_names: List[str] = []
 
         def add_cluster(name: str) -> None:
             if name == "default":
-                name = self._resolve_default_cluster() or ""
-            if name and name in self.clients and name not in cluster_names:
+                name = self._resolve_default_cluster(runtime) or ""
+            if name and name in runtime.clients and name not in cluster_names:
                 cluster_names.append(name)
 
-        for rule in rules.get("rules", []):
-            for name in self._rule_targets(rule):
-                add_cluster(name)
-        add_cluster(rules.get("default_cluster", "default"))
+        for rules in self._routing_policies(
+            collection_name,
+            access="read",
+            runtime=runtime,
+        ):
+            if not rules.get("rules"):
+                if rollout is None:
+                    # Preserve legacy unsharded behavior: all clusters may contain
+                    # historical copies, so narrowing would hide documents.
+                    for name in runtime.clients:
+                        add_cluster(name)
+                else:
+                    add_cluster(rules.get("default_cluster", "default"))
+                continue
+            for rule in rules.get("rules", []):
+                for name in self._rule_targets(rule):
+                    add_cluster(name)
+            add_cluster(rules.get("default_cluster", "default"))
         return cluster_names
 
     def get_named_clients_for_search(
         self, collection_name: str
     ) -> List[Tuple[str, typesense.Client]]:
         """Get named clients that may contain documents for a collection."""
+        runtime = self._runtime
         return [
-            (name, self.clients[name])
-            for name in self._cluster_names_for_search(collection_name)
+            (name, runtime.clients[name])
+            for name in self._cluster_names_for_search(collection_name, runtime)
         ]
 
     def get_named_clients_for_delete(
@@ -538,7 +864,9 @@ class FederationService:
         avoids orphaning documents after routing rules move a collection away
         from a cluster that previously received writes.
         """
-        return list(self.clients.items())
+        if self._runtime.routing_rules.get(collection_name, {}).get("disabled") is True:
+            return []
+        return list(self._runtime.clients.items())
 
     def get_clients_for_search(self, collection_name: str) -> List[typesense.Client]:
         """
@@ -555,21 +883,15 @@ class FederationService:
         """
         return [client for _, client in self.get_named_clients_for_search(collection_name)]
 
-    def set_routing_rules(
-        self, collection: str, rules: List[Dict], default_cluster: str
+    def validate_routing_policy(
+        self,
+        rules: List[Dict],
+        default_cluster: str,
     ) -> None:
-        """
-        Set routing rules for a collection.
-
-        Args:
-            collection: Collection name
-            rules: List of routing rules
-            default_cluster: Default cluster when no rules match
-        """
-        # Validate all clusters exist (resolve virtual "default" for validation)
+        """Validate that every target resolves without mutating runtime state."""
         all_clusters = set()
-        for r in rules:
-            for target_name in self._rule_targets(r):
+        for rule in rules:
+            for target_name in self._rule_targets(rule):
                 resolved_name = self.resolve_cluster_name(target_name)
                 all_clusters.add(resolved_name or target_name)
         effective_default = (
@@ -583,6 +905,19 @@ class FederationService:
         missing = all_clusters - set(self.clients.keys())
         if missing:
             raise ValueError(f"Clusters not registered: {missing}")
+
+    def set_routing_rules(
+        self, collection: str, rules: List[Dict], default_cluster: str
+    ) -> None:
+        """
+        Set routing rules for a collection.
+
+        Args:
+            collection: Collection name
+            rules: List of routing rules
+            default_cluster: Default cluster when no rules match
+        """
+        self.validate_routing_policy(rules, default_cluster)
 
         self.routing_rules[collection] = {
             "collection": collection,
@@ -602,6 +937,9 @@ class FederationService:
         routing_rules: Dict[str, Dict],
         collection_schemas: Optional[Dict[str, Dict]] = None,
         collection_aliases: Optional[Dict[str, Dict[str, Dict[str, str]]]] = None,
+        routing_rollouts: Optional[Dict[str, Dict[str, Any]]] = None,
+        *,
+        revision: int = 0,
     ) -> None:
         """
         Load federation configuration from saved state.
@@ -616,13 +954,22 @@ class FederationService:
             name: self.normalize_cluster_config(config, name=name)
             for name, config in clusters_config.items()
         }
-        self.clusters_config.update(normalized_configs)
-        self.routing_rules.update(routing_rules)
-        self.collection_schemas.update(collection_schemas or {})
-        self.collection_aliases.update(copy.deepcopy(collection_aliases or {}))
-
-        for name, config in normalized_configs.items():
-            self.clients[name] = self.create_client(config)
+        clients = {
+            name: self.build_client(config)
+            for name, config in normalized_configs.items()
+        }
+        next_runtime = FederationRuntimeSnapshot(
+            revision=revision,
+            clusters_config=normalized_configs,
+            clients=clients,
+            routing_rules=copy.deepcopy(routing_rules),
+            collection_schemas=copy.deepcopy(collection_schemas or {}),
+            collection_aliases=copy.deepcopy(collection_aliases or {}),
+            routing_rollouts=copy.deepcopy(routing_rollouts or {}),
+        )
+        # Building clients and validating state happens above. One pointer swap
+        # makes the complete view visible without an empty/partial reload window.
+        self._runtime = next_runtime
 
         logger.info(f"Loaded {len(clusters_config)} federated cluster(s) from state.")
 
@@ -632,6 +979,9 @@ class FederationService:
         routing_rules: Dict[str, Dict],
         collection_schemas: Optional[Dict[str, Dict]] = None,
         collection_aliases: Optional[Dict[str, Dict[str, Dict[str, str]]]] = None,
+        routing_rollouts: Optional[Dict[str, Dict[str, Any]]] = None,
+        *,
+        revision: int = 0,
     ) -> None:
         """
         Reload federation configuration from saved state.
@@ -645,18 +995,12 @@ class FederationService:
             collection_schemas: Fresh desired collection schemas
             collection_aliases: Fresh desired collection aliases
         """
-        # Clear existing state
-        self.clusters_config.clear()
-        self.clients.clear()
-        self.routing_rules.clear()
-        self.collection_schemas.clear()
-        self.collection_aliases.clear()
-
-        # Load fresh state
         self.load_from_state(
             clusters_config,
             routing_rules,
             collection_schemas,
             collection_aliases,
+            routing_rollouts,
+            revision=revision,
         )
         logger.info("Configuration reloaded from state store.")

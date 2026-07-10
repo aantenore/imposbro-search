@@ -1,0 +1,36 @@
+# Reference routing only. Secret files, destinations, HA peers, and delivery
+# drills must be supplied and verified by each environment.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: imposbro-ticket
+  group_by: [alertname, service, slo]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: imposbro-page
+      matchers:
+        - notify="page"
+      repeat_interval: 30m
+    - receiver: imposbro-ticket
+      matchers:
+        - notify="ticket"
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: [service, slo]
+
+receivers:
+  - name: imposbro-page
+    webhook_configs:
+      - url_file: /run/secrets/imposbro-alertmanager-page-webhook-url
+        send_resolved: true
+  - name: imposbro-ticket
+    webhook_configs:
+      - url_file: /run/secrets/imposbro-alertmanager-ticket-webhook-url
+        send_resolved: true

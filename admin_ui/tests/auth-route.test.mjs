@@ -13,6 +13,7 @@ const AUTH_ENV = {
   ADMIN_UI_SESSION_SECRET: 'admin-ui-session-secret-32-bytes-minimum',
   ADMIN_UI_OIDC_CLIENT_ID: 'imposbro-admin-ui',
   ADMIN_UI_OIDC_CLIENT_SECRET: 'client-secret',
+  ADMIN_UI_OIDC_ISSUER: 'https://idp.example.com',
   ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: 'https://idp.example.com/oauth2/authorize',
   ADMIN_UI_OIDC_TOKEN_ENDPOINT: 'https://idp.example.com/oauth2/token',
   ADMIN_UI_OIDC_JWKS_URL: 'https://idp.example.com/.well-known/jwks.json',
@@ -34,6 +35,20 @@ function request(url, headers = {}) {
     url,
     nextUrl: new URL(url),
     headers: new Headers(headers),
+  };
+}
+
+function formRequest(url, returnTo, headers = {}) {
+  const form = new FormData();
+  form.set('return_to', returnTo);
+  return {
+    ...request(url, {
+      origin: new URL(url).origin,
+      'sec-fetch-site': 'same-origin',
+      ...headers,
+    }),
+    method: 'POST',
+    formData: async () => form,
   };
 }
 
@@ -83,6 +98,7 @@ async function testIdToken(nonce, claims = {}) {
     aud = AUTH_ENV.ADMIN_UI_OIDC_CLIENT_ID,
     exp = now + 1200,
     iat = now,
+    iss = AUTH_ENV.ADMIN_UI_OIDC_ISSUER,
     sub = 'operator-1',
     ...extraClaims
   } = claims;
@@ -94,6 +110,7 @@ async function testIdToken(nonce, claims = {}) {
     sub,
     ...extraClaims,
   })
+    .setIssuer(iss)
     .setProtectedHeader({ alg: 'RS256', kid: TEST_KEY_ID, typ: 'JWT' })
     .sign(TEST_PRIVATE_KEY);
 }
@@ -182,6 +199,8 @@ test('session endpoint reports disabled auth without requiring secrets', async (
   await withEnv({ ADMIN_UI_OIDC_ENABLED: 'false' }, async () => {
     const response = await sessionRoute.GET(request('http://admin.local/api/auth/session'));
     assert.deepEqual(await response.json(), { enabled: false, authenticated: false });
+    assert.equal(response.headers.get('cache-control'), 'no-store, private');
+    assert.equal(response.headers.get('pragma'), 'no-cache');
   });
 });
 
@@ -206,6 +225,7 @@ test('login route redirects to provider with PKCE, state, and a sealed transacti
     assert.match(setCookieHeader(response), /HttpOnly/);
     assert.match(setCookieHeader(response), /SameSite=Lax/);
     assert.match(setCookieHeader(response), /Max-Age=600/);
+    assert.equal(response.headers.get('cache-control'), 'no-store, private');
   });
 });
 
@@ -227,8 +247,8 @@ test('login and logout sanitize unsafe return targets', async () => {
     });
     assert.ok(sessionCookie, 'unsafe return target falls back and still creates a session');
 
-    const logout = await logoutRoute.GET(
-      request(`http://admin.local/api/auth/logout?return_to=${encodeURIComponent('/\\evil.com')}`)
+    const logout = await logoutRoute.POST(
+      formRequest('http://admin.local/api/auth/logout', '/\\evil.com')
     );
     assert.equal(logout.status, 302);
     assert.equal(redirectLocation(logout), '/dashboard');
@@ -241,7 +261,7 @@ test('callback rejects missing or invalid state', async () => {
       request('http://admin.local/api/auth/callback?code=auth-code&state=wrong')
     );
     assert.equal(response.status, 401);
-    assert.match((await response.json()).detail, /state/i);
+    assert.equal((await response.json()).code, 'oidc_state_invalid');
   });
 });
 
@@ -272,7 +292,9 @@ test('callback rejects token responses without an id token', async () => {
         )
       );
       assert.equal(response.status, 502);
-      assert.match((await response.json()).detail, /id token/i);
+      const payload = await response.json();
+      assert.equal(payload.code, 'admin_auth_rejected');
+      assert.doesNotMatch(payload.detail, /id token/i);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -307,7 +329,44 @@ test('callback rejects id tokens that do not match the login nonce', async () =>
         )
       );
       assert.equal(response.status, 401);
-      assert.match((await response.json()).detail, /nonce/i);
+      assert.equal((await response.json()).code, 'admin_auth_rejected');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('callback rejects id tokens from a different issuer', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const login = await loginRoute.GET(
+      request('http://admin.local/api/auth/login?return_to=/operations')
+    );
+    const authorizeUrl = new URL(redirectLocation(login));
+    const txCookie = cookiePair(login, 'imposbro_admin_oidc_tx');
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async (url) => tokenOrJwksResponse(url, async () => new Response(JSON.stringify({
+      access_token: 'access-token',
+      id_token: await testIdToken(authorizeUrl.searchParams.get('nonce'), {
+        iss: 'https://attacker.example',
+      }),
+      token_type: 'Bearer',
+      expires_in: 1200,
+      scope: AUTH_ENV.ADMIN_UI_OIDC_SCOPES,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    try {
+      const response = await callbackRoute.GET(
+        request(
+          `http://admin.local/api/auth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`,
+          { cookie: txCookie }
+        )
+      );
+      assert.equal(response.status, 401);
+      assert.equal((await response.json()).code, 'admin_auth_rejected');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -342,7 +401,7 @@ test('callback rejects unsigned id tokens', async () => {
         )
       );
       assert.equal(response.status, 401);
-      assert.match((await response.json()).detail, /signature|claims/i);
+      assert.equal((await response.json()).code, 'admin_auth_rejected');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -374,8 +433,8 @@ test('callback exchanges code for a sealed session cookie and session rejects ta
 
 test('logout clears session and transaction cookies', async () => {
   await withEnv(AUTH_ENV, async () => {
-    const response = await logoutRoute.GET(
-      request('http://admin.local/api/auth/logout?return_to=/dashboard')
+    const response = await logoutRoute.POST(
+      formRequest('http://admin.local/api/auth/logout', '/dashboard')
     );
 
     assert.equal(response.status, 302);
@@ -383,5 +442,96 @@ test('logout clears session and transaction cookies', async () => {
     assert.match(setCookieHeader(response), /imposbro_admin_session=/);
     assert.match(setCookieHeader(response), /imposbro_admin_oidc_tx=/);
     assert.match(setCookieHeader(response), /Max-Age=0/);
+    assert.equal(response.headers.get('cache-control'), 'no-store, private');
+  });
+});
+
+test('GET logout is non-mutating and advertises POST', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const response = await logoutRoute.GET(
+      request('http://admin.local/api/auth/logout?return_to=/dashboard', {
+        cookie: 'imposbro_admin_session=must-not-be-cleared',
+      })
+    );
+
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get('allow'), 'POST');
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal((await response.json()).code, 'method_not_allowed');
+  });
+});
+
+test('logout rejects missing and cross-site browser provenance without clearing cookies', async () => {
+  await withEnv(AUTH_ENV, async () => {
+    const missingOrigin = formRequest('http://admin.local/api/auth/logout', '/dashboard');
+    missingOrigin.headers.delete('origin');
+    const missingResponse = await logoutRoute.POST(missingOrigin);
+    assert.equal(missingResponse.status, 403);
+    assert.equal((await missingResponse.json()).code, 'csrf_origin_required');
+    assert.equal(missingResponse.headers.get('set-cookie'), null);
+
+    const crossSite = formRequest('http://admin.local/api/auth/logout', '/dashboard', {
+      origin: 'https://attacker.example',
+      'sec-fetch-site': 'cross-site',
+    });
+    const crossSiteResponse = await logoutRoute.POST(crossSite);
+    assert.equal(crossSiteResponse.status, 403);
+    assert.equal((await crossSiteResponse.json()).code, 'csrf_origin_mismatch');
+    assert.equal(crossSiteResponse.headers.get('set-cookie'), null);
+
+    const missingMetadata = formRequest('http://admin.local/api/auth/logout', '/dashboard');
+    missingMetadata.headers.delete('sec-fetch-site');
+    const metadataResponse = await logoutRoute.POST(missingMetadata);
+    assert.equal(metadataResponse.status, 403);
+    assert.equal((await metadataResponse.json()).code, 'csrf_fetch_metadata_required');
+  });
+});
+
+test('OIDC endpoints are HTTPS and issuer-bound at runtime', async () => {
+  await withEnv({
+    ...AUTH_ENV,
+    ADMIN_UI_OIDC_TOKEN_ENDPOINT: 'http://idp.example.com/oauth2/token',
+  }, async () => {
+    const insecure = await loginRoute.GET(request('http://admin.local/api/auth/login'));
+    assert.equal(insecure.status, 500);
+    assert.equal((await insecure.json()).code, 'oidc_configuration_invalid');
+  });
+
+  await withEnv({
+    ...AUTH_ENV,
+    ADMIN_UI_OIDC_JWKS_URL: 'https://keys.attacker.example/jwks.json',
+  }, async () => {
+    const unbound = await loginRoute.GET(request('http://admin.local/api/auth/login'));
+    assert.equal(unbound.status, 500);
+    assert.equal((await unbound.json()).code, 'oidc_configuration_invalid');
+  });
+});
+
+test('unexpected OIDC fetch failures are bounded and externally redacted', async () => {
+  await withEnv({
+    ...AUTH_ENV,
+    ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: '',
+    ADMIN_UI_OIDC_TOKEN_ENDPOINT: '',
+    ADMIN_UI_OIDC_JWKS_URL: '',
+    ADMIN_UI_OIDC_FETCH_TIMEOUT_MS: '750',
+  }, async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchOptions;
+    globalThis.fetch = async (_url, options) => {
+      fetchOptions = options;
+      throw new Error('dial tcp oidc-secret.internal:8443');
+    };
+    try {
+      const response = await loginRoute.GET(request('http://admin.local/api/auth/login'));
+      const payload = await response.json();
+      assert.equal(response.status, 502);
+      assert.equal(payload.code, 'oidc_provider_unavailable');
+      assert.equal(payload.detail, 'Admin UI authentication is temporarily unavailable.');
+      assert.doesNotMatch(JSON.stringify(payload), /oidc-secret|dial tcp/i);
+      assert.equal(fetchOptions.redirect, 'error');
+      assert.ok(fetchOptions.signal instanceof AbortSignal);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

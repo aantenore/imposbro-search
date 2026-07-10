@@ -1,9 +1,10 @@
 """Tests for ingest endpoint validation and error handling."""
 import os
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import ANY, MagicMock, call
 
 import typesense
+from fastapi import HTTPException, Request
 
 # Ensure test mode so we get mock federation
 os.environ["TESTING"] = "1"
@@ -102,7 +103,13 @@ def test_ingest_propagates_request_id_to_kafka(client):
 
     r = client.post(
         "/ingest/products",
-        headers={"X-Request-ID": "trace-123"},
+        headers={
+            "X-Request-ID": "trace-123",
+            "X-Document-Version": "42",
+            "X-Event-Sequence": "43",
+            "Idempotency-Key": "ingest-retry-123",
+            "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+        },
         json={"id": "doc-1", "name": "Product One"},
     )
 
@@ -110,6 +117,52 @@ def test_ingest_propagates_request_id_to_kafka(client):
     assert r.headers["x-request-id"] == "trace-123"
     published = client.app.state.kafka_service.publish_document.call_args.kwargs
     assert published["request_id"] == "trace-123"
+    assert published["traceparent"] == (
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    )
+    assert published["document_version"] == 42
+    assert published["sequence"] == 43
+    assert published["idempotency_key"] == "ingest-retry-123"
+
+
+def test_enterprise_event_metadata_fails_closed_when_headers_are_missing(monkeypatch):
+    from routers.search import _indexing_event_metadata
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DEPLOYMENT_PROFILE", "enterprise")
+    request = Request({"type": "http", "headers": []})
+
+    with pytest.raises(HTTPException) as exc_info:
+        _indexing_event_metadata(request)
+
+    assert exc_info.value.status_code == 428
+    assert exc_info.value.detail["code"] == "document_version_required"
+
+
+def test_batch_event_metadata_is_keyed_by_document_identity(client):
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+
+    response = client.post(
+        "/ingest/products/batch",
+        json={
+            "documents": [{"id": "doc-1", "name": "Product One"}],
+            "event_metadata": {
+                "doc-1": {
+                    "document_version": 8,
+                    "sequence": 11,
+                    "idempotency_key": "batch-retry-123",
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    published = client.app.state.kafka_service.publish_document.call_args.kwargs
+    assert published["document_version"] == 8
+    assert published["sequence"] == 11
+    assert published["idempotency_key"] == "batch-retry-123"
 
 
 def test_batch_ingest_accepts_documents_and_propagates_request_id(client):
@@ -159,14 +212,28 @@ def test_batch_ingest_accepts_documents_and_propagates_request_id(client):
             call(
                 collection_name="products",
                 document={"id": "doc-1", "name": "Product One"},
-                target_cluster="default-data-cluster",
+                target_clusters=["default-data-cluster"],
+                tenant_id="development",
+                document_version=ANY,
+                sequence=ANY,
+                routing_revision=1,
+                rollout_id=None,
+                idempotency_key=ANY,
                 request_id="trace-batch",
+                traceparent=ANY,
             ),
             call(
                 collection_name="products",
                 document={"id": "doc-2", "name": "Product Two"},
-                target_cluster="default-data-cluster",
+                target_clusters=["default-data-cluster"],
+                tenant_id="development",
+                document_version=ANY,
+                sequence=ANY,
+                routing_revision=1,
+                rollout_id=None,
+                idempotency_key=ANY,
                 request_id="trace-batch",
+                traceparent=ANY,
             ),
         ]
     )
@@ -238,8 +305,8 @@ def test_batch_ingest_reports_no_target_rejections(client):
     client.app.state.kafka_service.publish_document.assert_not_called()
 
 
-def test_batch_ingest_publishes_one_message_per_fanout_target(client):
-    """Batch ingest keeps existing fan-out semantics for every accepted document."""
+def test_batch_ingest_publishes_one_logical_message_for_all_fanout_targets(client):
+    """One event carries all targets so the worker can checkpoint fan-out."""
     client.app.state.federation_service.get_targets_for_document = MagicMock(
         return_value=[
             (MagicMock(), "cluster-a"),
@@ -254,21 +321,18 @@ def test_batch_ingest_publishes_one_message_per_fanout_target(client):
 
     assert r.status_code == 200
     assert r.json()["items"][0]["routed_to"] == "cluster-a,cluster-b"
-    client.app.state.kafka_service.publish_document.assert_has_calls(
-        [
-            call(
-                collection_name="products",
-                document={"id": "doc-1", "name": "Product One"},
-                target_cluster="cluster-a",
-                request_id=r.json()["request_id"],
-            ),
-            call(
-                collection_name="products",
-                document={"id": "doc-1", "name": "Product One"},
-                target_cluster="cluster-b",
-                request_id=r.json()["request_id"],
-            ),
-        ]
+    client.app.state.kafka_service.publish_document.assert_called_once_with(
+        collection_name="products",
+        document={"id": "doc-1", "name": "Product One"},
+        target_clusters=["cluster-a", "cluster-b"],
+        tenant_id="development",
+        document_version=ANY,
+        sequence=ANY,
+        routing_revision=1,
+        rollout_id=None,
+        idempotency_key=ANY,
+        request_id=r.json()["request_id"],
+        traceparent=ANY,
     )
 
 
@@ -338,23 +402,19 @@ def test_delete_document_publishes_delete_to_all_candidate_clusters(client):
         "document_id": "doc-1",
         "routed_to": "cluster-a,cluster-b",
     }
-    client.app.state.kafka_service.publish_delete_document.assert_has_calls(
-        [
-            call(
-                collection_name="products",
-                document_id="doc-1",
-                target_cluster="cluster-a",
-                request_id="trace-456",
-                filter_by=None,
-            ),
-            call(
-                collection_name="products",
-                document_id="doc-1",
-                target_cluster="cluster-b",
-                request_id="trace-456",
-                filter_by=None,
-            ),
-        ]
+    client.app.state.kafka_service.publish_delete_document.assert_called_once_with(
+        collection_name="products",
+        document_id="doc-1",
+        target_clusters=["cluster-a", "cluster-b"],
+        tenant_id="development",
+        document_version=ANY,
+        sequence=ANY,
+        routing_revision=1,
+        rollout_id=None,
+        idempotency_key=ANY,
+        request_id="trace-456",
+        traceparent=ANY,
+        filter_by=None,
     )
 
 

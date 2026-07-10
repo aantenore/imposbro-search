@@ -1,0 +1,310 @@
+rule_files:
+  - ../rules/imposbro-enterprise.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: multi-window request and pipeline burn alerts
+    interval: 30s
+    input_series:
+      - series: 'up{job="imposbro_services",instance="query-1:8000"}'
+        values: '1x130'
+      - series: 'http_requests_total{job="imposbro_services",instance="query-1:8000",handler="/api/v1/search/{collection_name}",method="GET",status="2xx"}'
+        values: '0+490x130'
+      - series: 'http_requests_total{job="imposbro_services",instance="query-1:8000",handler="/api/v1/search/{collection_name}",method="GET",status="5xx"}'
+        values: '0+10x130'
+      - series: 'http_request_duration_seconds_bucket{job="imposbro_services",instance="query-1:8000",handler="/api/v1/search/{collection_name}",method="GET",le="1.0"}'
+        values: '0+400x130'
+      - series: 'http_request_duration_seconds_count{job="imposbro_services",instance="query-1:8000",handler="/api/v1/search/{collection_name}",method="GET"}'
+        values: '0+500x130'
+      - series: 'indexing_event_outbox_pending{job="imposbro_services",instance="query-1:8000"}'
+        values: '1x130'
+      - series: 'indexing_event_outbox_replay_failures_total{job="imposbro_services",instance="query-1:8000"}'
+        values: '0x130'
+      - series: 'indexing_worker_ready{job="indexing_service",instance="worker-1:9108"}'
+        values: '1x130'
+      - series: 'imposbro_control_plane_outbox_pending{job="imposbro_postgres",instance="postgres-exporter:9187"}'
+        values: '1x130'
+      - series: 'imposbro_control_plane_outbox_oldest_unpublished_age_seconds{job="imposbro_postgres",instance="postgres-exporter:9187"}'
+        values: '120x130'
+      - series: 'imposbro_indexing_event_outbox_oldest_unpublished_age_seconds{job="imposbro_postgres",instance="postgres-exporter:9187"}'
+        values: '90x130'
+      - series: 'imposbro_query_api_control_plane_authoritative_revision{job="imposbro_query_health",instance="query-1:8000"}'
+        values: '2x130'
+      - series: 'imposbro_query_api_control_plane_applied_revision{job="imposbro_query_health",instance="query-1:8000"}'
+        values: '1x130'
+
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: ImposbroAvailabilityBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: query-api
+              severity: critical
+              slo: availability
+            exp_annotations:
+              summary: Query API availability error budget is burning rapidly
+              description: Both the 5-minute and 1-hour windows exceed a 14.4x burn rate for the 99.9% availability SLO.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/query-api-slo-burn.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroAvailabilityBudgetSustainedBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: query-api
+              severity: critical
+              slo: availability
+            exp_annotations:
+              summary: Query API availability budget is burning persistently
+              description: Both the 30-minute and 6-hour windows exceed a 6x burn rate for the 99.9% availability SLO.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/query-api-slo-burn.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroLatencyBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: query-api
+              severity: critical
+              slo: latency
+            exp_annotations:
+              summary: Query API latency error budget is burning rapidly
+              description: Both the 5-minute and 1-hour windows exceed a 14.4x burn rate for the 99% under 1 second latency SLO.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/query-api-slo-burn.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroLatencyBudgetSustainedBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: query-api
+              severity: critical
+              slo: latency
+            exp_annotations:
+              summary: Query API latency budget is burning persistently
+              description: Both the 30-minute and 6-hour windows exceed a 6x burn rate.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/query-api-slo-burn.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroOutboxLagBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: delivery-pipeline
+              severity: critical
+              slo: outbox-lag-proxy
+            exp_annotations:
+              summary: Durable outbox lag proxy is burning rapidly
+              description: Both the 5-minute and 1-hour sampled windows exceed a 14.4x burn rate for the 60-second outbox-age target.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/outbox-lag.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroOutboxLagBudgetSustainedBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: delivery-pipeline
+              severity: critical
+              slo: outbox-lag-proxy
+            exp_annotations:
+              summary: Durable outbox lag proxy is burning persistently
+              description: Both the 30-minute and 6-hour sampled windows exceed a 6x burn rate for the 60-second outbox-age target.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/outbox-lag.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroConfigConvergenceBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: query-api
+              severity: critical
+              slo: config-convergence-proxy
+            exp_annotations:
+              summary: Configuration convergence proxy is burning rapidly
+              description: Both the 5-minute and 1-hour sampled windows exceed a 14.4x burn rate because at least one replica is behind.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/config-convergence.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 65m
+        alertname: ImposbroConfigConvergenceBudgetSustainedBurn
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: query-api
+              severity: critical
+              slo: config-convergence-proxy
+            exp_annotations:
+              summary: Configuration convergence proxy is burning persistently
+              description: Both the 30-minute and 6-hour sampled windows exceed a 6x burn rate because replicas repeatedly or persistently lag.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/config-convergence.md
+              dashboard_uid: imposbro-enterprise-sre
+
+  - name: dlq consumer lag and routing lifecycle alerts
+    interval: 1m
+    input_series:
+      - series: 'indexing_dlq_messages_total{job="indexing_service",source_topic="imposbro_search_sharded_products",error="ValueError"}'
+        values: '0+1x30'
+      - series: 'kafka_consumergroup_lag{job="imposbro_kafka",consumergroup="imposbro_federated_indexing_group",topic="imposbro_search_sharded_products",partition="0"}'
+        values: '1500x30'
+      - series: 'kafka_consumergroup_lag{job="imposbro_kafka",consumergroup="imposbro_indexing_dlq_resolver",topic="imposbro_search_sharded_dlq",partition="0"}'
+        values: '2x30'
+      - series: 'imposbro_routing_rollouts{job="imposbro_postgres",phase="failed"}'
+        values: '1x30'
+      - series: 'imposbro_routing_rollout_max_phase_age_seconds{job="imposbro_postgres",phase="rolling_back"}'
+        values: '2000x30'
+      - series: 'imposbro_routing_rollout_max_deadline_overrun_seconds{job="imposbro_postgres",phase="cutover"}'
+        values: '600x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ImposbroIndexingDlqGrowth
+        exp_alerts:
+          - exp_labels:
+              notify: ticket
+              service: indexing-service
+              severity: warning
+            exp_annotations:
+              summary: Indexing worker published a message to the DLQ
+              description: At least one indexing event became a poison message in the last 10 minutes; inspect and disposition it before routing cutover.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/outbox-lag.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 20m
+        alertname: ImposbroIndexingConsumerLagSustained
+        exp_alerts:
+          - exp_labels:
+              notify: ticket
+              service: indexing-service
+              severity: warning
+            exp_annotations:
+              summary: Primary indexing consumer lag is sustained
+              description: The default IMPOSBRO indexing consumer group has exceeded 100 pending records for 10 minutes.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/outbox-lag.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 20m
+        alertname: ImposbroIndexingConsumerLagCritical
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: indexing-service
+              severity: critical
+            exp_annotations:
+              summary: Primary indexing consumer lag is critical
+              description: The default IMPOSBRO indexing consumer group has exceeded 1000 pending records for 5 minutes.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/outbox-lag.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 20m
+        alertname: ImposbroUnresolvedDlq
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: indexing-service
+              severity: critical
+            exp_annotations:
+              summary: Indexing DLQ contains unresolved work
+              description: The default DLQ resolver group has uncommitted records; routing cutover and completion must remain blocked.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/outbox-lag.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 20m
+        alertname: ImposbroRoutingRolloutFailed
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: routing-control-plane
+              severity: critical
+            exp_annotations:
+              summary: A routing rollout entered the failed phase
+              description: At least one persisted rollout is failed; preserve union coverage and begin the controlled diagnosis/rollback procedure.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/routing-rollout-failure.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 20m
+        alertname: ImposbroRoutingRollbackStalled
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: routing-control-plane
+              severity: critical
+            exp_annotations:
+              summary: A routing rollback has stopped progressing
+              description: The oldest rolling-back rollout has not persisted progress for more than 15 minutes.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/routing-rollout-failure.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 20m
+        alertname: ImposbroRoutingRollbackWindowElapsed
+        exp_alerts:
+          - exp_labels:
+              notify: ticket
+              service: routing-control-plane
+              severity: warning
+            exp_annotations:
+              summary: A cutover remains active beyond its rollback deadline
+              description: A rollout in cutover or drain is past its recorded rollback deadline and requires an explicit completion or rollback decision.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/routing-rollout-failure.md
+              dashboard_uid: imposbro-enterprise-sre
+
+  - name: audit delivery checkpoint alerts
+    interval: 1m
+    input_series:
+      - series: 'imposbro_audit_delivery_head_sequence{job="imposbro_postgres"}'
+        values: '20x20'
+      - series: 'imposbro_audit_delivery_destinations{job="imposbro_postgres"}'
+        values: '0x20'
+      - series: 'imposbro_audit_delivery_max_backlog{job="imposbro_postgres"}'
+        values: '4x20'
+      - series: 'imposbro_audit_delivery_failed_destinations{job="imposbro_postgres"}'
+        values: '1x20'
+      - series: 'imposbro_audit_delivery_max_failure_attempts{job="imposbro_postgres"}'
+        values: '3x20'
+
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ImposbroAuditDeliveryUnconfigured
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: audit-delivery
+              severity: critical
+            exp_annotations:
+              summary: Durable audit delivery has no registered destination
+              description: Audit events exist but no provider-neutral delivery checkpoint is registered; source audit remains durable but external delivery is absent.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/audit-delivery.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 15m
+        alertname: ImposbroAuditDeliveryBacklog
+        exp_alerts:
+          - exp_labels:
+              notify: ticket
+              service: audit-delivery
+              severity: warning
+            exp_annotations:
+              summary: Durable audit export is behind the audit head
+              description: At least one registered destination has not acknowledged every audit-chain event for 10 minutes.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/audit-delivery.md
+              dashboard_uid: imposbro-enterprise-sre
+
+      - eval_time: 15m
+        alertname: ImposbroAuditDeliveryFailure
+        exp_alerts:
+          - exp_labels:
+              notify: page
+              service: audit-delivery
+              severity: critical
+            exp_annotations:
+              summary: Durable audit delivery is failing
+              description: A registered destination has a redacted delivery failure and the retry checkpoint has not recovered.
+              runbook_url: https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/audit-delivery.md
+              dashboard_uid: imposbro-enterprise-sre

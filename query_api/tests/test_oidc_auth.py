@@ -124,9 +124,9 @@ def test_oidc_admin_operation_scopes_are_least_privilege(client, monkeypatch):
     write_denied_backup = client.get("/admin/state/export", headers=write_headers)
 
     assert read_allowed.status_code == 200
-    assert read_denied_write.status_code == 401
+    assert read_denied_write.status_code == 403
     assert write_allowed.status_code == 201
-    assert write_denied_backup.status_code == 401
+    assert write_denied_backup.status_code == 403
 
 
 def test_oidc_search_scope_cannot_ingest(client, monkeypatch):
@@ -141,7 +141,7 @@ def test_oidc_search_scope_cannot_ingest(client, monkeypatch):
     )
 
     assert search.status_code == 404
-    assert ingest.status_code == 401
+    assert ingest.status_code == 403
 
 
 def test_oidc_collection_scoped_claim_only_grants_matching_collection(client, monkeypatch):
@@ -160,7 +160,7 @@ def test_oidc_collection_scoped_claim_only_grants_matching_collection(client, mo
     )
 
     assert matching.status_code == 404
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
 
 def test_oidc_collection_scoped_data_claim_grants_matching_ingest(client, monkeypatch):
@@ -184,7 +184,7 @@ def test_oidc_collection_scoped_data_claim_grants_matching_ingest(client, monkey
     )
 
     assert matching.status_code == 200
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
 
 def test_oidc_nested_role_mapping_can_grant_admin_access(client, monkeypatch):
