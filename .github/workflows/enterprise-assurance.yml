@@ -1,0 +1,165 @@
+name: Scheduled enterprise assurance
+
+on:
+  schedule:
+    - cron: "17 2 * * 0"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enterprise-assurance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  enterprise-live:
+    name: Live PostgreSQL, Kafka, Redis, TLS, trace, and routing gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact candidate commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Execute exact-set live enterprise harness
+        env:
+          E2E_DEPENDENCY_MODE: compose
+          E2E_EVIDENCE_BASENAME: enterprise-e2e-assurance.json
+          E2E_PRUNE_VOLUMES: "true"
+          E2E_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/e2e/run-enterprise-e2e.sh
+      - name: Retain live integration and trace evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: enterprise-live-assurance-${{ github.sha }}
+          path: docs/evidence/enterprise-e2e-assurance.json
+          retention-days: 30
+
+  kind-ha-load:
+    name: Multi-node Kubernetes, disruption, and load gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out exact candidate commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.1
+      - name: Install checksum-verified kind
+        env:
+          KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+          KIND_VERSION: v0.32.0
+        run: |
+          curl --fail --silent --show-error --location \
+            --output kind-linux-amd64 \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "$KIND_SHA256" kind-linux-amd64 | sha256sum --check --strict
+          sudo install --mode 0755 kind-linux-amd64 /usr/local/bin/kind
+          kind version
+      - name: Execute fail-closed multi-node and benchmark harness
+        env:
+          KIND_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/e2e/run-kind-enterprise-smoke.sh
+      - name: Retain Kubernetes disruption evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: kind-enterprise-smoke-${{ github.sha }}
+          path: docs/evidence/kind-enterprise-smoke-live-latest.json
+          retention-days: 30
+      - name: Retain threshold-gated benchmark evidence
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: kind-enterprise-benchmark-${{ github.sha }}
+          path: |
+            docs/evidence/kind-enterprise-benchmark-live-latest.json
+            docs/evidence/kind-enterprise-benchmark-live-latest.md
+          retention-days: 30
+
+  postgres-dr:
+    name: Encrypted PostgreSQL clean-restore gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact candidate commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Execute real encryption, retention, and clean restore
+        env:
+          DR_EVIDENCE_BASENAME: dr-ci-${{ github.run_id }}-${{ github.run_attempt }}.json
+          DR_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: ops/dr/run-live-postgres-dr.sh
+      - name: Retain timed DR evidence and checksum
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: postgres-dr-${{ github.sha }}
+          path: docs/evidence/dr-ci-${{ github.run_id }}-${{ github.run_attempt }}.json*
+          retention-days: 30
+
+  composite-gate:
+    name: Exact-commit composite assurance manifest
+    needs: [enterprise-live, kind-ha-load, postgres-dr]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out assurance verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Download live integration evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: enterprise-live-assurance-${{ github.sha }}
+          path: assurance/e2e
+      - name: Download Kubernetes evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: kind-enterprise-smoke-${{ github.sha }}
+          path: assurance/kind
+      - name: Download benchmark evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: kind-enterprise-benchmark-${{ github.sha }}
+          path: assurance/benchmark
+      - name: Download DR evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: postgres-dr-${{ github.sha }}
+          path: assurance/dr
+      - name: Verify exact scenario, cleanup, threshold, checksum, and commit binding
+        run: |
+          dr_evidence="$(find assurance/dr -type f -name 'dr-ci-*.json' -print -quit)"
+          test -n "$dr_evidence"
+          python3 scripts/ci/verify_enterprise_evidence.py \
+            --e2e assurance/e2e/enterprise-e2e-assurance.json \
+            --dr "$dr_evidence" \
+            --dr-sha256 "${dr_evidence}.sha256" \
+            --kind assurance/kind/kind-enterprise-smoke-live-latest.json \
+            --benchmark assurance/benchmark/kind-enterprise-benchmark-live-latest.json \
+            --expected-commit "${{ github.sha }}" \
+            --output-json assurance/enterprise-assurance.json \
+            --output-markdown assurance/enterprise-assurance.md
+      - name: Retain composite quality-gate report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: enterprise-assurance-${{ github.sha }}
+          path: |
+            assurance/enterprise-assurance.json
+            assurance/enterprise-assurance.md
+          retention-days: 90

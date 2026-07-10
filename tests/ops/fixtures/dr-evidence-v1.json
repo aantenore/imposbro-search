@@ -1,0 +1,139 @@
+{
+  "schema": "imposbro.dr-drill-evidence.v1",
+  "outcome": "passed",
+  "run_id": "schemafixture0001",
+  "scope": {
+    "environment": "local-isolated-docker",
+    "production_traffic": false,
+    "production_certification": false,
+    "scenario": "synthetic schema fixture; no live drill represented"
+  },
+  "timing": {
+    "declaration_at": "2026-07-10T10:00:00Z",
+    "completed_at": "2026-07-10T10:01:00Z",
+    "backup_duration_ms": 1000,
+    "rpo": {
+      "target_seconds": 300,
+      "measured_ms": 0,
+      "passed": true,
+      "basis": "synthetic quiesced fixture",
+      "newest_durable_change_at": "2026-07-10T09:59:59Z",
+      "known_durable_mutations_lost": 0
+    },
+    "rto": {
+      "target_seconds": 300,
+      "measured_ms": 60000,
+      "passed": true,
+      "basis": "synthetic fixture timing"
+    }
+  },
+  "backup": {
+    "id": "fixturebackup0001",
+    "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "plaintext_archive_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "encryption": "age",
+    "ciphertext_rejected_as_plaintext_archive": true,
+    "artifact_persisted_in_repository": false
+  },
+  "restore": {
+    "target_was_empty": true,
+    "transaction_guarded": true,
+    "restore_evidence_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "decrypted_archive_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "plaintext_archive_checksum_match": true,
+    "source_fingerprint_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "target_fingerprint_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "fingerprints_match": true,
+    "recovery_marker": {
+      "schema_revision": "0003_audit_delivery_deletion",
+      "state_revision": 3,
+      "state_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "audit_head_sequence": 2,
+      "audit_head_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "audit_rows": 2,
+      "audit_chain_digest": "11111111111111111111111111111111",
+      "audit_delivery_rows": 1,
+      "audit_delivery_digest": "22222222222222222222222222222222",
+      "control_outbox_rows": 1,
+      "control_outbox_unpublished": 0,
+      "control_outbox_max_revision": 3,
+      "control_outbox_digest": "33333333333333333333333333333333",
+      "indexing_outbox_rows": 1,
+      "indexing_outbox_unpublished": 0,
+      "indexing_outbox_max_position": 1,
+      "indexing_outbox_digest": "44444444444444444444444444444444",
+      "indexing_head_rows": 1,
+      "indexing_head_digest": "55555555555555555555555555555555",
+      "indexing_checkpoint_rows": 1,
+      "indexing_checkpoint_digest": "66666666666666666666666666666666",
+      "deletion_ledger_rows": 1,
+      "deletion_ledger_digest": "77777777777777777777777777777777",
+      "deletion_target_rows": 1,
+      "deletion_target_digest": "88888888888888888888888888888888",
+      "newest_durable_change_at": "2026-07-10T09:59:59Z"
+    }
+  },
+  "retention": {
+    "live_postgresql_executed": true,
+    "apply_evidence_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+    "dry_run_executed_first": true,
+    "before": {
+      "control_rows": 3,
+      "control_unpublished": 0,
+      "indexing_rows": 8,
+      "indexing_unpublished": 1,
+      "audit_rows": 2,
+      "audit_head_sequence": 2,
+      "audit_head_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "audit_chain_digest": "11111111111111111111111111111111"
+    },
+    "after": {
+      "control_rows": 1,
+      "control_latest_revision": 3,
+      "indexing_rows": 5,
+      "indexing_unpublished": 1,
+      "held_identity_rows": 3,
+      "heads_with_latest_mutation": 3,
+      "audit_rows": 2,
+      "audit_head_sequence": 2,
+      "audit_head_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "audit_chain_digest": "11111111111111111111111111111111",
+      "all_invariants_pass": true
+    },
+    "deleted_control_plane_rows": 2,
+    "deleted_indexing_rows": 3,
+    "unpublished_rows_deleted": 0,
+    "legal_hold_identity_rows_deleted": 0,
+    "latest_mutations_deleted": 0,
+    "audit_chain_touched": false,
+    "audit_chain_unchanged": true,
+    "audit_chain_rows_verified": 2,
+    "audit_chain_cryptographically_verified_before_retention": true,
+    "audit_chain_cryptographically_verified_after_retention": true,
+    "audit_chain_cryptographically_verified_after_restore": true
+  },
+  "cleanup": {
+    "containers_and_volumes_destroyed": true,
+    "decrypted_dump_persisted": false,
+    "age_identity_persisted_in_repository": false
+  },
+  "tooling": {
+    "postgres": "fixture",
+    "pg_dump": "fixture",
+    "age": "fixture",
+    "docker_server": "fixture"
+  },
+  "provenance": {
+    "git_commit": "0000000000000000000000000000000000000000",
+    "dirty_worktree": false,
+    "evidence_contains_credentials": false,
+    "evidence_contains_document_payloads": false
+  },
+  "limitations": [
+    "versioned schema fixture only",
+    "not live evidence and not production certification",
+    "no production traffic or provider restore was exercised",
+    "all values are synthetic and carry no operational claim"
+  ]
+}

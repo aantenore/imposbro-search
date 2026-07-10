@@ -72,6 +72,10 @@ class OidcTokenError(ValueError):
     """Raised when a bearer token is invalid or lacks required authorization."""
 
 
+class OidcAuthorizationError(OidcTokenError):
+    """Raised when a valid bearer token lacks required authorization."""
+
+
 def oidc_enabled() -> bool:
     return bool(settings.OIDC_ENABLED)
 
@@ -266,7 +270,7 @@ def authenticate_oidc_bearer(
         return None
     claims = _decode_oidc_token(token)
     if not _has_required_scope(claims, required_scope, resource_name):
-        raise OidcTokenError("OIDC bearer token lacks required scope")
+        raise OidcAuthorizationError("OIDC bearer token lacks required scope")
 
     subject_claim = settings.OIDC_SUBJECT_CLAIM.strip() or "sub"
     subject = str(_get_claim_path(claims, subject_claim) or claims.get("sub", "unknown"))
@@ -299,7 +303,16 @@ def _authz_policies() -> Dict[str, Any]:
 
 def _collection_policy(collection_name: str) -> Dict[str, Any]:
     policies = _authz_policies()
+    policy_required = (
+        settings.DEPLOYMENT_PROFILE == "enterprise"
+        or settings.AUTHZ_REQUIRE_COLLECTION_POLICY
+    )
     if not policies:
+        if policy_required:
+            raise HTTPException(
+                status_code=403,
+                detail="A tenant authorization policy is required for this collection",
+            )
         return {"mode": "off"}
     if "mode" in policies or "tenant_field" in policies:
         return dict(policies)
@@ -314,8 +327,25 @@ def _collection_policy(collection_name: str) -> Dict[str, Any]:
                 )
             merged = dict(default_policy)
             merged.update(policy)
-            return merged
-    return default_policy or {"mode": "off"}
+            resolved = merged
+            break
+    else:
+        resolved = default_policy or {"mode": "off"}
+
+    if (
+        policy_required
+        and str(resolved.get("mode", "off")).strip().lower() == "off"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="A tenant authorization policy is required for this collection",
+        )
+    return resolved
+
+
+def ensure_enterprise_collection_policy(collection_name: str) -> None:
+    """Fail closed when an enterprise collection has no tenant policy."""
+    _policy_mode(_collection_policy(collection_name))
 
 
 def _policy_mode(policy: Dict[str, Any]) -> str:
@@ -487,6 +517,42 @@ def authorize_ingest_document(
     return document
 
 
+def event_tenant_identity(
+    request: Request,
+    collection_name: str,
+    document: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return one unambiguous tenant identity for the durable indexing event."""
+    policy = _collection_policy(collection_name)
+    if _policy_mode(policy) == "off":
+        claims = getattr(request.state, "auth_claims", {})
+        fallback = str(claims.get("tenant_id", "development")) if isinstance(claims, dict) else "development"
+        return fallback if TENANT_VALUE_PATTERN.fullmatch(fallback) else "development"
+
+    tenants = _tenant_values_from_request(request, policy)
+    if tenants is None:
+        if settings.DEPLOYMENT_PROFILE == "enterprise":
+            raise HTTPException(status_code=403, detail="Tenant identity is required")
+        return "development"
+
+    if document is not None:
+        document_tenant = _document_value(document, _tenant_field(policy))
+        if isinstance(document_tenant, str) and document_tenant in tenants:
+            return document_tenant
+        if isinstance(document_tenant, (list, tuple, set)):
+            document_tenants = list(dict.fromkeys(str(item) for item in document_tenant))
+            if len(document_tenants) == 1 and document_tenants[0] in tenants:
+                return document_tenants[0]
+    if len(tenants) != 1:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "A single tenant identity is required for versioned indexing events"
+            ),
+        )
+    return tenants[0]
+
+
 def authorize_delete_filter(
     request: Request,
     collection_name: str,
@@ -507,4 +573,6 @@ def authorize_delete_filter(
 def oidc_http_exception(exc: Exception) -> HTTPException:
     if isinstance(exc, OidcConfigError):
         return HTTPException(status_code=500, detail=str(exc))
+    if isinstance(exc, OidcAuthorizationError):
+        return HTTPException(status_code=403, detail=str(exc))
     return HTTPException(status_code=401, detail=str(exc))

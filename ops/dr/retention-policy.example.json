@@ -1,0 +1,32 @@
+{
+  "schema": "imposbro.outbox-retention-policy.v1",
+  "policy_id": "replace-with-reviewed-policy-id",
+  "database_id": "replace-with-environment-id",
+  "database_name": "replace_with_database_name",
+  "schema_revision": "0003_audit_delivery_deletion",
+  "not_before": "2026-01-01T00:00:00Z",
+  "expires_at": "2026-01-01T01:00:00Z",
+  "deny_all": true,
+  "legal_hold_snapshot": {
+    "snapshot_id": "replace-with-authoritative-export-id",
+    "captured_at": "2026-01-01T00:00:00Z",
+    "expires_at": "2026-01-01T01:00:00Z",
+    "complete": false
+  },
+  "allowed_tables": [
+    "control_plane_outbox",
+    "indexing_event_outbox"
+  ],
+  "tables": {
+    "control_plane_outbox": {
+      "retention_seconds": 2592000,
+      "max_unpublished": 0,
+      "held_revisions": []
+    },
+    "indexing_event_outbox": {
+      "retention_seconds": 604800,
+      "max_unpublished": 0,
+      "held_identity_hashes": []
+    }
+  }
+}

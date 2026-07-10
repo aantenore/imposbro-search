@@ -1,7 +1,17 @@
 import os
 import re
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
+
+import pytest
+
+
+os.environ.setdefault("INDEXING_ALLOW_LEGACY_EVENTS", "true")
+os.environ.setdefault("DEPLOYMENT_PROFILE", "development")
+os.environ.setdefault("INDEXING_CHECKPOINT_BACKEND", "memory")
+os.environ.setdefault("INDEXING_ALLOW_VOLATILE_CHECKPOINTS", "true")
 
 
 _app_dir = Path(__file__).resolve().parent.parent / "app"
@@ -10,8 +20,10 @@ if str(_app_dir) not in sys.path:
 
 import main
 import consumer
+import health
 import metrics
 import typesense
+import checkpoint_store
 
 
 class FakeResponse:
@@ -165,6 +177,117 @@ def test_start_metrics_server_is_best_effort(monkeypatch):
     assert metrics.start_metrics_server_from_env() is False
 
 
+def test_metric_labels_bound_untrusted_event_cardinality():
+    malformed = {
+        "envelope_version": "future-" + ("x" * 1000),
+        "identity": {"collection": "x" * 1000},
+        "target_clusters": ["bad target"],
+    }
+
+    assert metrics.message_labels(malformed) == ("unknown", "unknown")
+    assert metrics.envelope_version_label(malformed) == "unsupported"
+
+
+def test_worker_health_requires_config_and_active_consumer():
+    state = health.WorkerHealthState()
+
+    status, payload = health.health_response("/ready", state)
+    assert status == 503
+    assert payload["config_loaded"] is False
+    assert payload["consumer_active"] is False
+
+    state.set_config_loaded(True)
+    assert health.health_response("/ready", state)[0] == 503
+
+    state.set_consumer_active(True)
+    status, payload = health.health_response("/ready", state)
+    assert status == 200
+    assert payload["ready"] is True
+    assert metrics.REGISTRY.get_sample_value("indexing_worker_ready") == 1
+
+    state.set_consumer_active(False)
+    assert health.health_response("/ready", state)[0] == 503
+    assert metrics.REGISTRY.get_sample_value("indexing_worker_ready") == 0
+
+
+def test_worker_health_server_exposes_live_and_ready_endpoints():
+    state = health.WorkerHealthState()
+    server = health.start_health_server(port=0, state=state)
+    host, port = server.server_address
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        with urllib.request.urlopen(f"{base_url}/live", timeout=1) as response:
+            assert response.status == 200
+
+        try:
+            urllib.request.urlopen(f"{base_url}/ready", timeout=1)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 503
+        else:
+            raise AssertionError("Expected worker readiness to fail before bootstrap")
+
+        state.set_config_loaded(True)
+        state.set_consumer_active(True)
+        with urllib.request.urlopen(f"{base_url}/ready", timeout=1) as response:
+            assert response.status == 200
+    finally:
+        health.stop_health_server(server)
+
+
+def test_main_marks_config_loaded_before_starting_consumer(monkeypatch):
+    observed = {}
+    fake_server = object()
+
+    monkeypatch.setattr(
+        main.worker_health,
+        "start_health_server",
+        lambda: fake_server,
+    )
+    monkeypatch.setattr(
+        main.worker_health,
+        "stop_health_server",
+        lambda server: observed.update(stopped_server=server),
+    )
+    monkeypatch.setattr(metrics, "start_metrics_server_from_env", lambda: True)
+    monkeypatch.setattr(
+        main,
+        "fetch_cluster_configuration",
+        lambda _url: {"cluster-a": object()},
+    )
+    volatile_store = checkpoint_store.InMemoryCheckpointStore()
+    monkeypatch.setattr(
+        main,
+        "build_checkpoint_store_from_env",
+        lambda _clients: volatile_store,
+    )
+
+    def run_consumer(
+        _clients,
+        refresh_clients,
+        health_state,
+        checkpoint_store,
+        allow_legacy,
+    ):
+        observed["before_consumer"] = health_state.snapshot()
+        health_state.set_consumer_active(True)
+        observed["during_consumer"] = health_state.snapshot()
+        observed["checkpoint_store"] = checkpoint_store
+        observed["allow_legacy"] = allow_legacy
+
+    monkeypatch.setattr(consumer, "run_consumer", run_consumer)
+
+    main.main()
+
+    assert observed["before_consumer"]["config_loaded"] is True
+    assert observed["before_consumer"]["consumer_active"] is False
+    assert observed["during_consumer"]["ready"] is True
+    assert observed["checkpoint_store"] is volatile_store
+    assert observed["allow_legacy"] is True
+    assert observed["stopped_server"] is fake_server
+    assert main.worker_health.WORKER_HEALTH.snapshot()["ready"] is False
+
+
 def test_create_kafka_consumer_refreshes_metadata_for_dynamic_topics(monkeypatch):
     created_kwargs = {}
 
@@ -185,8 +308,45 @@ def test_create_kafka_consumer_refreshes_metadata_for_dynamic_topics(monkeypatch
 
     assert created_kwargs["bootstrap_servers"] == "kafka:29092"
     assert created_kwargs["metadata_max_age_ms"] == 7000
+    assert created_kwargs["max_poll_records"] == 1
+    assert created_kwargs["max_poll_interval_ms"] == 300000
     assert created_kwargs["enable_auto_commit"] is False
+    assert created_kwargs["security_protocol"] == "PLAINTEXT"
+    assert created_kwargs["group_id"] == "imposbro_federated_indexing_group"
+    assert created_kwargs["client_id"] == "imposbro-indexing-consumer"
     assert kafka_consumer.pattern == "^imposbro_search_sharded_(?!dlq$).*"
+
+
+def test_kafka_security_kwargs_supports_sasl_ssl(monkeypatch, tmp_path):
+    ca_file = tmp_path / "ca.pem"
+    ca_file.write_text("test-ca", encoding="utf-8")
+    monkeypatch.setenv("KAFKA_SECURITY_PROTOCOL", "SASL_SSL")
+    monkeypatch.setenv("KAFKA_SASL_MECHANISM", "SCRAM-SHA-512")
+    monkeypatch.setenv("KAFKA_SASL_USERNAME", "indexer")
+    monkeypatch.setenv("KAFKA_SASL_PASSWORD", "secret")
+    monkeypatch.setenv("KAFKA_SSL_CAFILE", str(ca_file))
+    monkeypatch.setenv("KAFKA_SSL_CHECK_HOSTNAME", "true")
+
+    kwargs = consumer.kafka_security_kwargs()
+
+    assert kwargs == {
+        "security_protocol": "SASL_SSL",
+        "sasl_mechanism": "SCRAM-SHA-512",
+        "sasl_plain_username": "indexer",
+        "sasl_plain_password": "secret",
+        "ssl_check_hostname": True,
+        "ssl_cafile": str(ca_file),
+    }
+
+
+def test_kafka_security_kwargs_fails_closed_on_partial_configuration(monkeypatch):
+    monkeypatch.setenv("KAFKA_SECURITY_PROTOCOL", "SASL_SSL")
+    monkeypatch.setenv("KAFKA_SASL_MECHANISM", "SCRAM-SHA-512")
+    monkeypatch.setenv("KAFKA_SASL_USERNAME", "indexer")
+    monkeypatch.delenv("KAFKA_SASL_PASSWORD", raising=False)
+
+    with pytest.raises(consumer.KafkaConfigurationError, match="PASSWORD"):
+        consumer.kafka_security_kwargs()
 
 
 def test_topic_subscription_pattern_excludes_dlq_topic():
@@ -200,6 +360,7 @@ def test_run_consumer_quarantines_invalid_json_and_commits_offset(monkeypatch):
     sent = []
     commits = []
     closed = []
+    health_transitions = []
     source_topic = "imposbro_search_sharded_products"
 
     class FakeMessage:
@@ -236,6 +397,10 @@ def test_run_consumer_quarantines_invalid_json_and_commits_offset(monkeypatch):
         def close(self):
             closed.append("producer")
 
+    class RecordingHealthState:
+        def set_consumer_active(self, active):
+            health_transitions.append(active)
+
     monkeypatch.setenv("KAFKA_BROKER_URL", "kafka:29092")
     monkeypatch.setenv("KAFKA_TOPIC_PREFIX", "imposbro_search_sharded")
     monkeypatch.setattr(consumer, "shutdown_requested", False)
@@ -250,7 +415,12 @@ def test_run_consumer_quarantines_invalid_json_and_commits_offset(monkeypatch):
         lambda kafka_broker_url: FakeDlqProducer(),
     )
 
-    consumer.run_consumer({})
+    consumer.run_consumer(
+        {},
+        health_state=RecordingHealthState(),
+        checkpoint_store=checkpoint_store.InMemoryCheckpointStore(),
+        allow_legacy=True,
+    )
 
     assert sent[0]["topic"] == "imposbro_search_sharded_dlq"
     assert sent[0]["value"]["source_topic"] == source_topic
@@ -263,6 +433,8 @@ def test_run_consumer_quarantines_invalid_json_and_commits_offset(monkeypatch):
     assert list(committed_offsets) == [topic_partition]
     assert committed_offsets[topic_partition].offset == 42
     assert closed == ["consumer", "producer"]
+    assert True in health_transitions
+    assert health_transitions[-1] is False
 
 
 class FakeDocumentOperations:

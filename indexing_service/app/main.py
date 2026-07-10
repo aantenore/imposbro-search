@@ -17,7 +17,16 @@ import time
 import requests
 from typing import Dict
 
+import health as worker_health
 import metrics
+from checkpoint_store import CheckpointStoreError, build_checkpoint_store_from_env
+from event_envelope import legacy_events_enabled
+from telemetry import (
+    TelemetryConfig,
+    TelemetryConfigurationError,
+    configure_tracing,
+    get_runtime as get_telemetry_runtime,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -145,34 +154,82 @@ def main():
     logger.info("Architecture: Smart Producer Pattern")
     logger.info("=" * 60)
 
-    metrics.start_metrics_server_from_env()
+    try:
+        configure_tracing(
+            TelemetryConfig.from_env(
+                default_service_name="imposbro-indexing-service",
+                default_service_version="4.0.0",
+            )
+        )
+    except TelemetryConfigurationError as exc:
+        logger.error("Invalid OpenTelemetry configuration: %s", exc)
+        raise SystemExit(1) from exc
 
-    # Get Query API URL from environment
-    query_api_url = os.environ.get("INTERNAL_QUERY_API_URL", "http://query_api:8000")
+    worker_health.WORKER_HEALTH.reset()
+    checkpoint_store = None
+    try:
+        health_server = worker_health.start_health_server()
+    except (OSError, RuntimeError) as exc:
+        logger.error("Failed to start indexing health server: %s", exc)
+        get_telemetry_runtime().shutdown()
+        raise SystemExit(1) from exc
 
-    # Fetch cluster configuration from Query API
-    # Note: No routing rules needed - Smart Producer pattern means
-    # the Producer (Query API) determines routing
-    federation_clients = fetch_cluster_configuration(query_api_url)
+    try:
+        metrics.start_metrics_server_from_env()
+        try:
+            allow_legacy = legacy_events_enabled()
+        except RuntimeError as exc:
+            logger.error("Invalid indexing compatibility configuration: %s", exc)
+            raise SystemExit(1) from exc
+        if allow_legacy:
+            logger.warning(
+                "Legacy indexing events are enabled. This mode has no durable "
+                "version/tombstone protection and is for development migration only."
+            )
 
-    if not federation_clients:
-        logger.error("No federation clients available. Cannot start consumer.")
-        sys.exit(1)
+        # Get Query API URL from environment
+        query_api_url = os.environ.get(
+            "INTERNAL_QUERY_API_URL", "http://query_api:8000"
+        )
 
-    logger.info(
-        f"Starting Indexing Service with {len(federation_clients)} cluster client(s)"
-    )
-    logger.info(
-        "Consumer will trust Producer's routing decisions (Smart Producer pattern)"
-    )
+        # Fetch cluster configuration from Query API. Readiness remains false
+        # until at least one concrete data-cluster client has been loaded.
+        federation_clients = fetch_cluster_configuration(query_api_url)
+        if not federation_clients:
+            logger.error("No federation clients available. Cannot start consumer.")
+            raise SystemExit(1)
 
-    # Import and run the consumer
-    from consumer import run_consumer
+        try:
+            checkpoint_store = build_checkpoint_store_from_env(federation_clients)
+        except CheckpointStoreError as exc:
+            logger.error("Indexing checkpoint store is not ready: %s", exc)
+            raise SystemExit(1) from exc
+        worker_health.WORKER_HEALTH.set_config_loaded(True)
 
-    run_consumer(
-        federation_clients,
-        refresh_clients=lambda: fetch_cluster_configuration(query_api_url),
-    )
+        logger.info(
+            "Starting Indexing Service with %s cluster client(s)",
+            len(federation_clients),
+        )
+        logger.info(
+            "Consumer will trust Producer's routing decisions (Smart Producer pattern)"
+        )
+
+        # Import and run the consumer
+        from consumer import run_consumer
+
+        run_consumer(
+            federation_clients,
+            refresh_clients=lambda: fetch_cluster_configuration(query_api_url),
+            health_state=worker_health.WORKER_HEALTH,
+            checkpoint_store=checkpoint_store,
+            allow_legacy=allow_legacy,
+        )
+    finally:
+        if checkpoint_store is not None:
+            checkpoint_store.close()
+        worker_health.WORKER_HEALTH.reset()
+        worker_health.stop_health_server(health_server)
+        get_telemetry_runtime().shutdown()
 
 
 if __name__ == "__main__":

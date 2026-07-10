@@ -8,7 +8,9 @@ if str(_app_dir) not in sys.path:
     sys.path.insert(0, str(_app_dir))
 
 import typesense
+import pytest
 
+from secret_resolver import FileSecretProvider, SecretResolutionError, SecretResolver
 from services.federation import FederationService
 
 
@@ -210,6 +212,55 @@ def test_load_from_state_defaults_legacy_protocol_and_preserves_https(monkeypatc
     assert federation.clusters_config["secure"]["protocol"] == "https"
     assert created_configs[0]["nodes"][0]["protocol"] == "http"
     assert created_configs[1]["nodes"][0]["protocol"] == "https"
+
+
+def test_referenced_client_observes_rotation_and_revocation_without_state_reload(
+    monkeypatch,
+    tmp_path,
+):
+    secret_file = tmp_path / "data-primary"
+    secret_file.write_text("first-key\n", encoding="utf-8")
+    created_configs = []
+
+    class CapturedClient:
+        def __init__(self, config):
+            created_configs.append(config)
+            self.collections = object()
+
+    monkeypatch.setattr(typesense, "Client", CapturedClient)
+    federation = FederationService(
+        secret_resolver=SecretResolver(
+            {"file": FileSecretProvider(tmp_path)}
+        ),
+        allow_inline_secrets=False,
+    )
+    federation.load_from_state(
+        {
+            "cluster-a": {
+                "host": "node-a",
+                "port": 8108,
+                "api_key_ref": "file:data-primary",
+            }
+        },
+        {},
+    )
+
+    assert federation.clusters_config["cluster-a"]["api_key_ref"] == (
+        "file:data-primary"
+    )
+    assert "api_key" not in federation.clusters_config["cluster-a"]
+    _ = federation.clients["cluster-a"].collections
+    assert created_configs[-1]["api_key"] == "first-key"
+
+    replacement = tmp_path / "replacement"
+    replacement.write_text("second-key\n", encoding="utf-8")
+    replacement.replace(secret_file)
+    _ = federation.clients["cluster-a"].collections
+    assert created_configs[-1]["api_key"] == "second-key"
+
+    secret_file.unlink()
+    with pytest.raises(SecretResolutionError, match="unavailable"):
+        _ = federation.clients["cluster-a"].collections
 
 
 def test_delete_candidates_include_all_clusters_despite_current_routing():

@@ -1,0 +1,372 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels: {app.kubernetes.io/name: postgres, imposbro.dev/tier: dependency}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: postgres}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: postgres, imposbro.dev/tier: dependency}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: {imposbro.dev/role: infra}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: POSTGRES_DB, value: imposbro}
+            - {name: POSTGRES_USER, value: imposbro}
+            # The non-root process must own the initialized directory itself;
+            # fsGroup only makes the emptyDir root group-writable.
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: kind-dependencies, key: POSTGRES_PASSWORD}}
+            - {name: POSTGRES_INITDB_ARGS, value: --auth-host=scram-sha-256}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, imposbro, -d, imposbro]}
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            exec: {command: [pg_isready, -U, imposbro, -d, imposbro]}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: runtime, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {sizeLimit: 1Gi}}
+        - {name: runtime, emptyDir: {sizeLimit: 16Mi}}
+        - {name: tmp, emptyDir: {sizeLimit: 64Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app.kubernetes.io/name: postgres}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: {app.kubernetes.io/name: redis, imposbro.dev/tier: dependency}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: redis}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: redis, imposbro.dev/tier: dependency}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: {imposbro.dev/role: infra}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: redis
+          image: redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
+          imagePullPolicy: IfNotPresent
+          args: [redis-server, --appendonly, "yes", --dir, /data]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports: [{name: redis, containerPort: 6379}]
+          readinessProbe:
+            exec: {command: [redis-cli, ping]}
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            exec: {command: [redis-cli, ping]}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {sizeLimit: 512Mi}}
+        - {name: tmp, emptyDir: {sizeLimit: 64Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app.kubernetes.io/name: redis}
+  ports: [{name: redis, port: 6379, targetPort: redis}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  labels: {app.kubernetes.io/name: kafka, imposbro.dev/tier: dependency}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: kafka}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: kafka, imposbro.dev/tier: dependency}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: {imposbro.dev/role: infra}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: initialize-kafka-config
+          image: bitnamilegacy/kafka:4.0.0@sha256:f45d5b813412e1ef7ce67b467309a84e4c6dc03d7626a0b6da867db9b69bd107
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+            # Preserve vendor templates, but let the main entrypoint render
+            # server.properties from the declared KAFKA_CFG_* environment.
+            - >-
+              cp -R /opt/bitnami/kafka/config/. /writable-config/ &&
+              rm -f /writable-config/server.properties
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: config, mountPath: /writable-config}
+      containers:
+        - name: kafka
+          image: bitnamilegacy/kafka:4.0.0@sha256:f45d5b813412e1ef7ce67b467309a84e4c6dc03d7626a0b6da867db9b69bd107
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: KAFKA_CFG_NODE_ID, value: "0"}
+            - {name: KAFKA_CFG_PROCESS_ROLES, value: "controller,broker"}
+            # Single-pod KRaft must not depend on a readiness-gated Service
+            # endpoint to reach its own controller during bootstrap.
+            - {name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS, value: "0@127.0.0.1:9093"}
+            - {name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
+            - {name: KAFKA_CFG_LISTENERS, value: "INTERNAL://:29092,CONTROLLER://:9093"}
+            - {name: KAFKA_CFG_ADVERTISED_LISTENERS, value: "INTERNAL://kafka:29092"}
+            - {name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT"}
+            - {name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME, value: INTERNAL}
+            - {name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE, value: "true"}
+            - {name: KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
+            # Leave native/direct-buffer headroom below the 1 GiB cgroup limit.
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms256m -Xmx512m"}
+          ports:
+            - {name: kafka, containerPort: 29092}
+            - {name: controller, containerPort: 9093}
+          readinessProbe:
+            # Avoid a readiness loop through the advertised Service before it
+            # has an endpoint; full Kafka behavior is exercised by the smoke.
+            tcpSocket: {port: kafka}
+            initialDelaySeconds: 10
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 40
+          # KRaft storage initialization can be slow on a cold multi-node
+          # cluster. Gate liveness until the broker has opened its listener.
+          startupProbe:
+            tcpSocket: {port: kafka}
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 120
+          livenessProbe:
+            tcpSocket: {port: kafka}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 150m, memory: 384Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /bitnami/kafka}
+            # The non-root Bitnami entrypoint renders server.properties here.
+            # Image-layer ownership is root-only, so a fsGroup-scoped writable
+            # ephemeral mount is required; do not relax the pod UID/security context.
+            - {name: config, mountPath: /opt/bitnami/kafka/config}
+            - {name: logs, mountPath: /opt/bitnami/kafka/logs}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {sizeLimit: 2Gi}}
+        - {name: config, emptyDir: {sizeLimit: 16Mi}}
+        - {name: logs, emptyDir: {sizeLimit: 256Mi}}
+        - {name: tmp, emptyDir: {sizeLimit: 128Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  selector: {app.kubernetes.io/name: kafka}
+  ports:
+    - {name: kafka, port: 29092, targetPort: kafka}
+    - {name: controller, port: 9093, targetPort: controller}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: typesense-a
+  labels: {app.kubernetes.io/name: typesense-a, imposbro.dev/tier: dependency}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: typesense-a}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: typesense-a, imposbro.dev/tier: dependency}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: {imposbro.dev/role: infra}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: typesense
+          image: typesense/typesense:0.25.2@sha256:1ddbb28a52b0b8be31237ec718df1c9bc895c5626b26c10fa3f340f684e81488
+          imagePullPolicy: IfNotPresent
+          args: ["--data-dir=/data", "--api-key=$(TYPESENSE_API_KEY)", "--enable-cors=false"]
+          env:
+            - name: TYPESENSE_API_KEY
+              valueFrom: {secretKeyRef: {name: kind-dependencies, key: TYPESENSE_API_KEY}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 8108}]
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 40
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 75m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {sizeLimit: 1Gi}}
+        - {name: tmp, emptyDir: {sizeLimit: 64Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: typesense-a
+spec:
+  selector: {app.kubernetes.io/name: typesense-a}
+  ports: [{name: http, port: 8108, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: typesense-b
+  labels: {app.kubernetes.io/name: typesense-b, imposbro.dev/tier: dependency}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: typesense-b}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: typesense-b, imposbro.dev/tier: dependency}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: {imposbro.dev/role: infra}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: typesense
+          image: typesense/typesense:0.25.2@sha256:1ddbb28a52b0b8be31237ec718df1c9bc895c5626b26c10fa3f340f684e81488
+          imagePullPolicy: IfNotPresent
+          args: ["--data-dir=/data", "--api-key=$(TYPESENSE_API_KEY)", "--enable-cors=false"]
+          env:
+            - name: TYPESENSE_API_KEY
+              valueFrom: {secretKeyRef: {name: kind-dependencies, key: TYPESENSE_API_KEY}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 8108}]
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 40
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 75m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {sizeLimit: 1Gi}}
+        - {name: tmp, emptyDir: {sizeLimit: 64Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: typesense-b
+spec:
+  selector: {app.kubernetes.io/name: typesense-b}
+  ports: [{name: http, port: 8108, targetPort: http}]

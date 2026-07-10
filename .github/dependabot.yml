@@ -1,0 +1,97 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: /query_api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:15"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /indexing_service
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:15"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /scripts/ci
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:15"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+    groups:
+      npm-production:
+        dependency-type: production
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /admin_ui
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+    groups:
+      admin-ui-production:
+        dependency-type: production
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /query_api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:45"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /indexing_service
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:45"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /admin_ui
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:45"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 3

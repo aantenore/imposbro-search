@@ -6,6 +6,10 @@ metadata:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: query-api
 spec:
+  revisionHistoryLimit: {{ .Values.queryApi.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.queryApi.minReadySeconds }}
+  strategy:
+    {{- toYaml .Values.queryApi.strategy | nindent 4 }}
   {{- if not .Values.queryApi.autoscaling.enabled }}
   replicas: {{ .Values.queryApi.replicaCount | default .Values.replicaCount }}
   {{- end }}
@@ -19,6 +23,8 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- if .Values.config.useSecret }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- else }}
+        checksum/secret-source: {{ include "imposbro-search.secretSourceChecksum" . }}
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -32,9 +38,49 @@ spec:
     spec:
       serviceAccountName: {{ include "imposbro-search.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.queryApi.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.migrations.enabled }}
+      initContainers:
+        - name: control-plane-migrate
+          image: "{{ include "imposbro-search.requiredImage" (dict "name" "queryApi.image" "value" .Values.queryApi.image) }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["python", "-m", "control_plane.migrate", "upgrade", "head"]
+          env:
+            - name: CONTROL_PLANE_MIGRATION_LOCK_TIMEOUT_SECONDS
+              value: {{ .Values.migrations.lockTimeoutSeconds | quote }}
+            {{- include "imposbro-search.secretEnv" (dict "root" . "keys" .Values.secrets.workloadKeys.migration) | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "imposbro-search.fullname" . }}-config
+          {{- with .Values.migrations.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.writableTmpDir.enabled .Values.tls.trustBundle.enabled }}
+          volumeMounts:
+            {{- if .Values.writableTmpDir.enabled }}
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- if .Values.tls.trustBundle.enabled }}
+            - name: trust-bundle
+              mountPath: {{ .Values.tls.trustBundle.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+          {{- end }}
       {{- end }}
       containers:
         - name: {{ .Values.queryApi.name }}
@@ -64,20 +110,69 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.queryApi.name | quote }}
+            - name: OTEL_SERVICE_VERSION
+              value: {{ .Chart.AppVersion | quote }}
+            {{- include "imposbro-search.secretEnv" (dict "root" . "keys" .Values.secrets.workloadKeys.queryApi) | nindent 12 }}
+            {{- include "imposbro-search.typesenseSecretRefEnv" . | nindent 12 }}
+            {{- if .Values.tls.trustBundle.enabled }}
+            - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+              value: {{ printf "%s/ca.crt" .Values.tls.trustBundle.mountPath | quote }}
+            - name: SSL_CERT_FILE
+              value: {{ printf "%s/ca.crt" .Values.tls.trustBundle.mountPath | quote }}
+            - name: REQUESTS_CA_BUNDLE
+              value: {{ printf "%s/ca.crt" .Values.tls.trustBundle.mountPath | quote }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "imposbro-search.fullname" . }}-config
-            {{- if .Values.config.useSecret }}
-            - secretRef:
-                name: {{ include "imposbro-search.fullname" . }}-secret
+          {{- if or .Values.writableTmpDir.enabled .Values.tls.trustBundle.enabled }}
+          volumeMounts:
+            {{- if .Values.writableTmpDir.enabled }}
+            - name: tmp
+              mountPath: /tmp
             {{- end }}
+            {{- if .Values.tls.trustBundle.enabled }}
+            - name: trust-bundle
+              mountPath: {{ .Values.tls.trustBundle.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.writableTmpDir.enabled .Values.tls.trustBundle.enabled }}
+      volumes:
+        {{- if .Values.writableTmpDir.enabled }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.writableTmpDir.sizeLimit | quote }}
+        {{- end }}
+        {{- if .Values.tls.trustBundle.enabled }}
+        - name: trust-bundle
+          secret:
+            secretName: {{ .Values.tls.trustBundle.existingSecret | quote }}
+            optional: false
+            items:
+              - key: {{ .Values.tls.trustBundle.caKey | quote }}
+                path: ca.crt
+              {{- range .Values.tls.trustBundle.additionalKeys }}
+              - key: {{ .key | quote }}
+                path: {{ .path | quote }}
+              {{- end }}
+        {{- end }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if or .Values.affinity .Values.availability.podAntiAffinity.enabled }}
       affinity:
+        {{- with .Values.affinity }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.availability.podAntiAffinity.enabled }}
+        {{- include "imposbro-search.podAntiAffinity" (dict "root" . "component" "query-api") | nindent 8 }}
+        {{- end }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

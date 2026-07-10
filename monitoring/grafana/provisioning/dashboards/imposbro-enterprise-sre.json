@@ -1,0 +1,335 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "IMPOSBRO SLO, outbox, worker, and configuration-convergence signals. Dashboard presence is not evidence that production targets or paging are wired.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "SLO policy",
+      "tooltip": "Repository SLO definition",
+      "type": "link",
+      "url": "https://github.com/aantenore/imposbro-search/blob/master/docs/SLO.md"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Runbooks",
+      "tooltip": "Alert-to-runbook index",
+      "type": "link",
+      "url": "https://github.com/aantenore/imposbro-search/blob/master/docs/runbooks/README.md"
+    }
+  ],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "One-hour request-based availability for versioned and compatibility data-plane routes.",
+      "fieldConfig": {"defaults": {"max": 100, "min": 99, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 99.9}, {"color": "green", "value": 99.95}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "100 * (1 - imposbro:query_api:availability_error_ratio_1h)", "legendFormat": "availability", "refId": "A"}],
+      "title": "Availability (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Availability budget burn. 1x consumes budget exactly at the sustainable rate.",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 6}]}, "unit": "none"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "imposbro:query_api:availability_burn_rate_5m", "legendFormat": "5m", "refId": "A"},
+        {"expr": "imposbro:query_api:availability_burn_rate_1h", "legendFormat": "1h", "refId": "B"},
+        {"expr": "imposbro:query_api:availability_burn_rate_6h", "legendFormat": "6h", "refId": "C"}
+      ],
+      "title": "Availability burn rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Fraction of in-scope requests completing in at most one second.",
+      "fieldConfig": {"defaults": {"max": 100, "min": 90, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 99}, {"color": "green", "value": 99.5}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "100 * (1 - imposbro:query_api:latency_bad_ratio_1h)", "legendFormat": "within 1s", "refId": "A"}],
+      "title": "Latency compliance (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Latency budget burn for the 99% within one second objective.",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 6}]}, "unit": "none"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "imposbro:query_api:latency_burn_rate_5m", "legendFormat": "5m", "refId": "A"},
+        {"expr": "imposbro:query_api:latency_burn_rate_1h", "legendFormat": "1h", "refId": "B"},
+        {"expr": "imposbro:query_api:latency_burn_rate_6h", "legendFormat": "6h", "refId": "C"}
+      ],
+      "title": "Latency burn rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Query API request latency quantiles over five minutes.",
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"imposbro_services\",handler=~\"(/api/v1)?/(search|documents|ingest)/.*\"}[5m])))", "legendFormat": "p95", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"imposbro_services\",handler=~\"(/api/v1)?/(search|documents|ingest)/.*\"}[5m])))", "legendFormat": "p99", "refId": "B"}
+      ],
+      "title": "Data-plane latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Traffic and 5xx ratio provide context for burn-rate alerts and low-traffic behavior.",
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "5xx %"}, "properties": [{"id": "unit", "value": "percent"}]}]},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 5},
+      "id": 6,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "imposbro:query_api:request_rate_5m", "legendFormat": "requests/s", "refId": "A"},
+        {"expr": "100 * imposbro:query_api:availability_error_ratio_5m", "legendFormat": "5xx %", "refId": "B"}
+      ],
+      "title": "Traffic and errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Prometheus scrape reachability per service target.",
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 5},
+      "id": 7,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "up{job=~\"imposbro_services|indexing_service|imposbro_query_health|imposbro_postgres\"}", "legendFormat": "{{job}} {{instance}}", "refId": "A"}],
+      "title": "Service targets",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Pending durable control-plane and indexing events.",
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 12},
+      "id": 8,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "max(imposbro_control_plane_outbox_pending)", "legendFormat": "control-plane", "refId": "A"},
+        {"expr": "max(indexing_event_outbox_pending{job=\"imposbro_services\"})", "legendFormat": "indexing API gauge", "refId": "B"},
+        {"expr": "max(imposbro_indexing_event_outbox_pending_db)", "legendFormat": "indexing DB", "refId": "C"}
+      ],
+      "title": "Outbox backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Oldest unpublished event age from PostgreSQL, the leading lag signal.",
+      "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 60}, {"color": "red", "value": 300}]}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 12},
+      "id": 9,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "max(imposbro_control_plane_outbox_oldest_unpublished_age_seconds)", "legendFormat": "control-plane", "refId": "A"},
+        {"expr": "max(imposbro_indexing_event_outbox_oldest_unpublished_age_seconds)", "legendFormat": "indexing", "refId": "B"}
+      ],
+      "title": "Oldest outbox event",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Replay failures and worker retries are correlated with outbox growth.",
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 12},
+      "id": 10,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum(rate(indexing_event_outbox_replay_failures_total{job=\"imposbro_services\"}[5m]))", "legendFormat": "API replay failures/s", "refId": "A"},
+        {"expr": "sum(rate(indexing_processing_retries_total{job=\"indexing_service\"}[5m]))", "legendFormat": "worker retries/s", "refId": "B"},
+        {"expr": "sum(rate(indexing_dlq_messages_total{job=\"indexing_service\"}[5m]))", "legendFormat": "DLQ/s", "refId": "C"}
+      ],
+      "title": "Delivery failure signals",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Authoritative and applied revisions per Query API replica. Health probes must target replicas directly.",
+      "fieldConfig": {"defaults": {"decimals": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 19},
+      "id": 11,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "imposbro_query_api_control_plane_authoritative_revision", "legendFormat": "authoritative {{instance}}", "refId": "A"},
+        {"expr": "imposbro_query_api_control_plane_applied_revision", "legendFormat": "applied {{instance}}", "refId": "B"},
+        {"expr": "imposbro_control_plane_authoritative_revision_db", "legendFormat": "database", "refId": "C"}
+      ],
+      "title": "Configuration revisions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Positive values mean a Query API replica is serving a stale configuration revision.",
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 19},
+      "id": 12,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "imposbro:query_api:config_revision_gap", "legendFormat": "{{instance}}", "refId": "A"}],
+      "title": "Configuration revision gap",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Worker readiness requires both configuration loaded and active Kafka consumption.",
+      "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "NOT READY"}, "1": {"color": "green", "text": "READY"}}, "type": "value"}]}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 19},
+      "id": 13,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {"expr": "indexing_worker_ready{job=\"indexing_service\"}", "legendFormat": "ready {{instance}}", "refId": "A"},
+        {"expr": "indexing_worker_config_loaded{job=\"indexing_service\"}", "legendFormat": "config {{instance}}", "refId": "B"},
+        {"expr": "indexing_worker_consumer_active{job=\"indexing_service\"}", "legendFormat": "consumer {{instance}}", "refId": "C"}
+      ],
+      "title": "Indexing worker readiness",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Logical indexing outcomes by operation and result.",
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 26},
+      "id": 14,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (operation, result) (rate(indexing_events_total{job=\"indexing_service\"}[5m]))", "legendFormat": "{{operation}} / {{result}}", "refId": "A"}],
+      "title": "Indexing outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Checkpoint outcomes expose durable ordering/idempotency health.",
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 26},
+      "id": 15,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum by (backend, result) (rate(indexing_checkpoint_operations_total{job=\"indexing_service\"}[5m]))", "legendFormat": "checkpoint {{backend}} / {{result}}", "refId": "A"},
+        {"expr": "sum by (backend, decision) (rate(indexing_idempotency_decisions_total{job=\"indexing_service\"}[5m]))", "legendFormat": "idempotency {{backend}} / {{decision}}", "refId": "B"}
+      ],
+      "title": "Ordering and idempotency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Operational proxy based on 30-second samples where either oldest outbox event exceeds 60 seconds; not formal per-event SLO evidence.",
+      "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 6}]}, "unit": "none"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 33},
+      "id": 16,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "imposbro:outbox:lag_burn_rate_5m", "legendFormat": "5m", "refId": "A"},
+        {"expr": "imposbro:outbox:lag_burn_rate_1h", "legendFormat": "1h", "refId": "B"},
+        {"expr": "imposbro:outbox:lag_burn_rate_6h", "legendFormat": "6h", "refId": "C"}
+      ],
+      "title": "Outbox lag proxy burn rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Operational proxy based on 30-second samples with any positive replica revision gap; not formal per-revision SLO evidence.",
+      "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 6}]}, "unit": "none"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 33},
+      "id": 17,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "imposbro:config:stale_burn_rate_5m", "legendFormat": "5m", "refId": "A"},
+        {"expr": "imposbro:config:stale_burn_rate_1h", "legendFormat": "1h", "refId": "B"},
+        {"expr": "imposbro:config:stale_burn_rate_6h", "legendFormat": "6h", "refId": "C"}
+      ],
+      "title": "Configuration convergence proxy burn rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Exporter-measured primary consumer and unresolved DLQ lag. Group selectors must match deployment settings.",
+      "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 40},
+      "id": 18,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum(kafka_consumergroup_lag{job=\"imposbro_kafka\",consumergroup=\"imposbro_federated_indexing_group\"})", "legendFormat": "primary consumer", "refId": "A"},
+        {"expr": "sum(kafka_consumergroup_lag{job=\"imposbro_kafka\",consumergroup=\"imposbro_indexing_dlq_resolver\"})", "legendFormat": "unresolved DLQ", "refId": "B"}
+      ],
+      "title": "Kafka consumer and DLQ lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Persisted routing failures, stalled rollback age, and elapsed rollback deadlines from PostgreSQL.",
+      "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 40},
+      "id": 19,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "max(imposbro_routing_rollouts{phase=\"failed\"})", "legendFormat": "failed", "refId": "A"},
+        {"expr": "max(imposbro_routing_rollout_max_phase_age_seconds{phase=\"rolling_back\"})", "legendFormat": "rollback age seconds", "refId": "B"},
+        {"expr": "max(imposbro_routing_rollout_max_deadline_overrun_seconds{phase=~\"cutover|drain\"})", "legendFormat": "deadline overrun seconds", "refId": "C"}
+      ],
+      "title": "Routing rollout attention",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["imposbro", "enterprise", "sre", "slo"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "IMPOSBRO Enterprise SRE",
+  "uid": "imposbro-enterprise-sre",
+  "version": 1,
+  "weekStart": ""
+}

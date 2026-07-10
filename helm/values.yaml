@@ -8,6 +8,10 @@ serviceAccount:
   create: true
   name: ""
   automountServiceAccountToken: false
+  annotations: {}
+  labels: {}
+
+imagePullSecrets: []
 
 podAnnotations: {}
 podLabels: {}
@@ -18,14 +22,29 @@ podSecurityContext:
     type: RuntimeDefault
 
 securityContext:
+  runAsNonRoot: true
   allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL
 
+writableTmpDir:
+  enabled: true
+  sizeLimit: 128Mi
+
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+availability:
+  podAntiAffinity:
+    enabled: false
+    # preferred avoids making small development clusters unschedulable. In an
+    # enterprise profile combine it with a hard topologySpreadConstraint.
+    type: preferred
+    topologyKey: kubernetes.io/hostname
 
 networkPolicy:
   enabled: false
@@ -39,7 +58,15 @@ networkPolicy:
   queryApi:
     # Allow the Admin UI pods from this release to call the Query API service.
     allowAdminUi: true
+    # Required for worker bootstrap and runtime cluster-config refresh.
+    allowIndexingService: true
     ingress:
+      from: []
+    health:
+      # Node/kubelet source ranges differ by CNI. Model them explicitly when
+      # ingress isolation is enabled so probes are not accidentally blocked.
+      # Query/Admin health shares the application port, so use only trusted
+      # node CIDRs; NetworkPolicy cannot authorize individual HTTP paths.
       from: []
     # Optional Kubernetes NetworkPolicy egress rules. Leave empty to avoid
     # enforcing egress until Kafka, Redis, DNS, and Typesense destinations are
@@ -48,8 +75,13 @@ networkPolicy:
   adminUi:
     ingress:
       from: []
+    health:
+      from: []
     egress: []
   indexingService:
+    health:
+      ingress:
+        from: []
     metrics:
       ingress:
         from: []
@@ -118,6 +150,14 @@ queryApi:
   # registry.example.com/imposbro-query-api@sha256:<64 hex chars>.
   image: ""
   replicaCount: 1
+  revisionHistoryLimit: 3
+  minReadySeconds: 0
+  terminationGracePeriodSeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   podDisruptionBudget:
     enabled: false
     minAvailable: 1
@@ -181,6 +221,14 @@ adminUi:
   # registry.example.com/imposbro-admin-ui@sha256:<64 hex chars>.
   image: ""
   replicaCount: 1
+  revisionHistoryLimit: 3
+  minReadySeconds: 0
+  terminationGracePeriodSeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   podDisruptionBudget:
     enabled: false
     minAvailable: 1
@@ -238,6 +286,14 @@ indexingService:
   # registry.example.com/imposbro-indexing-service@sha256:<64 hex chars>.
   image: ""
   replicaCount: 1
+  revisionHistoryLimit: 3
+  minReadySeconds: 0
+  terminationGracePeriodSeconds: 60
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   podDisruptionBudget:
     enabled: false
     minAvailable: 1
@@ -249,6 +305,8 @@ indexingService:
       enabled: true
       type: ClusterIP
       port: 9108
+  health:
+    port: 9109
   autoscaling:
     enabled: false
     minReplicas: 1
@@ -279,7 +337,12 @@ indexingService:
       tls: ""
       unsafeSsl: ""
     authenticationRef:
+      create: false
       name: ""
+      secretName: "" # Defaults to the chart-selected runtime Secret.
+      usernameKey: KAFKA_SASL_USERNAME
+      passwordKey: KAFKA_SASL_PASSWORD
+      caKey: "" # Set when KEDA must trust a private Kafka CA.
   resources:
     requests:
       cpu: 100m
@@ -287,9 +350,27 @@ indexingService:
     limits:
       cpu: 500m
       memory: 512Mi
-  # Workers do not expose an HTTP health endpoint by default.
-  # Provide probes here if you wrap the worker with a process-level healthcheck.
-  livenessProbe: {}
+  startupProbe:
+    httpGet:
+      path: /ready
+      port: health
+    failureThreshold: 60
+    periodSeconds: 5
+    timeoutSeconds: 2
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: health
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  livenessProbe:
+    httpGet:
+      path: /live
+      port: health
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
   topologySpreadConstraints: []
 
 # Configuration for backend services (Kafka, Typesense, Redis)
@@ -310,12 +391,149 @@ redis:
   name: redis
   port: 6379
 
+# Exactly one secret source must be selected. `config.useSecret` is the
+# development-compatible inline source. Production should use an existing
+# Secret or External Secrets Operator; neither path puts secret values in the
+# Helm release payload.
+secrets:
+  existingSecret: ""
+  # A declared key contract lets enterprise rendering fail before pods start
+  # and makes the corresponding per-workload secretKeyRef non-optional.
+  providedKeys: []
+  # Each process receives only the secret keys it actually needs. Keys that
+  # are not declared in providedKeys remain optional so one chart can support
+  # public OIDC clients and development profiles without placeholder secrets.
+  # Enterprise validation below enforces the mandatory minimum and rejects
+  # cross-boundary credentials (for example, browser-session secrets in the
+  # Query API process).
+  workloadKeys:
+    migration:
+      - CONTROL_PLANE_DATABASE_URL
+    queryApi:
+      - CONTROL_PLANE_DATABASE_URL
+      - REDIS_URL
+      - INTERNAL_STATE_API_KEY
+      - DEFAULT_DATA_CLUSTER_API_KEY
+      - DEFAULT_DATA2_CLUSTER_API_KEY
+      - ADMIN_API_KEY
+      - DATA_API_KEY
+      - SCOPED_API_KEYS
+      - KAFKA_SASL_USERNAME
+      - KAFKA_SASL_PASSWORD
+      - OTEL_EXPORTER_OTLP_HEADERS
+    indexingService:
+      - CONTROL_PLANE_DATABASE_URL
+      - INTERNAL_QUERY_API_ADMIN_API_KEY
+      - ADMIN_API_KEY
+      - KAFKA_SASL_USERNAME
+      - KAFKA_SASL_PASSWORD
+      - OTEL_EXPORTER_OTLP_HEADERS
+    adminUi:
+      - ADMIN_UI_PROXY_TRUSTED_VALUE
+      - INTERNAL_QUERY_API_ADMIN_API_KEY
+      - ADMIN_API_KEY
+      - INTERNAL_QUERY_API_DATA_API_KEY
+      - DATA_API_KEY
+      - ADMIN_UI_OIDC_CLIENT_SECRET
+      - ADMIN_UI_SESSION_SECRET
+  # Change this opaque version whenever externally managed values rotate so a
+  # rollout is triggered even though Helm cannot hash external secret content.
+  rolloutVersion: ""
+  externalSecret:
+    enabled: false
+    apiVersion: external-secrets.io/v1beta1
+    refreshInterval: 1h
+    secretStoreRef:
+      name: ""
+      kind: ClusterSecretStore
+    target:
+      name: ""
+      creationPolicy: Owner
+      deletionPolicy: Retain
+      template:
+        metadata:
+          annotations: {}
+          labels: {}
+    data: []
+    dataFrom: []
+
+# Optional private CA/trust bundle. The Secret is mounted read-only and used by
+# Python requests/psycopg, Node.js, and clients that honor the standard paths.
+tls:
+  trustBundle:
+    enabled: false
+    existingSecret: ""
+    caKey: TLS_CA_CERT
+    mountPath: /etc/imposbro/tls
+    # Optional client certificate/key or additional trust material from the
+    # same Secret, rendered as [{key: KAFKA_CLIENT_CERT, path: kafka.crt}, ...].
+    additionalKeys: []
+
+# PostgreSQL Alembic migration init workflow. Every Query API pod attempts the
+# migration while a session-scoped PostgreSQL advisory lock serializes it.
+migrations:
+  enabled: false
+  lockTimeoutSeconds: 300
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
 # Centralized configuration for environment variables.
 # This chart deploys the IMPOSBRO applications only. Kafka, Redis, and
 # Typesense must be deployed separately and provided here explicitly.
 config:
   useSecret: false  # Must be true unless you customize external secret injection.
+  DEPLOYMENT_PROFILE: "development"
+  # OpenTelemetry uses OTLP/HTTP. Keep disabled for local development; the
+  # enterprise profile requires a TLS collector and release metadata.
+  OTEL_SDK_DISABLED: "true"
+  OTEL_TRACES_EXPORTER: "none"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ""
+  # Sensitive exporter headers belong in the selected Kubernetes Secret and
+  # are never rendered into the ConfigMap.
+  OTEL_EXPORTER_OTLP_HEADERS: ""
+  OTEL_EXPORTER_OTLP_TIMEOUT: "5000"
+  OTEL_BSP_SCHEDULE_DELAY: "5000"
+  OTEL_BSP_EXPORT_TIMEOUT: "5000"
+  OTEL_BSP_MAX_QUEUE_SIZE: "2048"
+  OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512"
+  OTEL_TRACES_SAMPLER: "parentbased_always_on"
+  OTEL_TRACES_SAMPLER_ARG: "1"
+  OTEL_DEPLOYMENT_ENVIRONMENT: "development"
+  OTEL_BUILD_ID: "development"
+  OTEL_SERVICE_REVISION: "development"
+  CONTROL_PLANE_STORE_BACKEND: "typesense"
+  CONTROL_PLANE_DATABASE_URL: ""
+  PGSSLMODE: "prefer"
+  PGSSLROOTCERT: ""
+  CONTROL_PLANE_RECONCILE_SECONDS: "5"
+  CONTROL_PLANE_ADMIN_MUTATIONS_FROZEN: "false"
+  INDEXING_EVENT_STORE_BACKEND: "disabled"
+  INDEXING_OUTBOX_POLL_SECONDS: "1"
+  INDEXING_OUTBOX_BATCH_SIZE: "100"
+  # Development chart default is explicit and single-process. Production and
+  # enterprise profiles are required to use the PostgreSQL fenced adapter.
+  INDEXING_CHECKPOINT_BACKEND: "memory"
+  INDEXING_CHECKPOINT_LOCK_TIMEOUT_MS: "5000"
+  INDEXING_ALLOW_VOLATILE_CHECKPOINTS: "true"
+  INDEXING_ALLOW_TYPESENSE_CHECKPOINTS: "false"
+  INDEXING_CHECKPOINT_COLLECTION: "_imposbro_indexing_checkpoints"
   KAFKA_BROKER_URL: ""
+  # kafka-python needs these values wired into client construction. They are
+  # exposed and validated here so the runtime contract is explicit.
+  KAFKA_SECURITY_PROTOCOL: "PLAINTEXT"
+  KAFKA_SASL_MECHANISM: ""
+  KAFKA_SASL_USERNAME: ""
+  KAFKA_SASL_PASSWORD: ""
+  KAFKA_SSL_CAFILE: ""
+  KAFKA_SSL_CERTFILE: ""
+  KAFKA_SSL_KEYFILE: ""
+  KAFKA_SSL_CHECK_HOSTNAME: "true"
   KAFKA_TOPIC_PREFIX: "imposbro_search_sharded"
   KAFKA_METADATA_MAX_AGE_MS: "5000"
   INDEXING_MAX_PROCESSING_ATTEMPTS: "3"
@@ -335,6 +553,12 @@ config:
   # serving keeps initialized Query API pods routable during downstream outages;
   # strict requires every dependency and configured data node to be healthy.
   READINESS_POLICY: "serving"
+  # Parallel dependency checks are cached and bounded below the Kubernetes probe
+  # timeout. Serving stays routable on timeout; strict remains fail-closed.
+  QUERY_API_HEALTH_CACHE_TTL_SECONDS: "5"
+  QUERY_API_HEALTH_CHECK_BUDGET_SECONDS: "1"
+  QUERY_API_HEALTH_DEPENDENCY_TIMEOUT_SECONDS: "0.5"
+  QUERY_API_HEALTH_MAX_WORKERS: "16"
   ALLOW_UNAUTHENTICATED_ADMIN: "false"
   ALLOW_UNAUTHENTICATED_DATA: "false"
   INGEST_BATCH_MAX_DOCUMENTS: "100"
@@ -347,8 +571,12 @@ config:
   RATE_LIMIT_REDIS_PREFIX: "imposbro:rate_limit"
   # For production: use Secrets (config.useSecret: true) and set these via --set or a secure values file
   INTERNAL_STATE_API_KEY: ""
+  INTERNAL_STATE_API_KEY_REF: ""
   DEFAULT_DATA_CLUSTER_API_KEY: ""
+  DEFAULT_DATA_CLUSTER_API_KEY_REF: ""
   DEFAULT_DATA2_CLUSTER_API_KEY: ""
+  DEFAULT_DATA2_CLUSTER_API_KEY_REF: ""
+  TYPESENSE_SECRET_FILE_ROOT: /run/secrets/imposbro
   ADMIN_API_KEY: ""
   DATA_API_KEY: ""
   INTERNAL_QUERY_API_ADMIN_API_KEY: ""
@@ -368,8 +596,19 @@ config:
   ALLOW_INSECURE_OIDC_URLS: "false" # Local-only escape hatch for non-HTTPS OIDC endpoints.
   AUTHZ_COLLECTION_POLICIES: ""
   AUTHZ_API_KEY_TENANT_BYPASS: "true"
+  # Deny operations for collections without an explicit/default tenant policy.
+  AUTHZ_REQUIRE_COLLECTION_POLICY: "false"
+  AUDIT_LOG_ENABLED: "true"
+  AUDIT_LOG_MAX_RESULTS: "100"
   # Required when the Admin UI proxy injects server-side API keys in production.
   # Configure your authenticated ingress/gateway to set this header.
+  ADMIN_UI_PUBLIC_ORIGIN: ""
+  ADMIN_UI_SECURITY_PROFILE: "development"
+  # disabled is the production-safe default. trusted-header-legacy requires
+  # the explicit legacy opt-in plus an ingress-owned header/value pair.
+  ADMIN_UI_SERVER_CREDENTIAL_MODE: "disabled"
+  ADMIN_UI_ALLOW_LEGACY_TRUSTED_HEADER: "false"
+  ADMIN_UI_ENTERPRISE_MODE: "false"
   ADMIN_UI_PROXY_TRUSTED_HEADER: ""
   ADMIN_UI_PROXY_TRUSTED_VALUE: ""
   # Optional browser OIDC login for the Admin UI. Uses Authorization Code + PKCE
@@ -379,6 +618,9 @@ config:
   ADMIN_UI_OIDC_AUTHORIZATION_ENDPOINT: ""
   ADMIN_UI_OIDC_TOKEN_ENDPOINT: ""
   ADMIN_UI_OIDC_JWKS_URL: ""
+  ADMIN_UI_OIDC_ALLOWED_ENDPOINT_ORIGINS: ""
+  ADMIN_UI_OIDC_ALLOW_INSECURE_LOCALHOST: "false"
+  ADMIN_UI_OIDC_FETCH_TIMEOUT_MS: "5000"
   ADMIN_UI_OIDC_CLIENT_ID: ""
   ADMIN_UI_OIDC_CLIENT_SECRET: ""
   ADMIN_UI_OIDC_SCOPES: "openid profile email imposbro:admin imposbro:data"
