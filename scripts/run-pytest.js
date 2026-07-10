@@ -12,8 +12,18 @@ const suites = [
   { cwd: path.join(repoRoot, 'indexing_service'), args: ['-m', 'pytest', 'tests', '-v'] },
 ];
 
+function resolvePythonCommand(command) {
+  if (
+    path.isAbsolute(command)
+    || (!command.includes('/') && !command.includes('\\'))
+  ) {
+    return command;
+  }
+  return path.resolve(repoRoot, command);
+}
+
 const pythonCandidates = process.env.PYTHON
-  ? [process.env.PYTHON]
+  ? [resolvePythonCommand(process.env.PYTHON)]
   : fs.existsSync(venvPython)
     ? [venvPython, ...(process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python'])]
   : process.platform === 'win32'

@@ -15,6 +15,8 @@ This runbook is for operating IMPOSBRO Search with multiple Query API and indexi
    ```bash
    curl -fsS http://localhost:8000/ready
    ```
+   Require `ready=true`. With `READINESS_POLICY=serving`, dependency status may
+   still be `degraded`; inspect `/health` before scaling or releasing.
 2. Confirm release gate:
    ```bash
    make ci
@@ -207,7 +209,9 @@ If indexing workers restart during a burst, Kafka lag may rise temporarily. It m
 
 ## Incident Checklist
 
-- `/ready` degraded: inspect `data_cluster_nodes`, Kafka, and Redis status.
+- `/ready` reports `status=degraded`: inspect `data_cluster_nodes`, Kafka, and
+  Redis. With the default serving policy, `ready=true` intentionally keeps the
+  pod routable so partial search can continue.
 - Search partial: inspect `failed_clusters` in the response and Typesense node health.
 - Lag growing: inspect worker logs, retries, DLQ, Kafka topic partitions, and Typesense write errors.
 - Admin config diverged: run state export, compare snapshots, and use restore/reconcile workflows.

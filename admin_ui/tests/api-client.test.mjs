@@ -123,6 +123,33 @@ test('collection reconciliation posts to the admin endpoint', async () => {
   }
 });
 
+test('cluster registration includes the selected protocol in the JSON payload', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  const cluster = {
+    name: 'cluster-eu',
+    protocol: 'https',
+    host: 'typesense.example.com',
+    port: 443,
+    api_key: 'secret',
+  };
+
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return jsonResponse({ status: 'ok' });
+  };
+
+  try {
+    await api.clusters.create(cluster);
+
+    assert.equal(request.url, '/api/admin/federation/clusters');
+    assert.equal(request.options.method, 'POST');
+    assert.equal(request.options.body, JSON.stringify(cluster));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('alias client lists, upserts, and deletes with encoded names', async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];

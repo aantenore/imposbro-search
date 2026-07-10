@@ -49,13 +49,13 @@ One configurable control plane for routing, ingesting, searching, observing, and
 
 ## ✨ Core Features
 
-* **Advanced Document-Level Sharding:** Define routing rules based on document fields (e.g., `country`, `tenant_id`) to distribute documents across multiple physical clusters. Routing supports exact, list, glob, and numeric range matches with priorities, dry-run previews, and **fan-out routing** to replicate one document to several clusters simultaneously.
+* **Advanced Document-Level Sharding:** Define routing rules based on document fields (e.g., `country`, `tenant_id`) to distribute documents across multiple physical clusters. Routing supports exact, list, glob, and numeric range matches with priorities, dry-run previews, **fan-out routing**, and per-cluster HTTP/HTTPS transport.
 * **Resilient Scatter-Gather Search:** Queries are automatically sent to all relevant external clusters, with results merged and re-ranked. The system gracefully handles partial failures if a shard is unavailable.
 * **Asynchronous Indexing:** An ingestion pipeline based on Kafka guarantees that data is indexed reliably without blocking the API.
 * **HA State Management:** The application's own configuration is stored in a highly available internal Typesense cluster, ensuring no single point of failure for the management plane.
 * **Fully Functional Admin UI:** A complete Next.js web interface to manage external clusters, collections, aliases, schema reconciliation, routing rules, operations, and audit visibility from your browser.
 * **Operational Backup/Restore & Audit:** Control-plane state can be exported, validated, downloaded, and restored with masked-by-default secrets and explicit restore-ready workflows. Operators can inspect recent sanitized admin audit events from the Operations page.
-* **Enterprise-Ready:** Includes message ordering via Kafka, monitoring with a full Prometheus + Grafana stack, and a resilient, scalable architecture.
+* **Production-Oriented Foundation:** Includes Kafka ordering, Prometheus/Grafana observability, Kubernetes guardrails, and explicit degraded-mode behavior. See the roadmap for the remaining consistency, migration, hosted-CI, and scale-evidence work before treating it as enterprise-ready.
 
 ---
 
@@ -308,7 +308,7 @@ The Query API provides comprehensive endpoints for search, ingestion, and admini
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/ingest/{collection}` | POST | Ingest a document (requires `id` field; protected by `DATA_API_KEY` or `ingest`/`data` scoped key unless local dev bypass is enabled) |
+| `/ingest/{collection}` | POST | Ingest a document (requires a string `id` matching `[A-Za-z0-9_.-]{1,256}`, the same contract used by read/delete routes; protected by `DATA_API_KEY` or `ingest`/`data` scoped key unless local dev bypass is enabled) |
 | `/documents/{collection}/{document_id}` | GET | Retrieve/export one document by ID across candidate data clusters (protected by `DATA_API_KEY` or `search`/`data` scoped key unless local dev bypass is enabled) |
 | `/documents/{collection}/{document_id}` | DELETE | Delete a document asynchronously across every candidate data cluster (protected by `DATA_API_KEY` or `ingest`/`data` scoped key unless local dev bypass is enabled) |
 | `/search/{collection}` | GET | Federated search across clusters (protected by `DATA_API_KEY` or `search`/`data` scoped key unless local dev bypass is enabled) |
@@ -328,10 +328,20 @@ Batch ingest is available at `POST /ingest/{collection}/batch`. It accepts a
 bounded `{"documents":[...]}` payload, applies the same data-plane auth, tenant
 policy, routing, request-id propagation, and Kafka message shape as single
 document ingest, and returns per-document acceptance/rejection details.
+Tenant arrays on OIDC-protected writes must be a non-empty subset of the
+tenants authorized by the token; one matching tenant cannot smuggle an
+unauthorized tenant into a shared document.
 
 Search responses include `clusters_queried`, `clusters_responded`, `failed_clusters`, and `partial`.
 If at least one cluster responds, partial failures return `200` with `partial: true`; if every target cluster fails, the API returns `503`.
-Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_match:desc`, or `_vector_distance:asc`; complex geo/function sorts are rejected until they can be merged exactly across clusters. The JSON search endpoint accepts allowlisted Typesense parameters including `vector_query`, `query_by_weights`, `include_fields`, `exclude_fields`, highlighting options, and remote embedding retry/timeout controls. When `vector_query` is present, the gateway uses Typesense Multi Search so the data-cluster request is also sent as a POST body.
+Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_match:desc`, or `_vector_distance:asc`; complex geo/function sorts are rejected until they can be merged exactly across clusters. Shard windows larger than Typesense's 250-hit page limit are fetched in bounded pages, using the stored collection `default_sorting_field` when the caller does not provide a sort. `offset` and `limit` must be supplied together, and `limit_hits` must cover the requested window. The gateway always retrieves merge keys (`id` and simple sort fields) internally, then reapplies the caller's projection before returning hits. The JSON search endpoint accepts allowlisted Typesense parameters including `vector_query`, `query_by_weights`, `include_fields`, `exclude_fields`, highlighting options, and remote embedding retry/timeout controls. When `vector_query` is present, the gateway uses Typesense Multi Search so the data-cluster request is also sent as a POST body.
+
+When fan-out duplicates are observed, an exact unique total cannot be derived
+without scanning every match. In that case `found_relation` is `window_lower_bound`,
+`deduplicated_found_window` describes the fetched merge window, and
+`raw_found` remains the summed per-cluster upper bound. A single-cluster count is
+`exact`; across multiple clusters without observed duplicates it is conservatively
+labelled `upper_bound` because duplicates may exist outside the fetched window.
 
 ### Administration
 
@@ -361,7 +371,7 @@ Global merge supports simple `sort_by` expressions such as `price:asc`, `_text_m
 |----------|--------|-------------|
 | `/` | GET | Basic health check |
 | `/health` | GET | Detailed dependency health with Redis, Kafka, and per-data-cluster readiness |
-| `/ready` | GET | Readiness probe; returns HTTP 503 until required dependencies and data clusters are ready |
+| `/ready` | GET | Orchestrator readiness. With the default `serving` policy, initialized API pods remain routable while dependency health is degraded; `strict` requires all dependencies and data nodes to be healthy |
 | `/metrics` | GET | Prometheus metrics |
 
 ---
@@ -382,16 +392,20 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `CONFIG_SYNC_SOURCE_ID` | Optional source id for Redis config sync; defaults to `hostname:pid` so a Query API instance ignores its own notifications while other replicas reload |
 | `INTERNAL_STATE_NODES` | Comma-separated internal Typesense nodes |
 | `INTERNAL_STATE_API_KEY` | API key for internal cluster |
+| `INTERNAL_STATE_PROTOCOL` | Transport for internal state nodes: `http` (default) or `https` |
 | `DEFAULT_DATA_CLUSTER_NODES` | Default federated cluster nodes |
 | `DEFAULT_DATA_CLUSTER_API_KEY` | API key for default cluster |
+| `DEFAULT_DATA_CLUSTER_PROTOCOL` | Transport for bootstrap default data nodes: `http` (default) or `https` |
 | `DEFAULT_DATA2_CLUSTER_NODES` | Optional second federated cluster nodes |
 | `DEFAULT_DATA2_CLUSTER_API_KEY` | API key for optional second cluster |
+| `DEFAULT_DATA2_CLUSTER_PROTOCOL` | Transport for bootstrap secondary data nodes: `http` (default) or `https` |
 | `INTERNAL_QUERY_API_URL` | Internal URL for service discovery |
 | `HOST_BIND_IP` | Local Docker Compose bind address for published ports; defaults to `127.0.0.1` |
 | `COMPOSE_SUBNET` | Local Docker Compose subnet used for stable Typesense Raft peer IPs |
 | `TYPESENSE_*_IP` | Optional local Docker Compose static IP overrides for each Typesense node |
 | `CORS_ORIGINS` | Optional; comma-separated origins for CORS (e.g. `http://localhost:3001`). Empty = same-origin only |
 | `REQUEST_ID_HEADER` | Header echoed by Query API responses and propagated into Kafka data-plane messages for support diagnostics; default `X-Request-ID` |
+| `READINESS_POLICY` | `serving` (default) keeps an initialized Query API pod ready during downstream outages so partial search remains reachable; `strict` returns readiness 503 unless dependency health is fully healthy |
 | `ADMIN_API_KEY` | Admin API key; all `/admin/*` requests require `X-API-Key` or `Authorization: Bearer` unless local dev bypass is enabled |
 | `SCOPED_API_KEYS` | Optional JSON array of least-privilege API keys, e.g. `[{"name":"reader","key":"secret","scopes":["search"]}]`; supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search` (search/read), `ingest` (document writes/deletes), `data`, `*`, and collection patterns like `search:products_*` / `ingest:orders_*` |
 | `ALLOW_UNAUTHENTICATED_ADMIN` | Local-development bypass for Admin API auth. Use `true` only for local Docker Compose, keep `false` in shared/prod environments |
@@ -428,7 +442,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `AUDIT_LOG_MAX_RESULTS` | Maximum page size for `/admin/audit-log` |
 | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | Local Grafana login for Docker Compose |
 
-Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Document IDs in the delete path allow alphanumeric characters, hyphen, underscore, and dot. Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_documents_deleted_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
+Collection and cluster names in API paths must be alphanumeric with hyphens or underscores (Typesense-compatible). Document IDs in the delete path allow alphanumeric characters, hyphen, underscore, and dot. Registered clusters persist `protocol` alongside host and port; legacy state snapshots without it load as `http`, while unsupported protocols are rejected during import. HTTPS uses the runtime's standard certificate trust. Custom CA bundles and mTLS are not modeled by this small transport patch. Admin API responses mask API keys for security. The indexing service uses an internal, admin-authenticated config endpoint so it receives unmasked cluster credentials without exposing them to the browser. It also exposes Prometheus metrics such as `indexing_documents_indexed_total`, `indexing_documents_deleted_total`, `indexing_processing_retries_total`, and `indexing_dlq_messages_total` when `INDEXING_METRICS_ENABLED=true`. For production Kubernetes, set admin/data credentials, scoped keys, or OIDC, keep unauthenticated bypasses disabled, use the Helm Secret template (`config.useSecret: true`) for credentials, and expose the Admin UI through an authenticated Ingress/gateway or enable the Admin UI OIDC login flow.
 
 Rate limiting is optional and config-driven. When `RATE_LIMIT_ENABLED=true`,
 read-side data access (`/search/*` and `GET /documents/*`) and write-side data
@@ -596,7 +610,7 @@ docker buildx imagetools inspect your-registry-user/imposbro-indexing-service:1.
 ### Step 2: Configure and Deploy the Helm Chart
 
 1.  **Create a production values file:** The chart intentionally fails render with placeholder images, image tags without `@sha256` digests, mutable `:latest` tags, missing external service URLs, missing request-correlation configuration, non-HTTPS OIDC endpoints, or missing required auth configuration. Provide digest-pinned image references, Kafka/Redis/Typesense endpoints, `config.useSecret: true`, API keys/scoped keys or OIDC settings, and the Typesense API keys in a secure values file. If the Admin UI proxy injects server-side API keys, configure `ADMIN_UI_PROXY_TRUSTED_HEADER` and `ADMIN_UI_PROXY_TRUSTED_VALUE`, and have your authenticated ingress/gateway set that exact header/value. If the Admin UI handles browser login itself, set `ADMIN_UI_OIDC_ENABLED=true`, HTTPS OIDC provider endpoints, signed id-token validation settings, and `ADMIN_UI_SESSION_SECRET`.
-    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`.
+    The chart also exposes per-workload `replicaCount`, optional HPA/KEDA autoscaling, opt-in PodDisruptionBudget, optional Ingress, `resources`, probes, service account, pod labels/annotations, node selectors, affinity, tolerations, topology spread constraints, security contexts, and opt-in NetworkPolicy. By default the Query API uses `/ready` for startup/readiness and `/` for liveness, while the Admin UI probes `/`. `READINESS_POLICY=serving` keeps initialized Query API pods behind the Kubernetes Service during a downstream outage, allowing the search API to return explicit partial results. Set it to `strict` only when removing degraded pods from service is the intended policy.
     Enable `queryApi.ingress.enabled=true` and/or `adminUi.ingress.enabled=true` when the cluster ingress controller should own TLS and routing. Keep Admin UI behind an authenticated ingress/gateway whenever the proxy injects server-side keys.
     Enable `networkPolicy.enabled=true` after modeling the authenticated ingress/gateway and Prometheus namespaces. The policy allows Admin UI pods from the release to call Query API by default and leaves egress unenforced unless you provide explicit Kubernetes NetworkPolicy egress rules for DNS, Kafka, Redis, and Typesense.
 2.  **Install the Chart:** From the project's root directory, run the install command. This creates a new release named `imposbro-release`.
@@ -645,7 +659,7 @@ indexingService:
       ensureEvenDistributionOfPartitions: "true"
 ```
 
-**Note on Stateful Services:** This Helm chart only deploys the custom applications. For a production Kubernetes deployment, you should deploy Kafka and the Typesense HA cluster using their own dedicated, official Helm charts (e.g., from Bitnami) or a Kubernetes Operator. These tools are specifically designed to manage the complexities of scaling and operating stateful services on Kubernetes.
+**Note on Stateful Services:** This Helm chart only deploys the custom applications. For a production Kubernetes deployment, use currently maintained vendor charts, operators, or managed services for Kafka and Typesense rather than embedding stateful infrastructure in this chart.
 
 ---
 
@@ -664,7 +678,7 @@ indexingService:
 
 ### ✅ Roadmap completed (v4)
 
-* [x] Integration test suite (pytest marker `integration`, run with `INTEGRATION=1`)
+* [x] Basic live-service integration health test (`INTEGRATION=1`) plus explicit Docker smoke targets for ingest, indexing, search, outage, restore, aliases, and scaling
 * [x] Collection aliases API and Admin UI workflow for zero-downtime re-indexing (`PUT/GET/DELETE /admin/aliases`)
 * [x] Real-time metrics on Admin UI dashboard (polling `/admin/stats` and `/health`)
 * [x] Cursor-style pagination (`offset`/`limit` and `next_offset` on search)
@@ -702,6 +716,8 @@ indexingService:
 
 * [ ] Hosted CI workflow once GitHub credentials include the `workflow` scope
 * [ ] Publish benchmark results from a production-sized Kubernetes run
+* [ ] Versioned routing rollout workflow (dual-write, backfill, cutover, drain, rollback) so policy changes cannot hide historical documents
+* [ ] Optimistic concurrency/CAS for control-plane mutations plus durable reconciliation for replicas that miss Redis Pub/Sub notifications
 
 ---
 
@@ -720,10 +736,13 @@ make ci
 # Dependency audit gate (npm root, Admin UI npm, Python requirements)
 make audit
 
+# After changing Python requirements, refresh hash-verified production locks with uv
+make lock-python
+
 # Runtime smoke: Docker stack + vector collection + document read + Kafka ingest/delete + federated search + Admin UI proxy
 make smoke-docker
 
-# Partial outage smoke: stop the secondary data cluster and verify degraded readiness + partial search
+# Partial outage smoke: verify serving readiness stays true and search returns partial results
 make smoke-docker-outage
 
 # Load smoke: concurrent ingest through Kafka and indexed search convergence

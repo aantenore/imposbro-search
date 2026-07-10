@@ -1,6 +1,6 @@
 # IMPOSBRO Search – Analysis and Improvements
 
-## Current Product Verdict (2026-06-20)
+## Current Product Verdict (2026-07-10)
 
 IMPOSBRO Search is useful, but only with a clear wedge: **a Typesense-focused federation/control plane** for teams that want Typesense ergonomics while distributing data across multiple physical clusters by tenant, region, compliance boundary, or scaling domain.
 
@@ -11,6 +11,30 @@ The market already has strong alternatives:
 - **Typesense multi_search/federated search** covers searching multiple collections in one Typesense cluster/request, and Typesense HA covers node-level availability.
 
 The product is therefore not a generic “federated search” novelty. Its defensible value is narrower and real: document-level routing/fan-out, async indexing, and an admin surface around **multiple Typesense clusters** where native Typesense federation is not enough. Recommended positioning: open-source Typesense federation gateway/control plane, not an Elasticsearch/OpenSearch replacement.
+
+The repository implements that promise end to end and is an advanced MVP, not
+just an architectural demo. It should still be described as a
+**production-oriented foundation**, not enterprise-ready: routing changes lack
+a migration lifecycle, control-plane state updates lack optimistic concurrency,
+hosted CI is absent, and production-sized Kubernetes benchmark evidence has not
+been published.
+
+### July 2026 correctness and operations audit
+
+- Fixed federated deep pagination so shard requests stay within Typesense's
+  250-hit page limit; merge projections retain internal IDs/sort keys and
+  multi-search embedded errors are treated as shard failures.
+- Closed cross-tenant array writes: every tenant assigned during ingest must be
+  authorized, while read-side overlap semantics remain available for shared
+  documents.
+- Unified ingest/read/delete document ID constraints so accepted records remain
+  addressable through the gateway.
+- Split serving readiness from dependency health. Kubernetes keeps initialized
+  API pods routable during partial outages by default, with an opt-in strict
+  policy.
+- Added per-cluster HTTP/HTTPS transport configuration, fail-closed Helm
+  NetworkPolicies, workload rollout checksums, and hash-verified Python
+  production dependency locks/audits.
 
 ### Market Signals Checked
 

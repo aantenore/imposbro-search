@@ -6,7 +6,9 @@ Implements industry-standard scatter-gather search with correct deep pagination.
 """
 
 import asyncio
+import copy
 import logging
+import re
 from functools import cmp_to_key
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
 from typing import Any, Dict, List, Optional, Tuple
@@ -64,6 +66,7 @@ documents_read = Counter(
 # Configuration for deep pagination
 MAX_DEEP_PAGINATION_DOCS = 10000  # Maximum documents to fetch for deep pagination
 DEEP_PAGINATION_WARNING_PAGE = 10  # Warn user when page exceeds this
+TYPESENSE_MAX_PER_PAGE = 250
 
 
 SortField = Tuple[str, str]
@@ -186,19 +189,110 @@ def _compare_hits(left: Dict[str, Any], right: Dict[str, Any], fields: List[Sort
     return (left_id > right_id) - (left_id < right_id)
 
 
-def _build_search_params(request: SearchRequest, total_needed: int) -> Dict[str, Any]:
-    """Build the allowlisted Typesense search params for one cluster request."""
+def _split_top_level_csv(value: Optional[str]) -> List[str]:
+    """Split a Typesense field list without breaking join expressions."""
+    if not value:
+        return []
+
+    parts: List[str] = []
+    current: List[str] = []
+    depth = 0
+    for character in value:
+        if character == "(":
+            depth += 1
+        elif character == ")" and depth > 0:
+            depth -= 1
+        if character == "," and depth == 0:
+            token = "".join(current).strip()
+            if token:
+                parts.append(token)
+            current = []
+            continue
+        current.append(character)
+    token = "".join(current).strip()
+    if token:
+        parts.append(token)
+    return parts
+
+
+def _projection_plan(
+    request: SearchRequest,
+    sort_fields: List[SortField],
+) -> Tuple[Optional[str], Optional[str], List[str]]:
+    """
+    Keep merge keys in shard responses, then hide internal-only fields later.
+
+    Typesense applies include/exclude projections before returning each hit. The
+    gateway still needs the document id for deduplication and simple document
+    sort fields for a correct global order, so those fields are added only to the
+    downstream request and removed again from the public response when needed.
+    """
+    required_fields = ["id"]
+    for field, _direction in sort_fields:
+        if field in {
+            "_text_match",
+            "text_match",
+            "_vector_distance",
+            "vector_distance",
+        }:
+            continue
+        if field not in required_fields:
+            required_fields.append(field)
+
+    include_fields = _split_top_level_csv(request.include_fields)
+    exclude_fields = _split_top_level_csv(request.exclude_fields)
+    include_set = set(include_fields)
+    exclude_set = set(exclude_fields)
+    include_all = not include_fields or "*" in include_set
+    internal_only_fields: List[str] = []
+
+    for field in required_fields:
+        if (not include_all and field not in include_set) or field in exclude_set:
+            internal_only_fields.append(field)
+        if include_fields and field not in include_set:
+            include_fields.append(field)
+            include_set.add(field)
+
+    required_set = set(required_fields)
+    forwarded_exclude_fields = [
+        field for field in exclude_fields if field not in required_set
+    ]
+    forwarded_include = ",".join(include_fields) if include_fields else None
+    forwarded_exclude = (
+        ",".join(forwarded_exclude_fields) if forwarded_exclude_fields else None
+    )
+    return forwarded_include, forwarded_exclude, internal_only_fields
+
+
+def _build_search_params(
+    request: SearchRequest,
+    *,
+    page: int,
+    per_page: int,
+    forwarded_sort_by: Optional[str],
+    forwarded_include_fields: Optional[str],
+    forwarded_exclude_fields: Optional[str],
+) -> Dict[str, Any]:
+    """Build allowlisted Typesense params for one bounded shard page."""
     params: Dict[str, Any] = {
         "q": request.q,
-        "page": 1,  # Always fetch from page 1 so the gateway can merge globally.
-        "per_page": total_needed,
+        "page": page,
+        "per_page": per_page,
     }
     for param_name in OPTIONAL_TYPESENSE_SEARCH_PARAMS:
+        if param_name in {"sort_by", "include_fields", "exclude_fields"}:
+            continue
         value = getattr(request, param_name)
         if isinstance(value, str):
             value = value.strip()
         if value is not None and value != "":
             params[param_name] = value
+    if forwarded_sort_by:
+        params["sort_by"] = forwarded_sort_by
+    if forwarded_include_fields:
+        params["include_fields"] = forwarded_include_fields
+    if forwarded_exclude_fields:
+        params["exclude_fields"] = forwarded_exclude_fields
     return params
 
 
@@ -218,8 +312,87 @@ def _execute_typesense_search(
             {"searches": [{"collection": collection_name, **search_params}]}
         )
         results = result.get("results", [])
-        return results[0] if results else {"found": 0, "hits": []}
+        if not results:
+            return {"found": 0, "hits": []}
+        search_result = results[0]
+        error_code = int(search_result.get("code", 0) or 0)
+        if search_result.get("error") or error_code >= 400:
+            raise RuntimeError(
+                "Typesense multi-search shard failed: "
+                f"{search_result.get('error', f'HTTP {error_code}')}"
+            )
+        return search_result
     return client.collections[collection_name].documents.search(search_params)
+
+
+def _execute_typesense_search_window(
+    client,
+    collection_name: str,
+    request: SearchRequest,
+    total_needed: int,
+    forwarded_sort_by: Optional[str],
+    forwarded_include_fields: Optional[str],
+    forwarded_exclude_fields: Optional[str],
+) -> Dict[str, Any]:
+    """Fetch a globally mergeable window without exceeding Typesense's page cap."""
+    per_page = min(total_needed, TYPESENSE_MAX_PER_PAGE)
+    hits: List[Dict[str, Any]] = []
+    total_found: Optional[int] = None
+    page = 1
+
+    while len(hits) < total_needed:
+        search_params = _build_search_params(
+            request,
+            page=page,
+            per_page=per_page,
+            forwarded_sort_by=forwarded_sort_by,
+            forwarded_include_fields=forwarded_include_fields,
+            forwarded_exclude_fields=forwarded_exclude_fields,
+        )
+        result = _execute_typesense_search(client, collection_name, search_params)
+        if total_found is None:
+            total_found = int(result.get("found", 0) or 0)
+        page_hits = result.get("hits", []) or []
+        hits.extend(page_hits)
+
+        if (
+            not page_hits
+            or len(page_hits) < per_page
+            or len(hits) >= total_found
+        ):
+            break
+        page += 1
+
+    return {
+        "found": total_found or 0,
+        "hits": hits[:total_needed],
+    }
+
+
+def _remove_document_path(document: Dict[str, Any], path: str) -> None:
+    """Remove a possibly nested field from a copied result document."""
+    parts = path.split(".")
+    current: Any = document
+    for part in parts[:-1]:
+        if not isinstance(current, dict):
+            return
+        current = current.get(part)
+    if isinstance(current, dict):
+        current.pop(parts[-1], None)
+
+
+def _hide_internal_projection_fields(
+    hit: Dict[str, Any],
+    internal_only_fields: List[str],
+) -> Dict[str, Any]:
+    if not internal_only_fields:
+        return hit
+    projected_hit = dict(hit)
+    projected_document = copy.deepcopy(hit.get("document", {}))
+    for field in internal_only_fields:
+        _remove_document_path(projected_document, field)
+    projected_hit["document"] = projected_document
+    return projected_hit
 
 
 def _publish_ingest_document(
@@ -232,8 +405,14 @@ def _publish_ingest_document(
     request_id: str,
 ) -> Tuple[str, str]:
     doc_id = document.get("id")
-    if not doc_id:
-        raise HTTPException(status_code=400, detail="Document must have an 'id' field.")
+    if not isinstance(doc_id, str) or not re.fullmatch(DOCUMENT_ID_PATTERN, doc_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Document 'id' must be a string containing 1-256 letters, numbers, "
+                "underscore, dot, or hyphen characters."
+            ),
+        )
 
     document = authorize_ingest_document(request, collection_name, document)
     targets = federation.get_targets_for_document(collection_name, document)
@@ -279,13 +458,28 @@ async def _perform_federated_search(
         )
 
     has_vector_query = bool(request.vector_query and request.vector_query.strip())
+    forwarded_sort_by = request.sort_by
+    if not forwarded_sort_by and not has_vector_query:
+        stored_schema = getattr(federation, "collection_schemas", {}).get(
+            collection_name,
+            {},
+        )
+        default_sorting_field = stored_schema.get("default_sorting_field")
+        forwarded_sort_by = "_text_match:desc"
+        if default_sorting_field:
+            forwarded_sort_by += f",{default_sorting_field}:desc"
     try:
         sort_fields = _parse_sort_fields(
-            request.sort_by,
+            forwarded_sort_by,
             has_vector_query=has_vector_query,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    (
+        forwarded_include_fields,
+        forwarded_exclude_fields,
+        internal_only_fields,
+    ) = _projection_plan(request, sort_fields)
 
     # Cursor-style: use offset/limit when provided; otherwise page/per_page.
     use_offset = request.offset is not None and request.limit is not None
@@ -300,21 +494,26 @@ async def _perform_federated_search(
         total_needed = request.page * request.per_page
         effective_page = request.page
 
-    fetch_needed = total_needed + 1
-    if fetch_needed > MAX_DEEP_PAGINATION_DOCS:
-        fetch_needed = MAX_DEEP_PAGINATION_DOCS
-        response.headers["X-Pagination-Warning"] = (
-            f"Deep pagination capped at {MAX_DEEP_PAGINATION_DOCS} documents. "
-            "Results may be incomplete for very deep pages."
+    if total_needed > MAX_DEEP_PAGINATION_DOCS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Requested pagination window ({total_needed}) exceeds the configured "
+                f"maximum of {MAX_DEEP_PAGINATION_DOCS} documents."
+            ),
         )
 
-    if request.page > DEEP_PAGINATION_WARNING_PAGE:
+    fetch_needed = min(total_needed + 1, MAX_DEEP_PAGINATION_DOCS)
+    if fetch_needed == MAX_DEEP_PAGINATION_DOCS:
+        response.headers["X-Pagination-Warning"] = (
+            f"Deep pagination reached the {MAX_DEEP_PAGINATION_DOCS}-document window."
+        )
+
+    if effective_page > DEEP_PAGINATION_WARNING_PAGE:
         response.headers["X-Pagination-Info"] = (
-            f"Deep pagination (page {request.page}) requires fetching {fetch_needed} docs "
+            f"Deep pagination (page {effective_page}) requires fetching {fetch_needed} docs "
             f"from each of {len(named_clients)} clusters. Consider using filters to narrow results."
         )
-
-    search_params = _build_search_params(request, fetch_needed)
 
     async def search_cluster(
         cluster_name: str, client
@@ -322,10 +521,14 @@ async def _perform_federated_search(
         """Execute search on a single cluster."""
         try:
             result = await asyncio.to_thread(
-                _execute_typesense_search,
+                _execute_typesense_search_window,
                 client,
                 collection_name,
-                search_params,
+                request,
+                fetch_needed,
+                forwarded_sort_by,
+                forwarded_include_fields,
+                forwarded_exclude_fields,
             )
             return cluster_name, result, None
         except Exception as e:
@@ -378,23 +581,36 @@ async def _perform_federated_search(
     )
 
     end_idx = start_idx + page_size
-    page_hits = sorted_hits[start_idx:end_idx]
+    page_hits = [
+        _hide_internal_projection_fields(hit, internal_only_fields)
+        for hit in sorted_hits[start_idx:end_idx]
+    ]
     duplicates_seen = any(count > 1 for count in seen_hit_count_by_id.values())
-    has_more = end_idx < len(sorted_hits) or (
-        not duplicates_seen and total_found > len(sorted_hits)
-    )
-    next_offset = request.offset + request.limit if (use_offset and has_more) else None
+    has_more = end_idx < len(sorted_hits) or total_found > len(all_hits)
+    next_offset = None
+    if use_offset and has_more:
+        candidate_offset = request.offset + request.limit
+        if candidate_offset + request.limit <= MAX_DEEP_PAGINATION_DOCS:
+            next_offset = candidate_offset
     deduplicated_found = len(sorted_hits)
     found = deduplicated_found if duplicates_seen else total_found
+    if duplicates_seen:
+        found_relation = "window_lower_bound"
+    elif len(named_clients) == 1:
+        found_relation = "exact"
+    else:
+        found_relation = "upper_bound"
 
     out = {
         "found": found,
+        "found_relation": found_relation,
         "page": effective_page,
         "per_page": page_size,
         "hits": page_hits,
         "out_of": len(sorted_hits),
         "raw_found": total_found,
         "deduplicated_found": deduplicated_found,
+        "deduplicated_found_window": deduplicated_found,
         "clusters_queried": len(named_clients),
         "clusters_responded": successful_clusters,
         "failed_clusters": failed_clusters,
