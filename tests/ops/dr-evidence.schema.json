@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://imposbro.local/contracts/dr-drill-evidence-v1.schema.json",
+  "title": "IMPOSBRO isolated PostgreSQL DR drill evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "outcome",
+    "run_id",
+    "scope",
+    "timing",
+    "backup",
+    "restore",
+    "retention",
+    "cleanup",
+    "tooling",
+    "provenance",
+    "limitations"
+  ],
+  "properties": {
+    "schema": { "const": "imposbro.dr-drill-evidence.v1" },
+    "outcome": { "enum": ["passed", "failed"] },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "production_traffic",
+        "production_certification",
+        "scenario"
+      ],
+      "properties": {
+        "environment": { "const": "local-isolated-docker" },
+        "production_traffic": { "const": false },
+        "production_certification": { "const": false },
+        "scenario": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declaration_at",
+        "completed_at",
+        "backup_duration_ms",
+        "rpo",
+        "rto"
+      ],
+      "properties": {
+        "declaration_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "backup_duration_ms": { "type": "integer", "minimum": 0 },
+        "rpo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_seconds",
+            "measured_ms",
+            "passed",
+            "basis",
+            "newest_durable_change_at",
+            "known_durable_mutations_lost"
+          ],
+          "properties": {
+            "target_seconds": { "type": "integer", "minimum": 1 },
+            "measured_ms": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" },
+            "basis": { "type": "string", "minLength": 1, "maxLength": 1024 },
+            "newest_durable_change_at": { "type": "string", "format": "date-time" },
+            "known_durable_mutations_lost": { "const": 0 }
+          }
+        },
+        "rto": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target_seconds", "measured_ms", "passed", "basis"],
+          "properties": {
+            "target_seconds": { "type": "integer", "minimum": 1 },
+            "measured_ms": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "boolean" },
+            "basis": { "type": "string", "minLength": 1, "maxLength": 1024 }
+          }
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "artifact_sha256",
+        "plaintext_archive_sha256",
+        "manifest_sha256",
+        "encryption",
+        "ciphertext_rejected_as_plaintext_archive",
+        "artifact_persisted_in_repository"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9-]{16,64}$" },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "plaintext_archive_sha256": { "$ref": "#/$defs/sha256" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "encryption": { "const": "age" },
+        "ciphertext_rejected_as_plaintext_archive": { "const": true },
+        "artifact_persisted_in_repository": { "const": false }
+      }
+    },
+    "restore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_was_empty",
+        "transaction_guarded",
+        "restore_evidence_sha256",
+        "decrypted_archive_sha256",
+        "plaintext_archive_checksum_match",
+        "source_fingerprint_sha256",
+        "target_fingerprint_sha256",
+        "fingerprints_match",
+        "recovery_marker"
+      ],
+      "properties": {
+        "target_was_empty": { "const": true },
+        "transaction_guarded": { "const": true },
+        "restore_evidence_sha256": { "$ref": "#/$defs/sha256" },
+        "decrypted_archive_sha256": { "$ref": "#/$defs/sha256" },
+        "plaintext_archive_checksum_match": { "const": true },
+        "source_fingerprint_sha256": { "$ref": "#/$defs/sha256" },
+        "target_fingerprint_sha256": { "$ref": "#/$defs/sha256" },
+        "fingerprints_match": { "const": true },
+        "recovery_marker": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "schema_revision",
+            "state_digest",
+            "audit_head_sequence",
+            "audit_head_hash",
+            "audit_rows",
+            "audit_chain_digest",
+            "audit_delivery_rows",
+            "audit_delivery_digest",
+            "indexing_checkpoint_rows",
+            "indexing_checkpoint_digest",
+            "deletion_ledger_rows",
+            "deletion_ledger_digest",
+            "deletion_target_rows",
+            "deletion_target_digest",
+            "newest_durable_change_at"
+          ],
+          "properties": {
+            "schema_revision": { "const": "0003_audit_delivery_deletion" },
+            "state_digest": { "$ref": "#/$defs/sha256" },
+            "audit_head_sequence": { "type": "integer", "minimum": 2 },
+            "audit_head_hash": { "$ref": "#/$defs/sha256" },
+            "audit_rows": { "type": "integer", "minimum": 2 },
+            "audit_chain_digest": { "$ref": "#/$defs/digest128" },
+            "audit_delivery_rows": { "type": "integer", "minimum": 1 },
+            "audit_delivery_digest": { "$ref": "#/$defs/digest128" },
+            "indexing_checkpoint_rows": { "type": "integer", "minimum": 1 },
+            "indexing_checkpoint_digest": { "$ref": "#/$defs/digest128" },
+            "deletion_ledger_rows": { "type": "integer", "minimum": 1 },
+            "deletion_ledger_digest": { "$ref": "#/$defs/digest128" },
+            "deletion_target_rows": { "type": "integer", "minimum": 1 },
+            "deletion_target_digest": { "$ref": "#/$defs/digest128" },
+            "newest_durable_change_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_postgresql_executed",
+        "apply_evidence_sha256",
+        "dry_run_executed_first",
+        "before",
+        "after",
+        "deleted_control_plane_rows",
+        "deleted_indexing_rows",
+        "unpublished_rows_deleted",
+        "legal_hold_identity_rows_deleted",
+        "latest_mutations_deleted",
+        "audit_chain_touched",
+        "audit_chain_unchanged",
+        "audit_chain_rows_verified",
+        "audit_chain_cryptographically_verified_before_retention",
+        "audit_chain_cryptographically_verified_after_retention",
+        "audit_chain_cryptographically_verified_after_restore"
+      ],
+      "properties": {
+        "live_postgresql_executed": { "const": true },
+        "apply_evidence_sha256": { "$ref": "#/$defs/sha256" },
+        "dry_run_executed_first": { "const": true },
+        "before": { "$ref": "#/$defs/beforeRetention" },
+        "after": { "$ref": "#/$defs/afterRetention" },
+        "deleted_control_plane_rows": { "const": 2 },
+        "deleted_indexing_rows": { "const": 3 },
+        "unpublished_rows_deleted": { "const": 0 },
+        "legal_hold_identity_rows_deleted": { "const": 0 },
+        "latest_mutations_deleted": { "const": 0 },
+        "audit_chain_touched": { "const": false },
+        "audit_chain_unchanged": { "const": true },
+        "audit_chain_rows_verified": { "type": "integer", "minimum": 2 },
+        "audit_chain_cryptographically_verified_before_retention": { "const": true },
+        "audit_chain_cryptographically_verified_after_retention": { "const": true },
+        "audit_chain_cryptographically_verified_after_restore": { "const": true }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containers_and_volumes_destroyed",
+        "decrypted_dump_persisted",
+        "age_identity_persisted_in_repository"
+      ],
+      "properties": {
+        "containers_and_volumes_destroyed": { "const": true },
+        "decrypted_dump_persisted": { "const": false },
+        "age_identity_persisted_in_repository": { "const": false }
+      }
+    },
+    "tooling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgres", "pg_dump", "age", "docker_server"],
+      "properties": {
+        "postgres": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "pg_dump": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "age": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "docker_server": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "git_commit",
+        "dirty_worktree",
+        "evidence_contains_credentials",
+        "evidence_contains_document_payloads"
+      ],
+      "properties": {
+        "git_commit": { "type": "string", "pattern": "^(unknown|[0-9a-f]{40})$" },
+        "dirty_worktree": { "type": "boolean" },
+        "evidence_contains_credentials": { "const": false },
+        "evidence_contains_document_payloads": { "const": false }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 4,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "const": "passed" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "timing": {
+            "properties": {
+              "rpo": { "properties": { "passed": { "const": true } } },
+              "rto": { "properties": { "passed": { "const": true } } }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "digest128": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "beforeRetention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "control_rows",
+        "control_unpublished",
+        "indexing_rows",
+        "indexing_unpublished",
+        "audit_rows",
+        "audit_head_sequence",
+        "audit_head_hash",
+        "audit_chain_digest"
+      ],
+      "properties": {
+        "control_rows": { "const": 3 },
+        "control_unpublished": { "const": 0 },
+        "indexing_rows": { "const": 8 },
+        "indexing_unpublished": { "const": 1 },
+        "audit_rows": { "type": "integer", "minimum": 2 },
+        "audit_head_sequence": { "type": "integer", "minimum": 2 },
+        "audit_head_hash": { "$ref": "#/$defs/sha256" },
+        "audit_chain_digest": { "$ref": "#/$defs/digest128" }
+      }
+    },
+    "afterRetention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "control_rows",
+        "control_latest_revision",
+        "indexing_rows",
+        "indexing_unpublished",
+        "held_identity_rows",
+        "heads_with_latest_mutation",
+        "audit_rows",
+        "audit_head_sequence",
+        "audit_head_hash",
+        "audit_chain_digest",
+        "all_invariants_pass"
+      ],
+      "properties": {
+        "control_rows": { "const": 1 },
+        "control_latest_revision": { "const": 3 },
+        "indexing_rows": { "const": 5 },
+        "indexing_unpublished": { "const": 1 },
+        "held_identity_rows": { "const": 3 },
+        "heads_with_latest_mutation": { "const": 3 },
+        "audit_rows": { "type": "integer", "minimum": 2 },
+        "audit_head_sequence": { "type": "integer", "minimum": 2 },
+        "audit_head_hash": { "$ref": "#/$defs/sha256" },
+        "audit_chain_digest": { "$ref": "#/$defs/digest128" },
+        "all_invariants_pass": { "const": true }
+      }
+    }
+  }
+}

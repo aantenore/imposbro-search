@@ -1,0 +1,9 @@
+# Ownership is effective only after branch protection requires code-owner review.
+/.github/ @aantenore
+/scripts/ci/ @aantenore
+/query_api/requirements*.txt @aantenore
+/query_api/requirements.lock @aantenore
+/indexing_service/requirements*.txt @aantenore
+/indexing_service/requirements.lock @aantenore
+/admin_ui/package.json @aantenore
+/admin_ui/package-lock.json @aantenore

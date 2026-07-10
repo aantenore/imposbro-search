@@ -1,0 +1,10 @@
+misconfigurations:
+  - id: KSV-0109
+    paths:
+      - helm/templates/configmap.yaml
+    expired_at: 2027-07-10
+    statement: >-
+      Trivy classifies an OIDC URL, a boolean bypass policy, and a
+      secret-directory path as secrets. The dedicated Helm contract proves
+      every credential key is absent from this ConfigMap and sourced only from
+      Secret or ExternalSecret resources.

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://imposbro.dev/schemas/kind-enterprise-smoke-evidence-v1.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidence_type",
+    "production_certification",
+    "status",
+    "run",
+    "environment",
+    "required_assertions",
+    "assertions",
+    "cleanup"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "evidence_type": {"const": "kind-enterprise-smoke"},
+    "production_certification": {"const": false},
+    "status": {"enum": ["running", "passed", "failed", "incomplete"]},
+    "run": {
+      "type": "object",
+      "required": ["id", "started_at", "finished_at", "git"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "started_at": {"type": "string", "format": "date-time"},
+        "finished_at": {"type": ["string", "null"]},
+        "git": {
+          "type": "object",
+          "required": ["commit", "dirty"],
+          "properties": {
+            "commit": {"type": "string", "minLength": 1},
+            "dirty": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["cluster_name", "namespace", "node_image", "tools"],
+      "properties": {
+        "cluster_name": {"type": "string", "minLength": 1},
+        "namespace": {"type": "string", "minLength": 1},
+        "node_image": {"type": "string", "pattern": "@sha256:[a-f0-9]{64}$"},
+        "tools": {"type": "object", "additionalProperties": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "assertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "duration_seconds", "evidence"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+          "status": {"enum": ["passed", "failed", "not_run"]},
+          "duration_seconds": {"type": "number", "minimum": 0},
+          "evidence": {"type": "string", "maxLength": 1000}
+        },
+        "additionalProperties": false
+      }
+    },
+    "required_assertions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}
+    },
+    "cleanup": {
+      "type": "object",
+      "required": ["status", "cluster_deleted", "registry_deleted", "network_deleted"],
+      "properties": {
+        "status": {"enum": ["pending", "completed", "retained", "failed"]},
+        "cluster_deleted": {"type": "boolean"},
+        "registry_deleted": {"type": "boolean"},
+        "network_deleted": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

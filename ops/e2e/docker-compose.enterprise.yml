@@ -1,0 +1,410 @@
+name: ${E2E_COMPOSE_PROJECT_NAME:-imposbro-enterprise-e2e}
+
+x-query-image: &query-image
+  image: ${E2E_QUERY_IMAGE:-imposbro-query-enterprise-e2e:local}
+  build:
+    context: ../../query_api
+
+x-query-environment: &query-environment
+  DEPLOYMENT_PROFILE: development
+  CONTROL_PLANE_STORE_BACKEND: postgres
+  CONTROL_PLANE_DATABASE_URL: postgresql+psycopg://imposbro:${E2E_POSTGRES_PASSWORD:?E2E_POSTGRES_PASSWORD is required}@postgres:5432/imposbro
+  CONTROL_PLANE_RECONCILE_SECONDS: "1"
+  INDEXING_EVENT_STORE_BACKEND: postgres
+  INDEXING_OUTBOX_POLL_SECONDS: "0.25"
+  INDEXING_OUTBOX_BATCH_SIZE: "100"
+  KAFKA_BROKER_URL: kafka:29092
+  KAFKA_TOPIC_PREFIX: imposbro_e2e
+  KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+  # Routing cutover gates must inspect the exact consumer group that applies
+  # the events. A different default deterministically reports stale lag.
+  INDEXING_KAFKA_CONSUMER_GROUP_ID: imposbro-enterprise-e2e
+  INDEXING_KAFKA_DLQ_GROUP_ID: imposbro-enterprise-e2e-dlq-resolver
+  REDIS_URL: redis://redis:6379/0
+  INTERNAL_STATE_NODES: typesense-a
+  INTERNAL_STATE_API_KEY_REF: file:typesense-api-key
+  INTERNAL_STATE_PROTOCOL: http
+  DEFAULT_DATA_CLUSTER_NODES: typesense-a
+  DEFAULT_DATA_CLUSTER_API_KEY_REF: file:typesense-api-key
+  DEFAULT_DATA_CLUSTER_PROTOCOL: http
+  DEFAULT_DATA2_CLUSTER_NODES: typesense-b
+  DEFAULT_DATA2_CLUSTER_API_KEY_REF: env:E2E_TYPESENSE_ENV_KEY
+  DEFAULT_DATA2_CLUSTER_PROTOCOL: http
+  TYPESENSE_SECRET_FILE_ROOT: /runtime-secrets
+  E2E_TYPESENSE_ENV_KEY: ${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required}
+  INTERNAL_QUERY_API_URL: http://query-a:8000
+  ADMIN_API_KEY: ${E2E_ADMIN_API_KEY:?E2E_ADMIN_API_KEY is required}
+  DATA_API_KEY: ${E2E_DATA_API_KEY:?E2E_DATA_API_KEY is required}
+  ALLOW_UNAUTHENTICATED_ADMIN: "false"
+  ALLOW_UNAUTHENTICATED_DATA: "false"
+  OIDC_ENABLED: "true"
+  OIDC_ISSUER: https://e2e-issuer.imposbro.local
+  OIDC_AUDIENCE: imposbro-enterprise-e2e
+  OIDC_JWKS_URL: https://otel-capture:4318/jwks
+  OIDC_ALGORITHMS: RS256
+  AUTHZ_API_KEY_TENANT_BYPASS: "true"
+  AUTHZ_REQUIRE_COLLECTION_POLICY: "true"
+  AUTHZ_COLLECTION_POLICIES: '{"collections":{"e2e_*":{"mode":"required","tenant_field":"tenant_id","tenant_claim":"tenant_id"}}}'
+  SSL_CERT_FILE: /tls/ca.crt
+  READINESS_POLICY: serving
+  QUERY_API_HEALTH_CACHE_TTL_SECONDS: "0.25"
+  QUERY_API_HEALTH_CHECK_BUDGET_SECONDS: "5"
+  QUERY_API_HEALTH_DEPENDENCY_TIMEOUT_SECONDS: "2"
+  QUERY_API_HEALTH_MAX_WORKERS: "8"
+  OTEL_SDK_DISABLED: "false"
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-capture:4318
+  OTEL_EXPORTER_OTLP_CERTIFICATE: /tls/ca.crt
+  OTEL_EXPORTER_OTLP_TIMEOUT: "3000"
+  OTEL_BSP_SCHEDULE_DELAY: "100"
+  OTEL_BSP_EXPORT_TIMEOUT: "3000"
+  OTEL_BSP_MAX_QUEUE_SIZE: "256"
+  OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "64"
+  OTEL_TRACES_SAMPLER: parentbased_always_on
+  OTEL_SERVICE_NAME: imposbro-query-api
+  OTEL_SERVICE_VERSION: enterprise-e2e
+  OTEL_DEPLOYMENT_ENVIRONMENT: enterprise-e2e
+  OTEL_BUILD_ID: enterprise-e2e-build
+  OTEL_SERVICE_REVISION: enterprise-e2e-revision
+
+services:
+  postgres:
+    image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
+    environment:
+      POSTGRES_DB: imposbro
+      POSTGRES_USER: imposbro
+      POSTGRES_PASSWORD: ${E2E_POSTGRES_PASSWORD:?E2E_POSTGRES_PASSWORD is required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imposbro -d imposbro"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  kafka:
+    image: bitnamilegacy/kafka:4.0.0@sha256:f45d5b813412e1ef7ce67b467309a84e4c6dc03d7626a0b6da867db9b69bd107
+    environment:
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+  typesense-a:
+    image: typesense/typesense:0.25.2@sha256:1ddbb28a52b0b8be31237ec718df1c9bc895c5626b26c10fa3f340f684e81488
+    command: --data-dir=/data --api-key=${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required} --enable-cors=false
+    volumes:
+      - typesense-a-data:/data
+    restart: unless-stopped
+
+  typesense-b:
+    image: typesense/typesense:0.25.2@sha256:1ddbb28a52b0b8be31237ec718df1c9bc895c5626b26c10fa3f340f684e81488
+    command: --data-dir=/data --api-key=${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required} --enable-cors=false
+    volumes:
+      - typesense-b-data:/data
+    restart: unless-stopped
+
+  migrate:
+    <<: *query-image
+    command: ["python", "-m", "control_plane.migrate", "upgrade", "head"]
+    environment:
+      CONTROL_PLANE_DATABASE_URL: postgresql+psycopg://imposbro:${E2E_POSTGRES_PASSWORD:?E2E_POSTGRES_PASSWORD is required}@postgres:5432/imposbro
+      CONTROL_PLANE_MIGRATION_LOCK_TIMEOUT_SECONDS: "60"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  runtime-secret-init:
+    <<: *query-image
+    user: "0:0"
+    entrypoint: ["python", "/enterprise/write_runtime_secret.py"]
+    environment:
+      E2E_RUNTIME_SECRET_FILE: /runtime-secrets/typesense-api-key
+      E2E_RUNTIME_SECRET_VALUE: ${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required}
+      E2E_RUNTIME_SECRET_WRITER_UID: ${E2E_HOST_UID:-10001}
+      E2E_RUNTIME_SECRET_WRITER_GID: ${E2E_HOST_GID:-10001}
+    volumes:
+      - ../../tests/enterprise:/enterprise:ro
+      - runtime-secrets:/runtime-secrets
+    restart: "no"
+
+  query-a:
+    <<: *query-image
+    environment:
+      <<: *query-environment
+      CONFIG_SYNC_SOURCE_ID: query-a
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      typesense-a:
+        condition: service_started
+      typesense-b:
+        condition: service_started
+      otel-capture:
+        condition: service_healthy
+      runtime-secret-init:
+        condition: service_completed_successfully
+    volumes:
+      - tls-material:/tls:ro
+      - runtime-secrets:/runtime-secrets:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 50
+    restart: unless-stopped
+
+  query-b:
+    <<: *query-image
+    environment:
+      <<: *query-environment
+      CONFIG_SYNC_SOURCE_ID: query-b
+    depends_on:
+      query-a:
+        condition: service_healthy
+    volumes:
+      - tls-material:/tls:ro
+      - runtime-secrets:/runtime-secrets:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 50
+    restart: unless-stopped
+
+  indexing-service:
+    image: ${E2E_INDEXING_IMAGE:-imposbro-indexing-enterprise-e2e:local}
+    build:
+      context: ../../indexing_service
+    environment:
+      # Keep the executable profile aligned with query-a/query-b. This local
+      # harness exercises enterprise failure/recovery semantics but is not a
+      # production transport/observability certification environment.
+      DEPLOYMENT_PROFILE: development
+      INDEXING_CHECKPOINT_BACKEND: postgres
+      CONTROL_PLANE_DATABASE_URL: postgresql+psycopg://imposbro:${E2E_POSTGRES_PASSWORD:?E2E_POSTGRES_PASSWORD is required}@postgres:5432/imposbro
+      INTERNAL_QUERY_API_URL: http://query-a:8000
+      INTERNAL_QUERY_API_ADMIN_API_KEY: ${E2E_ADMIN_API_KEY:?E2E_ADMIN_API_KEY is required}
+      KAFKA_BROKER_URL: kafka:29092
+      KAFKA_TOPIC_PREFIX: imposbro_e2e
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+      INDEXING_KAFKA_CONSUMER_GROUP_ID: imposbro-enterprise-e2e
+      INDEXING_KAFKA_CONSUMER_CLIENT_ID: imposbro-enterprise-e2e-worker
+      INDEXING_KAFKA_DLQ_CLIENT_ID: imposbro-enterprise-e2e-dlq
+      INDEXING_ALLOW_LEGACY_EVENTS: "false"
+      INDEXING_IDEMPOTENCY_BACKEND: typesense
+      INDEXING_ALLOW_VOLATILE_CHECKPOINTS: "false"
+      INDEXING_CHECKPOINT_COLLECTION: _imposbro_indexing_checkpoints
+      INDEXING_MAX_PROCESSING_ATTEMPTS: "3"
+      KAFKA_METADATA_MAX_AGE_MS: "1000"
+      KAFKA_MAX_POLL_RECORDS: "1"
+      INDEXING_METRICS_ENABLED: "false"
+      INDEXING_HEALTH_PORT: "9109"
+      OTEL_SDK_DISABLED: "false"
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-capture:4318
+      OTEL_EXPORTER_OTLP_CERTIFICATE: /tls/ca.crt
+      OTEL_EXPORTER_OTLP_TIMEOUT: "3000"
+      OTEL_BSP_SCHEDULE_DELAY: "100"
+      OTEL_BSP_EXPORT_TIMEOUT: "3000"
+      OTEL_BSP_MAX_QUEUE_SIZE: "256"
+      OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "64"
+      OTEL_TRACES_SAMPLER: parentbased_always_on
+      OTEL_SERVICE_NAME: imposbro-indexing-service
+      OTEL_SERVICE_VERSION: enterprise-e2e
+      OTEL_DEPLOYMENT_ENVIRONMENT: enterprise-e2e
+      OTEL_BUILD_ID: enterprise-e2e-build
+      OTEL_SERVICE_REVISION: enterprise-e2e-revision
+    depends_on:
+      query-a:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      otel-capture:
+        condition: service_healthy
+    volumes:
+      - tls-material:/tls:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9109/ready', timeout=3).read()",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 50
+    restart: unless-stopped
+
+  tls-init:
+    <<: *query-image
+    user: "0:0"
+    entrypoint: ["python", "/enterprise/generate_tls_material.py"]
+    environment:
+      E2E_TLS_OUTPUT_DIR: /tls
+      E2E_TLS_READER_UID: ${E2E_HOST_UID:-10001}
+      E2E_TLS_READER_GID: ${E2E_HOST_GID:-10001}
+    volumes:
+      - ../../tests/enterprise:/enterprise:ro
+      - tls-material:/tls
+    restart: "no"
+
+  otel-capture:
+    <<: *query-image
+    user: "0:0"
+    entrypoint: ["python", "/enterprise/otlp_capture.py"]
+    environment:
+      E2E_OTLP_CERT_FILE: /tls/server.crt
+      E2E_OTLP_KEY_FILE: /tls/server.key
+      E2E_OTLP_PORT: "4318"
+      E2E_OIDC_JWKS_FILE: /tls/oidc-jwks.json
+    volumes:
+      - ../../tests/enterprise:/enterprise:ro
+      - tls-material:/tls:ro
+    depends_on:
+      tls-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import ssl,urllib.request; c=ssl.create_default_context(cafile='/tls/ca.crt'); urllib.request.urlopen('https://otel-capture:4318/health', context=c, timeout=3).read()",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+  typesense-tls:
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    volumes:
+      - ./typesense-tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - tls-material:/tls:ro
+    depends_on:
+      tls-init:
+        condition: service_completed_successfully
+      typesense-a:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-check-certificate -qO- https://127.0.0.1:8443/health | grep -q true",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+  enterprise-tests:
+    <<: *query-image
+    profiles: [tools]
+    user: ${E2E_HOST_UID:-10001}:${E2E_HOST_GID:-10001}
+    entrypoint: ["python", "/enterprise/run_live.py"]
+    environment:
+      PYTHONPATH: /app/app:/app:/worker
+      E2E_RUN_ID: ${E2E_RUN_ID:?E2E_RUN_ID is required}
+      E2E_QUERY_API_ROOT: /app
+      E2E_POSTGRES_URL: postgresql+psycopg://imposbro:${E2E_POSTGRES_PASSWORD:?E2E_POSTGRES_PASSWORD is required}@postgres:5432/imposbro
+      E2E_REDIS_PROBE_URL: redis://redis:6379/0
+      E2E_QUERY_A_URL: http://query-a:8000
+      E2E_QUERY_B_URL: http://query-b:8000
+      E2E_WORKER_HEALTH_URL: http://indexing-service:9109
+      E2E_TYPESENSE_A_URL: http://typesense-a:8108
+      E2E_TYPESENSE_B_URL: http://typesense-b:8108
+      E2E_TYPESENSE_API_KEY: ${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required}
+      E2E_TYPESENSE_A_API_KEY: ${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required}
+      E2E_TYPESENSE_B_API_KEY: ${E2E_TYPESENSE_API_KEY:?E2E_TYPESENSE_API_KEY is required}
+      E2E_ADMIN_API_KEY: ${E2E_ADMIN_API_KEY:?E2E_ADMIN_API_KEY is required}
+      E2E_DATA_API_KEY: ${E2E_DATA_API_KEY:?E2E_DATA_API_KEY is required}
+      E2E_TLS_TYPESENSE_URL: https://typesense-tls:8443
+      E2E_TLS_CA_FILE: /tls/ca.crt
+      E2E_OTLP_CAPTURE_URL: https://otel-capture:4318
+      E2E_OTLP_CA_FILE: /tls/ca.crt
+      E2E_OIDC_PRIVATE_KEY_FILE: /tls/oidc-private.pem
+      E2E_OIDC_JWKS_FILE: /tls/oidc-jwks.json
+      E2E_OIDC_ISSUER: https://e2e-issuer.imposbro.local
+      E2E_OIDC_AUDIENCE: imposbro-enterprise-e2e
+      E2E_TYPESENSE_SECRET_FILE: /runtime-secrets/typesense-api-key
+      E2E_SECRET_LOG_BASENAME: ${E2E_SECRET_LOG_BASENAME:?E2E_SECRET_LOG_BASENAME is required}
+      E2E_TIMEOUT_SECONDS: ${E2E_TIMEOUT_SECONDS:-120}
+      E2E_GIT_COMMIT: ${E2E_GIT_COMMIT:-unknown}
+      E2E_GIT_DIRTY: ${E2E_GIT_DIRTY:-unknown}
+    volumes:
+      - ../../tests/enterprise:/enterprise:ro
+      - ../../indexing_service/app:/worker:ro
+      - ../../docs/evidence:/evidence
+      - tls-material:/tls:ro
+      - runtime-secrets:/runtime-secrets
+    depends_on:
+      query-a:
+        condition: service_healthy
+      query-b:
+        condition: service_healthy
+      indexing-service:
+        condition: service_healthy
+      otel-capture:
+        condition: service_healthy
+      typesense-tls:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  typesense-a-data:
+  typesense-b-data:
+  tls-material:
+  runtime-secrets:

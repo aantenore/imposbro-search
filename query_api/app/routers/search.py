@@ -9,6 +9,8 @@ import asyncio
 import copy
 import logging
 import re
+import time
+import uuid
 from functools import cmp_to_key
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,11 +18,14 @@ from pydantic import ValidationError
 from prometheus_client import Counter
 import typesense
 
+from indexing_events import IdempotencyConflictError
+
 from auth import (
     authorize_delete_filter,
     authorize_ingest_document,
     authorize_search_request,
     can_read_document,
+    event_tenant_identity,
 )
 from constants import DOCUMENT_ID_PATTERN, NAME_PATTERN
 from deps import (
@@ -36,9 +41,10 @@ from models import (
     DeleteDocumentResponse,
     DocumentResponse,
     IngestResponse,
+    IngestEventMetadata,
     SearchRequest,
 )
-from observability import get_request_id
+from observability import get_request_id, get_traceparent
 from services import FederationService, KafkaService
 from settings import settings
 
@@ -403,6 +409,7 @@ def _publish_ingest_document(
     federation: FederationService,
     kafka: KafkaService,
     request_id: str,
+    event_metadata: Optional[IngestEventMetadata] = None,
 ) -> Tuple[str, str]:
     doc_id = document.get("id")
     if not isinstance(doc_id, str) or not re.fullmatch(DOCUMENT_ID_PATTERN, doc_id):
@@ -415,7 +422,15 @@ def _publish_ingest_document(
         )
 
     document = authorize_ingest_document(request, collection_name, document)
-    targets = federation.get_targets_for_document(collection_name, document)
+    if isinstance(federation, FederationService):
+        targets, routing_revision, rollout_id = federation.get_indexing_route(
+            collection_name,
+            document,
+        )
+    else:
+        targets = federation.get_targets_for_document(collection_name, document)
+        routing_revision = int(getattr(federation, "applied_revision", 0) or 0)
+        rollout_id = None
     if not targets:
         raise HTTPException(
             status_code=503,
@@ -425,16 +440,106 @@ def _publish_ingest_document(
             ),
         )
 
-    for _client, target_cluster_name in targets:
-        kafka.publish_document(
-            collection_name=collection_name,
-            document=document,
-            target_cluster=target_cluster_name,
-            request_id=request_id,
-        )
+    document_version, sequence, idempotency_key = _indexing_event_metadata(
+        request,
+        event_metadata,
+        durable=isinstance(kafka, KafkaService) and kafka.durable_events,
+    )
+    kafka.publish_document(
+        collection_name=collection_name,
+        document=document,
+        target_clusters=[name for _, name in targets],
+        tenant_id=event_tenant_identity(
+            request,
+            collection_name,
+            document,
+        ),
+        document_version=document_version,
+        sequence=sequence,
+        routing_revision=max(1, routing_revision),
+        rollout_id=rollout_id,
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        traceparent=get_traceparent(request),
+    )
     routed_to = ",".join(name for _, name in targets)
     documents_ingested.labels(collection=collection_name).inc()
     return str(doc_id), routed_to
+
+
+def _positive_event_integer(raw_value: Any, field_name: str) -> int:
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be a positive integer",
+        ) from exc
+    if value < 1 or value > (1 << 63) - 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be an integer between 1 and INT64_MAX",
+        )
+    return value
+
+
+def _indexing_event_metadata(
+    request: Request,
+    supplied: Optional[IngestEventMetadata] = None,
+    *,
+    durable: bool = False,
+) -> Tuple[int, int, str]:
+    """Resolve caller-owned ordering metadata, failing closed in enterprise."""
+    raw_version = (
+        supplied.document_version
+        if supplied is not None
+        else request.headers.get(settings.DOCUMENT_VERSION_HEADER)
+    )
+    raw_sequence = (
+        supplied.sequence
+        if supplied is not None
+        else request.headers.get(settings.EVENT_SEQUENCE_HEADER)
+    )
+    idempotency_key = (
+        supplied.idempotency_key
+        if supplied is not None
+        else request.headers.get(settings.IDEMPOTENCY_KEY_HEADER, "").strip()
+    )
+    if raw_version in (None, ""):
+        if settings.DEPLOYMENT_PROFILE == "enterprise" and not durable:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "document_version_required",
+                    "header": settings.DOCUMENT_VERSION_HEADER,
+                },
+            )
+        raw_version = 1 if durable else time.time_ns()
+    version = _positive_event_integer(raw_version, "document_version")
+    sequence = _positive_event_integer(
+        raw_sequence if raw_sequence not in (None, "") else version,
+        "sequence",
+    )
+    if not idempotency_key:
+        if settings.DEPLOYMENT_PROFILE == "enterprise":
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "code": "idempotency_key_required",
+                    "header": settings.IDEMPOTENCY_KEY_HEADER,
+                },
+            )
+        idempotency_key = uuid.uuid4().hex
+    if (
+        len(idempotency_key) < 8
+        or len(idempotency_key) > 256
+        or any(ord(character) < 32 for character in idempotency_key)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Idempotency-Key must contain 8-256 printable characters",
+        )
+    return version, sequence, idempotency_key
 
 
 async def _perform_federated_search(
@@ -669,6 +774,11 @@ def ingest_document(
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
+        if isinstance(e, IdempotencyConflictError):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "idempotency_key_conflict", "message": str(e)},
+            ) from e
         logger.error(
             "Failed to publish document to Kafka request_id=%s: %s",
             request_id,
@@ -697,8 +807,8 @@ def ingest_documents_batch(
     """
     Ingest multiple documents through the same routing and Kafka path as single ingest.
 
-    Kafka messages stay atomic: each accepted document-target pair is published
-    as the existing single-document event consumed by the indexing worker.
+    Each accepted document becomes one versioned logical event carrying every
+    physical target; per-target worker checkpoints make fan-out retries resumable.
     """
     requested = len(payload.documents)
     if requested > settings.INGEST_BATCH_MAX_DOCUMENTS:
@@ -723,6 +833,7 @@ def ingest_documents_batch(
                 federation=federation,
                 kafka=kafka,
                 request_id=request_id,
+                event_metadata=payload.event_metadata.get(str(document_id)),
             )
             accepted += 1
             items.append(
@@ -754,7 +865,11 @@ def ingest_documents_batch(
                     index=index,
                     document_id=str(document_id) if document_id is not None else None,
                     status="rejected",
-                    error=f"Kafka producer error: {str(exc)}",
+                    error=(
+                        f"Idempotency conflict: {exc}"
+                        if isinstance(exc, IdempotencyConflictError)
+                        else f"Kafka producer error: {str(exc)}"
+                    ),
                 )
             )
 
@@ -872,7 +987,14 @@ def delete_document(
     Deletion is asynchronous and idempotent. The indexing worker treats missing
     documents as successful no-ops so clients can safely retry requests.
     """
-    targets = federation.get_named_clients_for_delete(collection_name)
+    if isinstance(federation, FederationService):
+        targets, routing_revision, rollout_id = federation.get_delete_route(
+            collection_name
+        )
+    else:
+        targets = federation.get_named_clients_for_delete(collection_name)
+        routing_revision = int(getattr(federation, "applied_revision", 0) or 0)
+        rollout_id = None
     if not targets:
         raise HTTPException(
             status_code=503,
@@ -884,15 +1006,25 @@ def delete_document(
 
     request_id = get_request_id(request)
     filter_by = authorize_delete_filter(request, collection_name, document_id)
+    document_version, sequence, idempotency_key = _indexing_event_metadata(
+        request,
+        durable=isinstance(kafka, KafkaService) and kafka.durable_events,
+    )
     try:
-        for target_cluster_name, _client in targets:
-            kafka.publish_delete_document(
-                collection_name=collection_name,
-                document_id=document_id,
-                target_cluster=target_cluster_name,
-                request_id=request_id,
-                filter_by=filter_by,
-            )
+        kafka.publish_delete_document(
+            collection_name=collection_name,
+            document_id=document_id,
+            target_clusters=[name for name, _ in targets],
+            tenant_id=event_tenant_identity(request, collection_name),
+            document_version=document_version,
+            sequence=sequence,
+            routing_revision=max(1, routing_revision),
+            rollout_id=rollout_id,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            traceparent=get_traceparent(request),
+            filter_by=filter_by,
+        )
         routed_to = ",".join(name for name, _ in targets)
         documents_deleted.labels(collection=collection_name).inc()
         return DeleteDocumentResponse(
@@ -901,6 +1033,11 @@ def delete_document(
             routed_to=routed_to,
         )
     except Exception as e:
+        if isinstance(e, IdempotencyConflictError):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "idempotency_key_conflict", "message": str(e)},
+            ) from e
         logger.error(
             "Failed to publish document delete to Kafka request_id=%s: %s",
             request_id,

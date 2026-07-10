@@ -1,0 +1,5 @@
+enterprise-e2e-*.json
+dr-*.json
+dr-*.json.sha256
+kind-enterprise-*.json
+kind-enterprise-*.md

@@ -4,10 +4,18 @@ This runbook is for operating IMPOSBRO Search with multiple Query API and indexi
 
 ## Scaling Model
 
-- Query API is stateless except for shared control-plane state in the internal Typesense cluster and Redis config-sync notifications.
-- Indexing workers share the Kafka consumer group `imposbro_federated_indexing_group`; Kafka partitions bound useful worker parallelism.
-- Typesense state and data clusters are stateful dependencies. Scale them with their own operator/chart/runbook, not by scaling the IMPOSBRO app deployments.
-- Admin UI can scale horizontally, but only behind an authenticated ingress/gateway when it proxies privileged credentials.
+- Query API replicas share revisioned PostgreSQL control-plane/event state;
+  Redis notifications accelerate convergence but the durable revision poll is
+  authoritative.
+- Indexing workers share a Kafka consumer group and fenced PostgreSQL
+  checkpoints; Kafka partitions bound useful worker parallelism.
+- PostgreSQL, Kafka, Redis, and Typesense data clusters are stateful
+  dependencies. Scale them with their own operator/chart/runbook, not by
+  scaling the IMPOSBRO app deployments. Internal Typesense state is legacy
+  migration input only in enterprise deployments.
+- Admin UI can scale horizontally behind an authenticated TLS ingress. Its
+  browser OIDC session is sealed independently per request; enterprise mode
+  forbids server-held Query API key injection.
 
 ## Precheck
 
@@ -214,4 +222,6 @@ If indexing workers restart during a burst, Kafka lag may rise temporarily. It m
   pod routable so partial search can continue.
 - Search partial: inspect `failed_clusters` in the response and Typesense node health.
 - Lag growing: inspect worker logs, retries, DLQ, Kafka topic partitions, and Typesense write errors.
-- Admin config diverged: run state export, compare snapshots, and use restore/reconcile workflows.
+- Admin config diverged: compare authoritative/applied revisions, inspect the
+  control-plane outbox and polling loop, then follow the configuration
+  convergence runbook. Freeze mutations before any guarded restore.

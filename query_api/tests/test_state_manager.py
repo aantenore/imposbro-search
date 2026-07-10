@@ -16,6 +16,8 @@ from services.state_manager import (
     AUDIT_COLLECTION_NAME,
     STATE_DOCUMENT_ID,
 )
+from control_plane import AuditEvent, InMemoryControlPlaneStore, StateConflictError
+from secret_resolver import EnvSecretProvider, SecretResolutionError, SecretResolver
 
 
 class FakeDocuments:
@@ -195,3 +197,124 @@ def test_state_snapshot_round_trips_collection_schemas_and_aliases():
     assert collection_aliases == {
         "cluster-a": {"products_live": {"collection_name": "products"}}
     }
+
+
+def test_transactional_state_manager_commits_revision_audit_and_outbox_together():
+    store = InMemoryControlPlaneStore()
+    manager = StateManager(store=store)
+
+    saved = manager.save_state(
+        {"cluster-a": {"host": "a", "api_key": "development-key"}},
+        {"products": {"rules": [], "default_cluster": "cluster-a"}},
+        audit=AuditEvent(
+            actor="oidc:test",
+            action="routing_updated",
+            resource_type="routing_rule",
+            resource_id="products",
+            request_id="request-1",
+        ),
+        event_type="routing.updated",
+        event_payload={"collection": "products"},
+    )
+
+    assert saved is True
+    assert manager.current_revision == 1
+    assert manager.authoritative_revision() == 1
+    assert store.list_audit()[0]["request_id"] == "request-1"
+    assert store.list_outbox()[0].payload["collection"] == "products"
+    clusters, routing, schemas, aliases = manager.load_state()
+    assert clusters == {
+        "cluster-a": {"host": "a", "api_key": "development-key"}
+    }
+    assert "products" in routing
+    assert schemas == {}
+    assert aliases == {}
+
+
+def test_transactional_state_manager_propagates_stale_writer_conflict():
+    store = InMemoryControlPlaneStore()
+    first = StateManager(store=store)
+    stale = StateManager(store=store)
+    audit = AuditEvent(
+        actor="oidc:test",
+        action="state_updated",
+        resource_type="control_plane_state",
+        resource_id="current",
+    )
+
+    assert first.save_state({}, {}, audit=audit)
+    with pytest.raises(StateConflictError) as exc_info:
+        stale.save_state(
+            {"cluster-b": {"host": "b", "api_key": "development-key"}},
+            {},
+            audit=audit,
+        )
+
+    assert exc_info.value.expected_revision == 0
+    assert exc_info.value.actual_revision == 1
+    assert store.load().state["federation_clusters_config"] == {}
+
+
+def test_transactional_state_manager_round_trips_rollouts_and_appends_audit():
+    store = InMemoryControlPlaneStore()
+    manager = StateManager(store=store)
+    rollouts = {
+        "rollout-1": {
+            "rollout_id": "rollout-1",
+            "collection": "products",
+            "phase": "draft",
+        }
+    }
+    assert manager.save_state({}, {}, routing_rollouts=rollouts)
+    manager.load_state()
+
+    assert manager.routing_rollouts == rollouts
+    assert manager.record_admin_audit(
+        actor="oidc:test",
+        action="state_read",
+        resource_type="control_plane_state",
+        resource_id="current",
+    ) is True
+    assert store.list_audit(limit=2)[0]["action"] == "state_read"
+
+
+def test_enterprise_state_persists_reference_and_rejects_inline_secret():
+    store = InMemoryControlPlaneStore()
+    resolver = SecretResolver(
+        {"env": EnvSecretProvider({"DATA_CLUSTER_KEY": "raw-value"})}
+    )
+    manager = StateManager(
+        store=store,
+        secret_resolver=resolver,
+        allow_inline_cluster_secrets=False,
+    )
+    audit = AuditEvent(
+        actor="oidc:test",
+        action="cluster_registered",
+        resource_type="cluster",
+        resource_id="cluster-a",
+    )
+
+    assert manager.save_state(
+        {
+            "cluster-a": {
+                "host": "node-a",
+                "api_key_ref": "env:DATA_CLUSTER_KEY",
+            }
+        },
+        {},
+        audit=audit,
+    )
+    persisted = store.load().state
+    assert persisted["federation_clusters_config"]["cluster-a"] == {
+        "host": "node-a",
+        "api_key_ref": "env:DATA_CLUSTER_KEY",
+    }
+    assert "raw-value" not in json.dumps(persisted)
+
+    with pytest.raises(SecretResolutionError, match="development"):
+        manager.save_state(
+            {"cluster-b": {"host": "node-b", "api_key": "raw-value"}},
+            {},
+            audit=audit,
+        )

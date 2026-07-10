@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Dict, List, Literal, Optional
 
 from constants import DOCUMENT_ID_PATTERN, NAME_PATTERN, TYPESENSE_DEFAULT_PORT
+from domain.routing_rollout import RolloutPhase
 
 try:
     from typing import Self, Annotated
@@ -43,13 +44,14 @@ DEFAULT_SORTING_TYPES = {"int32", "int64", "float"}
 class Cluster(BaseModel):
     """
     Represents a Typesense cluster configuration.
-    
+
     Attributes:
         name: Unique identifier for the cluster (e.g., 'cluster-us', 'cluster-eu')
         protocol: HTTP transport used to reach every node in the cluster
         host: Hostname or IP address of the cluster
         port: Port number (default: 8108 for Typesense)
-        api_key: Authentication key for the cluster
+        api_key_ref: Runtime secret reference used outside development
+        api_key: Inline development-only authentication key
     """
     name: str = Field(
         ...,
@@ -67,13 +69,29 @@ class Cluster(BaseModel):
         le=65535,
         description="Cluster port",
     )
-    api_key: str = Field(..., description="Cluster API key")
+    api_key_ref: str = Field(
+        default="",
+        min_length=1,
+        max_length=1024,
+        description="Runtime secret reference (for example file:data-primary)",
+    )
+    api_key: str = Field(
+        default="",
+        repr=False,
+        description="Inline cluster API key (development profile only)",
+    )
+
+    @model_validator(mode="after")
+    def validate_secret_source(self) -> Self:
+        if bool(self.api_key_ref) == bool(self.api_key):
+            raise ValueError("Exactly one of api_key_ref or api_key is required")
+        return self
 
 
 class CollectionField(BaseModel):
     """
     Represents a field in a Typesense collection schema.
-    
+
     Attributes:
         name: Field name
         type: Field type (string, int32, float, bool, string[], etc.)
@@ -121,7 +139,7 @@ class CollectionField(BaseModel):
 class CollectionSchema(BaseModel):
     """
     Schema definition for creating a new Typesense collection.
-    
+
     Attributes:
         name: Collection name
         fields: List of field definitions
@@ -154,10 +172,10 @@ class CollectionSchema(BaseModel):
 class FieldRule(BaseModel):
     """
     A single routing rule that maps a field value to one or more target clusters.
-    
+
     Use 'cluster' for single-cluster routing, or 'clusters' for fan-out (replicate
     document to multiple clusters, e.g. for multi-region).
-    
+
     Attributes:
         field: Document field to evaluate
         operator: Match operator. Defaults to legacy equals.
@@ -225,10 +243,10 @@ class FieldRule(BaseModel):
 class RoutingRules(BaseModel):
     """
     Complete routing configuration for a collection.
-    
+
     Documents are evaluated against rules in order. The first matching rule
     determines the target cluster. If no rules match, the default_cluster is used.
-    
+
     Attributes:
         collection: Collection name these rules apply to
         rules: List of field-based routing rules
@@ -267,11 +285,127 @@ class RoutingPreviewResponse(BaseModel):
     )
 
 
+class RoutingRolloutCreate(BaseModel):
+    """Create a draft routing migration without changing live routing."""
+
+    candidate_policy: RoutingRules
+    rollback_window_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=604800,
+        description="Minimum post-cutover safety window before completion",
+    )
+
+
+class RoutingRolloutGatesModel(BaseModel):
+    """Operator or reconciler evidence required by lifecycle transitions."""
+
+    validation_passed: bool = False
+    capacity_passed: bool = False
+    backfill_complete: bool = False
+    source_barrier: str = Field(default="", max_length=512)
+    parity_passed: bool = False
+    parity_digest: str = Field(default="", max_length=256)
+    unresolved_dlq: int = Field(default=0, ge=0)
+    kafka_lag: int = Field(default=0, ge=0)
+    max_kafka_lag: int = Field(default=0, ge=0)
+
+
+class RoutingRolloutTransitionRequest(BaseModel):
+    """CAS-protected transition request for one routing rollout."""
+
+    target_phase: RolloutPhase
+    expected_version: int = Field(..., ge=1)
+    gates: Optional[RoutingRolloutGatesModel] = None
+    checkpoint: Optional[Dict[str, Any]] = None
+    failure_reason: str = Field(default="", max_length=2048)
+
+    @model_validator(mode="after")
+    def require_failure_reason(self) -> Self:
+        if self.target_phase == RolloutPhase.FAILED and not self.failure_reason.strip():
+            raise ValueError("failure_reason is required when marking a rollout failed")
+        return self
+
+
+class RoutingRolloutView(BaseModel):
+    """Persisted immutable routing rollout version exposed to operators."""
+
+    rollout_id: str = Field(..., pattern=NAME_PATTERN)
+    collection: str = Field(..., pattern=NAME_PATTERN)
+    active_policy: Dict[str, Any]
+    candidate_policy: Dict[str, Any]
+    created_by: str
+    rollback_window_seconds: int = Field(..., ge=60)
+    version: int = Field(..., ge=1)
+    phase: RolloutPhase
+    gates: RoutingRolloutGatesModel
+    backfill_checkpoint: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    cutover_at: Optional[str] = None
+    rollback_deadline: Optional[str] = None
+    failure_reason: str = ""
+
+
+class RoutingRolloutMutationResponse(BaseModel):
+    rollout: RoutingRolloutView
+    revision: int = Field(..., ge=1)
+
+
+class RoutingRolloutListResponse(BaseModel):
+    rollouts: List[RoutingRolloutView]
+    revision: int = Field(..., ge=0)
+
+
+class RoutingBackfillStepRequest(BaseModel):
+    """Run one bounded, CAS-fenced backfill chunk."""
+
+    expected_version: int = Field(..., ge=1)
+    max_documents: int = Field(default=100, ge=1, le=10_000)
+
+
+class RoutingBackfillStepResponse(BaseModel):
+    rollout: RoutingRolloutView
+    revision: int = Field(..., ge=1)
+    copied: int = Field(..., ge=0)
+    raw_copy_complete: bool
+    source_documents: int = Field(..., ge=0)
+
+
+class RoutingParityVerificationRequest(BaseModel):
+    """Run an exact logical document parity scan at a stable event barrier."""
+
+    expected_version: int = Field(..., ge=1)
+    sample_limit: int = Field(default=100, ge=1, le=1000)
+
+
+class RoutingParityVerificationResponse(BaseModel):
+    rollout: RoutingRolloutView
+    revision: int = Field(..., ge=1)
+    passed: bool
+    digest: str
+    source_documents: int = Field(..., ge=0)
+    candidate_documents: int = Field(..., ge=0)
+    missing_ids: List[str] = Field(default_factory=list)
+    unexpected_ids: List[str] = Field(default_factory=list)
+    different_ids: List[str] = Field(default_factory=list)
+    verification_start_barrier: int = Field(..., ge=0)
+    verification_end_barrier: int = Field(..., ge=0)
+
+
 class IngestResponse(BaseModel):
     """Response model for document ingestion."""
     status: str = Field(..., description="Operation status")
     document_id: str = Field(..., description="ID of ingested document")
     routed_to: str = Field(..., description="Target cluster name")
+
+
+class IngestEventMetadata(BaseModel):
+    """Caller-owned ordering and idempotency metadata for one logical document."""
+
+    document_version: int = Field(..., ge=1)
+    sequence: Optional[int] = Field(default=None, ge=1)
+    idempotency_key: str = Field(..., min_length=8, max_length=256)
 
 
 class BatchIngestRequest(BaseModel):
@@ -281,6 +415,20 @@ class BatchIngestRequest(BaseModel):
         min_length=1,
         description="Documents to ingest; each document must include id",
     )
+    event_metadata: Dict[str, IngestEventMetadata] = Field(
+        default_factory=dict,
+        description="Ordering metadata keyed by document id",
+    )
+
+    @field_validator("event_metadata")
+    @classmethod
+    def validate_event_metadata_keys(
+        cls,
+        value: Dict[str, IngestEventMetadata],
+    ) -> Dict[str, IngestEventMetadata]:
+        if any(not re.fullmatch(DOCUMENT_ID_PATTERN, key) for key in value):
+            raise ValueError("event_metadata keys must be valid document ids")
+        return value
 
 
 class BatchIngestItemResult(BaseModel):
@@ -405,6 +553,11 @@ class OperationResponse(BaseModel):
     """Generic response for admin operations."""
     status: str = Field(default="ok", description="Operation status")
     message: str = Field(..., description="Operation result message")
+    revision: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Committed control-plane revision",
+    )
 
 
 class AuditLogEntry(BaseModel):
@@ -427,8 +580,13 @@ class AuditLogResponse(BaseModel):
 
 class ControlPlaneStateSnapshot(BaseModel):
     """Portable backup snapshot for the Query API control-plane state."""
-    version: str = Field(default="imposbro.state.v1", description="Snapshot format")
+    version: str = Field(default="imposbro.state.v2", description="Snapshot format")
     exported_at: Optional[str] = Field(default=None, description="UTC export timestamp")
+    revision: int = Field(default=0, ge=0, description="Committed control-plane revision")
+    state_digest: str = Field(
+        default="",
+        description="Canonical SHA-256 digest of the committed state",
+    )
     secrets_included: bool = Field(
         default=False,
         description="Whether cluster API keys are raw secrets or masked placeholders",
@@ -448,4 +606,8 @@ class ControlPlaneStateSnapshot(BaseModel):
     collection_aliases: Dict[str, Dict[str, Dict[str, str]]] = Field(
         default_factory=dict,
         description="Desired collection aliases keyed by cluster name",
+    )
+    routing_rollouts: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Routing rollout history keyed by rollout id",
     )

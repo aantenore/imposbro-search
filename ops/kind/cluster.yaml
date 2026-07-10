@@ -1,0 +1,23 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  apiServerAddress: "127.0.0.1"
+  apiServerPort: 0
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
+      endpoint = ["http://imposbro-kind-registry:5000"]
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      imposbro.dev/role: infra
+  - role: worker
+    labels:
+      imposbro.dev/role: workload
+  - role: worker
+    labels:
+      imposbro.dev/role: workload
+  - role: worker
+    labels:
+      imposbro.dev/role: workload

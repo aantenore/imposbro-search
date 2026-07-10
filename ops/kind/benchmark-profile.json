@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "id": "kind-enterprise-small-v1",
+  "production_certification": false,
+  "description": "Black-box ingest, indexing-convergence, and federated-search gate for the disposable multi-node Kubernetes topology.",
+  "workload": {
+    "documents": 2000,
+    "ingest_concurrency": 8,
+    "ingest_batch_size": 50,
+    "search_requests": 250,
+    "search_concurrency": 8,
+    "search_per_page": 25,
+    "timeout_seconds": 240,
+    "seed": 20260710
+  },
+  "thresholds": {
+    "min_ingest_docs_per_second": 25.0,
+    "max_indexing_visible_seconds": 180.0,
+    "max_search_p95_ms": 750.0,
+    "max_search_error_rate": 0.0,
+    "allow_partial": false
+  },
+  "cluster_shape": "kind: control-plane=1,infra=1,workload=3; app: query=2,indexing=2,admin=2; data: postgres=1,kafka=1,redis=1,typesense=2",
+  "image_policy": "Application images are built from the measured Git worktree and resolved to repository digests at runtime; every dependency and node image is digest pinned."
+}

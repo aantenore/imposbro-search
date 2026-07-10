@@ -39,6 +39,10 @@ class ConfigSyncService:
         redis_url: str,
         on_config_change: Callable[[], Awaitable[None]],
         source_id: str = "api",
+        *,
+        local_revision: Optional[Callable[[], int]] = None,
+        authoritative_revision: Optional[Callable[[], int]] = None,
+        reconcile_interval_seconds: float = 5.0,
     ):
         """
         Initialize the ConfigSyncService.
@@ -50,9 +54,13 @@ class ConfigSyncService:
         self.redis_url = redis_url
         self.on_config_change = on_config_change
         self.source_id = source_id
+        self.local_revision = local_revision
+        self.authoritative_revision = authoritative_revision
+        self.reconcile_interval_seconds = reconcile_interval_seconds
         self._redis_client: Optional[redis.Redis] = None
         self._pubsub: Optional[redis.client.PubSub] = None
         self._listener_task: Optional[asyncio.Task] = None
+        self._reconcile_task: Optional[asyncio.Task] = None
         self._running = False
 
     def _is_self_notification(self, source: str) -> bool:
@@ -66,18 +74,21 @@ class ConfigSyncService:
         Connects to Redis and subscribes to the config update channel.
         Spawns a background task to listen for messages.
         """
+        self._running = True
+        if self.local_revision and self.authoritative_revision:
+            self._reconcile_task = asyncio.create_task(self._reconcile_revisions())
         try:
             self._redis_client = redis.from_url(self.redis_url, decode_responses=True)
             self._pubsub = self._redis_client.pubsub()
             await self._pubsub.subscribe(CONFIG_CHANNEL)
 
-            self._running = True
             self._listener_task = asyncio.create_task(self._listen_for_updates())
 
             logger.info(f"ConfigSyncService started, subscribed to '{CONFIG_CHANNEL}'")
         except Exception as e:
             logger.error(f"Failed to start ConfigSyncService: {e}")
-            # Non-fatal: service will work but without multi-instance sync
+            # Pub/Sub is only a wake-up accelerator. The durable revision poller
+            # continues when Redis subscription is unavailable.
 
     async def stop(self) -> None:
         """Stop the configuration sync listener and cleanup resources."""
@@ -87,6 +98,13 @@ class ConfigSyncService:
             self._listener_task.cancel()
             try:
                 await self._listener_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._reconcile_task:
+            self._reconcile_task.cancel()
+            try:
+                await self._reconcile_task
             except asyncio.CancelledError:
                 pass
 
@@ -118,6 +136,7 @@ class ConfigSyncService:
                     data = json.loads(message["data"]) if message["data"] else {}
                     source = data.get("source", "unknown")
                     change_type = data.get("type", "unknown")
+                    revision = int(data.get("revision") or 0)
 
                     if self._is_self_notification(source):
                         logger.debug(
@@ -130,7 +149,18 @@ class ConfigSyncService:
                         f"Config change notification received: {change_type} from {source}"
                     )
 
-                    # Invoke the reload callback
+                    if self.local_revision and revision:
+                        local_revision = int(self.local_revision())
+                        if revision <= local_revision:
+                            logger.debug(
+                                "Ignoring non-advancing config revision %s (local=%s)",
+                                revision,
+                                local_revision,
+                            )
+                            continue
+
+                    # Invoke the reload callback. State is always re-read from the
+                    # durable source; Pub/Sub payloads are never applied directly.
                     await self.on_config_change()
 
             except asyncio.CancelledError:
@@ -139,7 +169,39 @@ class ConfigSyncService:
                 logger.error(f"Error in config sync listener: {e}")
                 await asyncio.sleep(1)
 
-    async def notify_config_change(self, change_type: str, source: str = "api") -> None:
+    async def _reconcile_revisions(self) -> None:
+        """Poll the authoritative head so missed Pub/Sub cannot leave stale replicas."""
+        while self._running:
+            try:
+                await asyncio.sleep(self.reconcile_interval_seconds)
+                local_revision = int(self.local_revision())
+                remote_revision = int(
+                    await asyncio.to_thread(self.authoritative_revision)
+                )
+                if remote_revision > local_revision:
+                    logger.info(
+                        "Control-plane revision reconciliation: local=%s authoritative=%s",
+                        local_revision,
+                        remote_revision,
+                    )
+                    await self.on_config_change()
+                elif remote_revision < local_revision:
+                    logger.error(
+                        "Authoritative control-plane revision regressed: local=%s remote=%s",
+                        local_revision,
+                        remote_revision,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("Control-plane revision reconciliation failed: %s", exc)
+
+    async def notify_config_change(
+        self,
+        change_type: str,
+        source: str = "api",
+        revision: Optional[int] = None,
+    ) -> None:
         """
         Broadcast a configuration change notification to all instances.
 
@@ -156,6 +218,7 @@ class ConfigSyncService:
                 {
                     "type": change_type,
                     "source": source,
+                    "revision": revision,
                 }
             )
             await self._redis_client.publish(CONFIG_CHANNEL, message)
@@ -188,7 +251,12 @@ class SyncConfigNotifier:
             )
         return self._sync_client
 
-    def notify(self, change_type: str, source: Optional[str] = None) -> None:
+    def notify(
+        self,
+        change_type: str,
+        source: Optional[str] = None,
+        revision: Optional[int] = None,
+    ) -> None:
         """
         Publish a configuration change notification synchronously.
 
@@ -202,12 +270,34 @@ class SyncConfigNotifier:
                 {
                     "type": change_type,
                     "source": source or self.source_id,
+                    "revision": revision,
                 }
             )
             client.publish(CONFIG_CHANNEL, message)
             logger.debug(f"Published config change notification: {change_type}")
         except Exception as e:
             logger.error(f"Failed to publish config change: {e}")
+
+    def publish_durable(
+        self,
+        *,
+        event_type: str,
+        revision: int,
+        event_id: str,
+    ) -> None:
+        """Publish one persisted outbox record and surface delivery failure."""
+        client = self._get_client()
+        message = json.dumps(
+            {
+                "type": event_type,
+                "source": self.source_id,
+                "revision": revision,
+                "event_id": event_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        client.publish(CONFIG_CHANNEL, message)
 
     def close(self) -> None:
         """Close the Redis connection. Call on application shutdown."""

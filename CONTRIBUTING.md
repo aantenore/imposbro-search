@@ -15,7 +15,7 @@ Thank you for your interest in contributing to IMPOSBRO Search! This document pr
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/imposbro-search.git
+   git clone https://github.com/aantenore/imposbro-search.git
    cd imposbro-search
    ```
 
@@ -89,7 +89,7 @@ feat(api): add batch ingestion endpoint
 
 ### Pull Request Process
 
-1. Create a feature branch from `main`
+1. Create a feature branch from the repository default branch (`master`)
 2. Make your changes with appropriate tests
 3. Ensure all services build successfully
 4. Update documentation if needed

@@ -1,12 +1,13 @@
 # IMPOSBRO Search - root-level targets
 
-PYTHON ?= python3
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 UV ?= uv
+# Hermetic CI tooling environment. The two checked-in, hash-bearing lock files
+# are also rebuilt byte-for-byte by `make lock-verify`.
+CI_PYTHON ?= $(UV) run --no-project --with-requirements query_api/requirements.lock --with-requirements scripts/ci/python-tools-query.lock python
 HELM ?= $(shell command -v helm 2>/dev/null || printf "%s/.local/bin/helm" "$$HOME")
 HELM_TEST_VALUES ?= -f helm/ci-values.yaml
 COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
-PIP_AUDIT_REQUIREMENTS ?= requirements-audit.txt
-
 SCALE_COMPOSE_FILE ?= docker-compose.yml:docker-compose.scale.yml
 SCALE_QUERY_API_REPLICAS ?= 3
 SCALE_INDEXING_REPLICAS ?= 3
@@ -20,7 +21,7 @@ BENCHMARK_DOCKER_TIMEOUT_SECONDS ?= 180
 BENCHMARK_DOCKER_OUTPUT_JSON ?= artifacts/benchmark-docker.json
 BENCHMARK_DOCKER_OUTPUT_MARKDOWN ?= artifacts/benchmark-docker.md
 
-.PHONY: help test test-api test-ui lint build-ui lock-python audit compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s benchmark-docker smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
+.PHONY: help test test-api test-ui lint build-ui lock-python lock-verify audit workflow-policy contracts ops control-plane-migrate control-plane-verify compose-config compose-config-scale helm smoke-vector smoke-outage smoke-load smoke-state smoke-alias smoke-scale benchmark-k8s benchmark-docker smoke-docker smoke-docker-outage smoke-docker-load smoke-docker-state smoke-docker-alias smoke-docker-scale ci
 
 help:
 	@echo "IMPOSBRO Search – available targets:"
@@ -30,7 +31,12 @@ help:
 	@echo "  make lint           Run Admin UI lint"
 	@echo "  make build-ui       Build Admin UI"
 	@echo "  make lock-python    Refresh hashed production dependency locks with uv"
+	@echo "  make lock-verify    Rebuild and compare every dependency lock"
 	@echo "  make audit          Run npm and Python dependency audits"
+	@echo "  make contracts      Verify JSON Schema and backward-compatible OpenAPI"
+	@echo "  make ops            Validate SLO, alert, retention, backup and DR contracts"
+	@echo "  make control-plane-migrate Run serialized PostgreSQL migrations"
+	@echo "  make control-plane-verify Verify the control-plane schema revision"
 	@echo "  make compose-config Validate docker compose config"
 	@echo "  make compose-config-scale Validate multi-instance docker compose overlay"
 	@echo "  make helm           Lint, render, and validate Helm chart scenarios"
@@ -65,15 +71,36 @@ build-ui:
 	cd admin_ui && npm run build
 
 lock-python:
-	cd query_api && $(UV) pip compile requirements.txt --python-version 3.11 --generate-hashes --output-file requirements.lock
-	cd indexing_service && $(UV) pip compile requirements.txt --python-version 3.11 --generate-hashes --output-file requirements.lock
+	cd query_api && $(UV) pip compile requirements.txt --universal --python-version 3.11 --generate-hashes --output-file requirements.lock
+	cd indexing_service && $(UV) pip compile requirements.txt --universal --python-version 3.11 --generate-hashes --output-file requirements.lock
+
+lock-verify:
+	UV=$(UV) scripts/ci/verify-lockfiles.sh
 
 audit:
 	npm audit --omit=dev
 	npm --prefix admin_ui audit --omit=dev
-	$(PYTHON) -m pip install --disable-pip-version-check -r $(PIP_AUDIT_REQUIREMENTS)
-	$(PYTHON) -m pip_audit --requirement query_api/requirements.lock --require-hashes --disable-pip
-	$(PYTHON) -m pip_audit --requirement indexing_service/requirements.lock --require-hashes --disable-pip
+	$(CI_PYTHON) -m pip_audit --requirement query_api/requirements.lock --require-hashes --disable-pip
+	$(CI_PYTHON) -m pip_audit --requirement indexing_service/requirements.lock --require-hashes --disable-pip
+
+workflow-policy:
+	$(PYTHON) scripts/ci/validate-workflows.py
+	bash -n scripts/ci/*.sh scripts/e2e/*.sh scripts/ops/*.sh ops/dr/*.sh
+
+contracts:
+	$(CI_PYTHON) scripts/ci/validate-json-contracts.py
+	$(CI_PYTHON) scripts/ci/openapi-contract.py
+	$(CI_PYTHON) scripts/ci/openapi-compat.py
+	$(CI_PYTHON) -m pytest -q scripts/ci/tests
+
+ops:
+	OPS_PYTHON=$(PYTHON) scripts/ops/validate-ops-artifacts.sh
+
+control-plane-migrate:
+	PYTHONPATH=query_api/app $(PYTHON) -m control_plane.migrate upgrade head
+
+control-plane-verify:
+	PYTHONPATH=query_api/app $(PYTHON) -m control_plane.migrate verify
 
 compose-config:
 	COMPOSE_ENV_FILE=$(COMPOSE_ENV_FILE) docker compose --env-file $(COMPOSE_ENV_FILE) config --quiet
@@ -163,4 +190,4 @@ smoke-docker-scale:
 	trap 'docker compose --env-file $(COMPOSE_ENV_FILE) down' EXIT; \
 	$(PYTHON) scripts/smoke-scale.py
 
-ci: test lint build-ui compose-config compose-config-scale helm
+ci: workflow-policy lock-verify contracts test lint build-ui compose-config compose-config-scale helm ops audit

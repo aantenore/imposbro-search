@@ -258,6 +258,109 @@ test('audit list builds sanitized filter query parameters', async () => {
   }
 });
 
+test('routing rollout client sends global revision CAS and rollout version payloads', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  const createPayload = {
+    candidate_policy: {
+      collection: 'products_live',
+      rules: [],
+      default_cluster: 'eu',
+    },
+    rollback_window_seconds: 900,
+  };
+
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return jsonResponse({
+      rollout: { rollout_id: 'rollout-1', collection: 'products_live' },
+      revision: requests.length + 7,
+    }, { status: requests.length === 1 ? 201 : 200 });
+  };
+
+  try {
+    await api.routingRollouts.list({ collection: 'products live' });
+    await api.routingRollouts.create(createPayload, { revision: 8 });
+    await api.routingRollouts.transition('rollout/1', {
+      target_phase: 'validating',
+      expected_version: 3,
+    }, { revision: 9 });
+    await api.routingRollouts.runBackfillStep('rollout/1', {
+      expected_version: 4,
+      max_documents: 250,
+    }, { revision: 10 });
+    await api.routingRollouts.verifyParity('rollout/1', {
+      expected_version: 5,
+      sample_limit: 100,
+    }, { revision: 11 });
+
+    assert.equal(requests[0].url, '/api/admin/routing-rollouts?collection=products+live');
+    assert.equal(requests[1].url, '/api/admin/routing-rollouts');
+    assert.equal(requests[1].options.method, 'POST');
+    assert.equal(requests[1].options.headers['If-Match'], '"8"');
+    assert.equal(requests[1].options.body, JSON.stringify(createPayload));
+    assert.equal(
+      requests[2].url,
+      '/api/admin/routing-rollouts/rollout%2F1/transitions'
+    );
+    assert.equal(requests[2].options.headers['If-Match'], '"9"');
+    assert.equal(
+      requests[2].options.body,
+      '{"target_phase":"validating","expected_version":3}'
+    );
+    assert.equal(
+      requests[3].url,
+      '/api/admin/routing-rollouts/rollout%2F1/backfill/steps'
+    );
+    assert.equal(requests[3].options.headers['If-Match'], '"10"');
+    assert.equal(
+      requests[4].url,
+      '/api/admin/routing-rollouts/rollout%2F1/parity-verifications'
+    );
+    assert.equal(requests[4].options.headers['If-Match'], '"11"');
+    assert.equal(api.routing.setRules, undefined);
+    assert.equal(api.routing.deleteRules, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('routing rollout conflicts expose a readable code, ETag, and request id', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => jsonResponse({
+    detail: {
+      code: 'routing_rollout_version_conflict',
+      expected_version: 3,
+      current_version: 4,
+    },
+  }, {
+    status: 409,
+    headers: { ETag: '"12"', 'X-Request-ID': 'request-12' },
+  });
+
+  try {
+    await assert.rejects(
+      api.routingRollouts.transition('rollout-1', {
+        target_phase: 'cutover',
+        expected_version: 3,
+      }, { revision: 11 }),
+      (error) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.status, 409);
+        assert.equal(error.message, 'routing rollout version conflict');
+        assert.deepEqual(error.metadata, {
+          etag: '"12"',
+          requestId: 'request-12',
+        });
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('routing preview posts draft rules without saving', async () => {
   const originalFetch = globalThis.fetch;
   let request;
