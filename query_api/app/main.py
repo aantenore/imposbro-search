@@ -76,7 +76,11 @@ def create_state_client() -> typesense.Client:
     Create and return a Typesense client for the internal state cluster.
     """
     nodes = [
-        {"host": h.strip(), "port": "8108", "protocol": "http"}
+        {
+            "host": h.strip(),
+            "port": "8108",
+            "protocol": settings.INTERNAL_STATE_PROTOCOL,
+        }
         for h in settings.INTERNAL_STATE_NODES.split(",")
     ]
 
@@ -102,6 +106,7 @@ def wait_for_typesense() -> typesense.Client:
                 settings.INTERNAL_STATE_NODES,
                 "8108",
                 settings.INTERNAL_STATE_API_KEY,
+                settings.INTERNAL_STATE_PROTOCOL,
             )
             failed_nodes = [
                 node for node in node_statuses if node.get("status") != "ok"
@@ -242,6 +247,7 @@ async def lifespan(app: FastAPI):
             "default-data-cluster",
             settings.DEFAULT_DATA_CLUSTER_NODES,
             settings.DEFAULT_DATA_CLUSTER_API_KEY,
+            settings.DEFAULT_DATA_CLUSTER_PROTOCOL,
         )
         federation_service.clusters_config["default-data-cluster"] = config
         federation_service.clients["default-data-cluster"] = (
@@ -254,6 +260,7 @@ async def lifespan(app: FastAPI):
                 "default-data-cluster-2",
                 settings.DEFAULT_DATA2_CLUSTER_NODES,
                 settings.DEFAULT_DATA2_CLUSTER_API_KEY,
+                settings.DEFAULT_DATA2_CLUSTER_PROTOCOL,
             )
             federation_service.clusters_config["default-data-cluster-2"] = config2
             federation_service.clients["default-data-cluster-2"] = (
@@ -546,6 +553,14 @@ def _check_data_clusters(data_cluster_nodes: dict) -> dict:
     return statuses
 
 
+def _core_services_initialized() -> bool:
+    """Return whether startup completed far enough for the API to serve traffic."""
+    return all(
+        service is not None
+        for service in (federation_service, state_manager, kafka_service)
+    )
+
+
 def _build_health_payload() -> dict:
     """Build dependency health payload for /health and /ready."""
     try:
@@ -585,8 +600,14 @@ def _build_health_payload() -> dict:
         if clusters > 0 and redis_ok and kafka_ok and data_clusters_ready
         else "degraded"
     )
+    core_services_initialized = _core_services_initialized()
+    ready = core_services_initialized and (
+        settings.READINESS_POLICY == "serving" or status == "healthy"
+    )
     return {
         "status": status,
+        "ready": ready,
+        "readiness_policy": settings.READINESS_POLICY,
         "clusters": clusters,
         "collections": collections,
         "config_sync": "enabled",
@@ -605,8 +626,8 @@ def health():
 
 @app.get("/ready", tags=["Health"])
 def ready(response: Response):
-    """Readiness probe: HTTP 503 until all required dependencies are ready."""
+    """Readiness probe governed by the configured serving or strict policy."""
     payload = _build_health_payload()
-    if payload["status"] != "healthy":
+    if not payload["ready"]:
         response.status_code = 503
     return payload

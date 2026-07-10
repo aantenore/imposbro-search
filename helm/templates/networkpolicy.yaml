@@ -16,11 +16,11 @@ spec:
     {{- with .Values.networkPolicy.queryApi.egress }}
     - Egress
     {{- end }}
+  {{- if or .Values.networkPolicy.queryApi.allowAdminUi .Values.networkPolicy.ingressController.from .Values.networkPolicy.queryApi.ingress.from (and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.queryApi.enabled .Values.networkPolicy.prometheus.from) }}
   ingress:
     - ports:
         - protocol: TCP
           port: {{ .Values.queryApi.port }}
-      {{- if or .Values.networkPolicy.queryApi.allowAdminUi .Values.networkPolicy.ingressController.from .Values.networkPolicy.queryApi.ingress.from (and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.queryApi.enabled .Values.networkPolicy.prometheus.from) }}
       from:
         {{- if .Values.networkPolicy.queryApi.allowAdminUi }}
         - podSelector:
@@ -39,7 +39,9 @@ spec:
         {{- with .Values.networkPolicy.queryApi.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- with .Values.networkPolicy.queryApi.egress }}
   egress:
     {{- toYaml . | nindent 4 }}
@@ -62,11 +64,11 @@ spec:
     {{- with .Values.networkPolicy.adminUi.egress }}
     - Egress
     {{- end }}
+  {{- if or .Values.networkPolicy.ingressController.from .Values.networkPolicy.adminUi.ingress.from }}
   ingress:
     - ports:
         - protocol: TCP
           port: {{ .Values.adminUi.port }}
-      {{- if or .Values.networkPolicy.ingressController.from .Values.networkPolicy.adminUi.ingress.from }}
       from:
         {{- with .Values.networkPolicy.ingressController.from }}
         {{- toYaml . | nindent 8 }}
@@ -74,7 +76,9 @@ spec:
         {{- with .Values.networkPolicy.adminUi.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- with .Values.networkPolicy.adminUi.egress }}
   egress:
     {{- toYaml . | nindent 4 }}
@@ -98,11 +102,11 @@ spec:
     {{- with .Values.networkPolicy.indexingService.egress }}
     - Egress
     {{- end }}
+  {{- if or .Values.networkPolicy.prometheus.from .Values.networkPolicy.indexingService.metrics.ingress.from }}
   ingress:
     - ports:
         - protocol: TCP
           port: {{ .Values.indexingService.metrics.port }}
-      {{- if or .Values.networkPolicy.prometheus.from .Values.networkPolicy.indexingService.metrics.ingress.from }}
       from:
         {{- with .Values.networkPolicy.prometheus.from }}
         {{- toYaml . | nindent 8 }}
@@ -110,7 +114,9 @@ spec:
         {{- with .Values.networkPolicy.indexingService.metrics.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- with .Values.networkPolicy.indexingService.egress }}
   egress:
     {{- toYaml . | nindent 4 }}

@@ -28,6 +28,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def normalize_typesense_protocol(value) -> str:
+    """Return a supported Typesense transport, defaulting legacy config to HTTP."""
+    protocol = str(value or "http").strip().lower()
+    if protocol not in {"http", "https"}:
+        raise ValueError("Typesense protocol must be 'http' or 'https'.")
+    return protocol
+
+
 def build_admin_headers() -> Dict[str, str]:
     """Build service-to-service headers for Query API admin endpoints."""
     admin_api_key = (
@@ -50,10 +58,12 @@ def create_typesense_client(cluster_info: Dict) -> typesense.Client:
     host = cluster_info.get("host", "")
     port = cluster_info.get("port", 8108)
     api_key = cluster_info.get("api_key", "")
+    protocol = normalize_typesense_protocol(cluster_info.get("protocol"))
 
     # Handle comma-separated hosts for HA clusters
     nodes = [
-        {"host": h.strip(), "port": port, "protocol": "http"} for h in host.split(",")
+        {"host": h.strip(), "port": port, "protocol": protocol}
+        for h in host.split(",")
     ]
 
     return typesense.Client(

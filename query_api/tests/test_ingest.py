@@ -59,6 +59,28 @@ def test_ingest_requires_id(client):
     assert "id" in r.json().get("detail", "").lower()
 
 
+def test_ingest_rejects_id_that_document_routes_cannot_address(client):
+    """Accepted IDs must be safe for the matching GET/DELETE path contract."""
+    r = client.post(
+        "/ingest/products",
+        json={"id": "tenant/doc 1", "name": "Product"},
+    )
+
+    assert r.status_code == 400
+    assert "document 'id'" in r.json().get("detail", "").lower()
+    client.app.state.kafka_service.publish_document.assert_not_called()
+
+
+def test_ingest_rejects_non_string_id(client):
+    r = client.post(
+        "/ingest/products",
+        json={"id": 123, "name": "Product"},
+    )
+
+    assert r.status_code == 400
+    client.app.state.kafka_service.publish_document.assert_not_called()
+
+
 def test_ingest_accepts_valid_document(client):
     """POST /ingest/{collection} with valid document returns 200 and routed_to."""
     r = client.post(

@@ -169,7 +169,10 @@ def _state_snapshot_from_federation(
     *,
     include_secrets: bool,
 ) -> ControlPlaneStateSnapshot:
-    clusters_config = copy.deepcopy(federation.clusters_config)
+    clusters_config = {
+        name: FederationService.normalize_cluster_config(config, name=name)
+        for name, config in federation.clusters_config.items()
+    }
     if not include_secrets:
         clusters_config = _mask_cluster_secrets(clusters_config)
 
@@ -256,6 +259,10 @@ def _validate_import_snapshot(snapshot: ControlPlaneStateSnapshot, *, apply: boo
                 status_code=400,
                 detail=f"Cluster config name mismatch for '{cluster_name}'.",
             )
+        try:
+            Cluster.model_validate({"name": cluster_name, **config})
+        except ValidationError as exc:
+            _validation_400(f"cluster config for '{cluster_name}'", exc)
         for required in ("host", "api_key"):
             if not str(config.get(required, "")).strip():
                 raise HTTPException(
@@ -390,11 +397,16 @@ def get_all_clusters(
     """
     display_config = {}
     for name, cfg in federation.clusters_config.items():
-        display_config[name] = {**cfg, "api_key": _mask_api_key(cfg.get("api_key", ""))}
+        normalized = FederationService.normalize_cluster_config(cfg, name=name)
+        display_config[name] = {
+            **normalized,
+            "api_key": _mask_api_key(normalized.get("api_key", "")),
+        }
     display_config["default"] = {
         "name": "default",
         "host": "Internal HA Cluster",
         "port": 8108,
+        "protocol": settings.INTERNAL_STATE_PROTOCOL,
         "api_key": "N/A",
     }
     return display_config
@@ -504,7 +516,10 @@ def import_control_plane_state(
             "counts": counts,
         }
 
-    clusters_config = copy.deepcopy(snapshot.federation_clusters_config)
+    clusters_config = {
+        name: FederationService.normalize_cluster_config(config, name=name)
+        for name, config in snapshot.federation_clusters_config.items()
+    }
     routing_rules = copy.deepcopy(snapshot.collection_routing_rules)
     collection_schemas = copy.deepcopy(snapshot.collection_schemas)
     collection_aliases = copy.deepcopy(snapshot.collection_aliases)
@@ -560,7 +575,10 @@ def get_internal_clusters(
     The indexing service needs unmasked credentials to build Typesense clients,
     and this route inherits the Admin API key dependency from the router.
     """
-    return {name: dict(cfg) for name, cfg in federation.clusters_config.items()}
+    return {
+        name: FederationService.normalize_cluster_config(cfg, name=name)
+        for name, cfg in federation.clusters_config.items()
+    }
 
 
 @router.post(
@@ -589,6 +607,7 @@ def register_cluster(
             host=cluster.host,
             port=cluster.port,
             api_key=cluster.api_key,
+            protocol=cluster.protocol,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -614,6 +633,7 @@ def register_cluster(
         details={
             "host": cluster.host,
             "port": cluster.port,
+            "protocol": cluster.protocol,
             "collections_backfilled": len(created_collections),
         },
     )

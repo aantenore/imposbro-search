@@ -42,23 +42,62 @@ class FederationService:
         return [host.strip() for host in hosts.split(",") if host.strip()]
 
     @staticmethod
-    def create_single_node_client(host: str, port: str, api_key: str) -> typesense.Client:
+    def normalize_protocol(protocol: Any = None) -> str:
+        """Return a supported Typesense transport, defaulting legacy state to HTTP."""
+        normalized = str(protocol or "http").strip().lower()
+        if normalized not in {"http", "https"}:
+            raise ValueError("Typesense protocol must be 'http' or 'https'.")
+        return normalized
+
+    @classmethod
+    def normalize_cluster_config(
+        cls,
+        config: Dict[str, Any],
+        *,
+        name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Copy cluster config and add defaults required by current clients/state."""
+        normalized = dict(config)
+        if name and not normalized.get("name"):
+            normalized["name"] = name
+        normalized["protocol"] = cls.normalize_protocol(normalized.get("protocol"))
+        return normalized
+
+    @staticmethod
+    def create_single_node_client(
+        host: str,
+        port: str,
+        api_key: str,
+        protocol: str = "http",
+    ) -> typesense.Client:
         """Create a Typesense client pinned to one node for readiness checks."""
+        protocol = FederationService.normalize_protocol(protocol)
         return typesense.Client(
             {
-                "nodes": [{"host": host, "port": str(port), "protocol": "http"}],
+                "nodes": [{"host": host, "port": str(port), "protocol": protocol}],
                 "api_key": api_key,
                 "connection_timeout_seconds": 5,
             }
         )
 
     @staticmethod
-    def node_statuses(hosts: str, port: str, api_key: str) -> List[Dict[str, str]]:
+    def node_statuses(
+        hosts: str,
+        port: str,
+        api_key: str,
+        protocol: str = "http",
+    ) -> List[Dict[str, str]]:
         """Check every declared Typesense node by listing collections."""
+        protocol = FederationService.normalize_protocol(protocol)
         statuses: List[Dict[str, str]] = []
         for host in FederationService.split_hosts(hosts):
             try:
-                client = FederationService.create_single_node_client(host, port, api_key)
+                client = FederationService.create_single_node_client(
+                    host,
+                    port,
+                    api_key,
+                    protocol,
+                )
                 client.collections.retrieve()
                 statuses.append({"host": host, "status": "ok"})
             except Exception as exc:
@@ -72,7 +111,12 @@ class FederationService:
         return statuses
 
     @staticmethod
-    def create_client_config(name: str, nodes_str: str, api_key: str) -> Dict:
+    def create_client_config(
+        name: str,
+        nodes_str: str,
+        api_key: str,
+        protocol: str = "http",
+    ) -> Dict:
         """
         Create a cluster configuration dictionary.
 
@@ -84,7 +128,13 @@ class FederationService:
         Returns:
             Configuration dictionary
         """
-        return {"name": name, "host": nodes_str, "port": 8108, "api_key": api_key}
+        return {
+            "name": name,
+            "host": nodes_str,
+            "port": 8108,
+            "protocol": FederationService.normalize_protocol(protocol),
+            "api_key": api_key,
+        }
 
     @staticmethod
     def create_client(config: Dict) -> typesense.Client:
@@ -97,9 +147,10 @@ class FederationService:
         Returns:
             Configured Typesense client
         """
+        config = FederationService.normalize_cluster_config(config)
         port = str(config.get("port", 8108))
         nodes = [
-            {"host": h, "port": port, "protocol": "http"}
+            {"host": h, "port": port, "protocol": config["protocol"]}
             for h in FederationService.split_hosts(config["host"])
         ]
         return typesense.Client(
@@ -110,7 +161,14 @@ class FederationService:
             }
         )
 
-    def register_cluster(self, name: str, host: str, port: int, api_key: str) -> None:
+    def register_cluster(
+        self,
+        name: str,
+        host: str,
+        port: int,
+        api_key: str,
+        protocol: str = "http",
+    ) -> None:
         """
         Register a new cluster with the federation.
 
@@ -126,7 +184,8 @@ class FederationService:
         if name in self.clients:
             raise ValueError(f"Cluster '{name}' is already registered.")
 
-        statuses = self.node_statuses(host, str(port), api_key)
+        protocol = self.normalize_protocol(protocol)
+        statuses = self.node_statuses(host, str(port), api_key, protocol)
         failed = [node for node in statuses if node.get("status") != "ok"]
         if not statuses or failed:
             raise ValueError(
@@ -137,6 +196,7 @@ class FederationService:
             "name": name,
             "host": host,
             "port": port,
+            "protocol": protocol,
             "api_key": api_key,
         }
         self.clients[name] = self.create_client(config)
@@ -215,6 +275,7 @@ class FederationService:
             config["host"],
             str(config.get("port", 8108)),
             config["api_key"],
+            config.get("protocol", "http"),
         )
 
     def reconcile_collection_schemas(self) -> Dict[str, Dict[str, List[str]]]:
@@ -551,26 +612,17 @@ class FederationService:
             collection_schemas: Desired collection schemas to reconcile across clusters
             collection_aliases: Desired collection aliases keyed by cluster name
         """
-        self.clusters_config.update(clusters_config)
+        normalized_configs = {
+            name: self.normalize_cluster_config(config, name=name)
+            for name, config in clusters_config.items()
+        }
+        self.clusters_config.update(normalized_configs)
         self.routing_rules.update(routing_rules)
         self.collection_schemas.update(collection_schemas or {})
         self.collection_aliases.update(copy.deepcopy(collection_aliases or {}))
 
-        for name, config in clusters_config.items():
-            port = config.get("port", 8108)
-            if isinstance(port, int):
-                port = str(port)
-            nodes = [
-                {"host": h, "port": port, "protocol": "http"}
-                for h in self.split_hosts(config["host"])
-            ]
-            self.clients[name] = typesense.Client(
-                {
-                    "nodes": nodes,
-                    "api_key": config["api_key"],
-                    "connection_timeout_seconds": 5,
-                }
-            )
+        for name, config in normalized_configs.items():
+            self.clients[name] = self.create_client(config)
 
         logger.info(f"Loaded {len(clusters_config)} federated cluster(s) from state.")
 

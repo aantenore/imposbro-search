@@ -324,11 +324,17 @@ config:
   REDIS_URL: ""
   CONFIG_SYNC_SOURCE_ID: "" # Optional; defaults to hostname:pid so replicas ignore only their own Redis notifications
   INTERNAL_STATE_NODES: ""
+  INTERNAL_STATE_PROTOCOL: "http"
   DEFAULT_DATA_CLUSTER_NODES: ""
+  DEFAULT_DATA_CLUSTER_PROTOCOL: "http"
   DEFAULT_DATA2_CLUSTER_NODES: ""
+  DEFAULT_DATA2_CLUSTER_PROTOCOL: "http"
   INTERNAL_QUERY_API_URL: ""
   CORS_ORIGINS: ""
   REQUEST_ID_HEADER: "X-Request-ID"
+  # serving keeps initialized Query API pods routable during downstream outages;
+  # strict requires every dependency and configured data node to be healthy.
+  READINESS_POLICY: "serving"
   ALLOW_UNAUTHENTICATED_ADMIN: "false"
   ALLOW_UNAUTHENTICATED_DATA: "false"
   INGEST_BATCH_MAX_DOCUMENTS: "100"

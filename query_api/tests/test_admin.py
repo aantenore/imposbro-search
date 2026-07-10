@@ -195,6 +195,7 @@ def test_get_clusters_includes_default_and_returns_200(client):
     data = r.json()
     assert "default" in data
     assert data["default"].get("api_key") == "N/A"
+    assert data["default"]["protocol"] == "http"
 
 
 def test_get_clusters_masks_registered_cluster_api_keys(client):
@@ -204,6 +205,7 @@ def test_get_clusters_masks_registered_cluster_api_keys(client):
             "name": "cluster-a",
             "host": "typesense-a",
             "port": 8108,
+            "protocol": "https",
             "api_key": "super-secret-key",
         }
     }
@@ -212,6 +214,7 @@ def test_get_clusters_masks_registered_cluster_api_keys(client):
 
     assert r.status_code == 200
     data = r.json()
+    assert data["cluster-a"]["protocol"] == "https"
     assert data["cluster-a"]["api_key"] == "************-key"
     assert data["cluster-a"]["api_key"] != "super-secret-key"
 
@@ -237,6 +240,7 @@ def test_get_internal_clusters_returns_unmasked_registered_cluster_api_keys(clie
             "host": "typesense-a",
             "port": 8108,
             "api_key": "super-secret-key",
+            "protocol": "http",
         }
     }
 
@@ -257,6 +261,21 @@ def test_invalid_collection_schema_name_returns_422(client):
         json={
             "name": "bad!name",
             "fields": [{"name": "title", "type": "string"}],
+        },
+    )
+
+    assert r.status_code == 422
+
+
+def test_invalid_cluster_protocol_returns_422(client):
+    r = client.post(
+        "/admin/federation/clusters",
+        json={
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "protocol": "ftp",
+            "api_key": "secret",
         },
     )
 
@@ -326,6 +345,7 @@ def test_register_cluster_records_safe_audit_event(client, monkeypatch):
             "name": "cluster-a",
             "host": "typesense-a",
             "port": 8108,
+            "protocol": "https",
             "api_key": "raw-cluster-secret",
         },
     )
@@ -338,9 +358,17 @@ def test_register_cluster_records_safe_audit_event(client, monkeypatch):
     assert audit_kwargs["actor"].startswith("api_key:")
     assert "admin-secret" not in audit_kwargs["actor"]
     assert "raw-cluster-secret" not in str(audit_kwargs["details"])
+    client.app.state.federation_service.register_cluster.assert_called_once_with(
+        name="cluster-a",
+        host="typesense-a",
+        port=8108,
+        api_key="raw-cluster-secret",
+        protocol="https",
+    )
     assert audit_kwargs["details"] == {
         "host": "typesense-a",
         "port": 8108,
+        "protocol": "https",
         "collections_backfilled": 0,
     }
 
@@ -423,6 +451,7 @@ def test_state_export_can_include_raw_secrets_when_requested(client):
     assert r.status_code == 200
     data = r.json()
     assert data["secrets_included"] is True
+    assert data["federation_clusters_config"]["cluster-a"]["protocol"] == "http"
     assert data["federation_clusters_config"]["cluster-a"]["api_key"] == (
         "super-secret-key"
     )
@@ -501,6 +530,30 @@ def test_state_import_rejects_schema_name_mismatch(client):
 
     assert r.status_code == 400
     assert "mismatch" in r.json().get("detail", "").lower()
+
+
+def test_state_import_rejects_invalid_cluster_protocol(client):
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": True,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "protocol": "ftp",
+                "api_key": "raw-secret",
+            }
+        },
+        "collection_routing_rules": {},
+        "collection_schemas": {},
+    }
+
+    r = client.post("/admin/state/import", json=snapshot)
+
+    assert r.status_code == 400
+    assert "'http' or 'https'" in r.json().get("detail", "").lower()
+    client.app.state.state_manager.save_state.assert_not_called()
 
 
 def test_state_import_rejects_routing_collection_mismatch(client):
@@ -589,14 +642,20 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
 
     assert r.status_code == 200
     assert r.json()["dry_run"] is False
+    normalized_clusters = {
+        "cluster-a": {
+            **snapshot["federation_clusters_config"]["cluster-a"],
+            "protocol": "http",
+        }
+    }
     client.app.state.state_manager.save_state.assert_called_once_with(
-        snapshot["federation_clusters_config"],
+        normalized_clusters,
         snapshot["collection_routing_rules"],
         snapshot["collection_schemas"],
         snapshot["collection_aliases"],
     )
     client.app.state.federation_service.reload_from_state.assert_called_once_with(
-        snapshot["federation_clusters_config"],
+        normalized_clusters,
         snapshot["collection_routing_rules"],
         snapshot["collection_schemas"],
         snapshot["collection_aliases"],

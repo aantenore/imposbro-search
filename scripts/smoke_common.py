@@ -114,7 +114,11 @@ def wait_for_ready(query_api_url: str, timeout_seconds: int):
     while time.monotonic() < deadline:
         try:
             status, payload = request("GET", f"{query_api_url}/ready", timeout=5)
-            if status == 200 and payload.get("status") == "healthy":
+            if (
+                status == 200
+                and payload.get("status") == "healthy"
+                and payload.get("ready") is True
+            ):
                 return payload
             last_error = payload
         except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
@@ -124,23 +128,31 @@ def wait_for_ready(query_api_url: str, timeout_seconds: int):
 
 
 def wait_for_degraded_ready(query_api_url: str, timeout_seconds: int):
+    """Wait until serving readiness stays true while dependencies are degraded."""
     deadline = time.monotonic() + timeout_seconds
     last_payload = None
     while time.monotonic() < deadline:
         try:
-            _status, payload = request(
+            status, payload = request(
                 "GET",
                 f"{query_api_url}/ready",
                 timeout=5,
                 ok_statuses={200, 503},
             )
             last_payload = payload
-            if payload.get("status") == "degraded":
+            if (
+                status == 200
+                and payload.get("status") == "degraded"
+                and payload.get("ready") is True
+                and payload.get("readiness_policy") == "serving"
+            ):
                 return payload
         except Exception as exc:  # noqa: BLE001 - smoke scripts should report last failure.
             last_payload = exc
         time.sleep(1)
-    raise RuntimeError(f"Degraded readiness did not converge: {last_payload!r}")
+    raise RuntimeError(
+        f"Degraded serving readiness did not converge: {last_payload!r}"
+    )
 
 
 def wait_for_vector_result(

@@ -105,6 +105,17 @@ def configmap_value(configmap: str, key: str) -> str:
     return match.group(1)
 
 
+def annotation_value(document: str, key: str) -> str:
+    match = re.search(
+        rf'^\s+{re.escape(key)}:\s+"?([^"\s]+)"?\s*$',
+        document,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        raise SystemExit(f"Expected resource to contain annotation {key!r}")
+    return match.group(1)
+
+
 def require_count(counts: dict[str, int], kind: str, expected: int) -> None:
     actual = counts.get(kind, 0)
     if actual != expected:
@@ -166,6 +177,10 @@ def main() -> None:
     require_contains(manifest, "api.imposbro.example.com")
     require_contains(manifest, "admin.imposbro.example.com")
     require_contains(manifest, "REQUEST_ID_HEADER")
+    require_contains(manifest, 'READINESS_POLICY: "serving"')
+    require_contains(manifest, 'INTERNAL_STATE_PROTOCOL: "http"')
+    require_contains(manifest, 'DEFAULT_DATA_CLUSTER_PROTOCOL: "http"')
+    require_contains(manifest, 'DEFAULT_DATA2_CLUSTER_PROTOCOL: "http"')
     require_contains(manifest, "INGEST_BATCH_MAX_DOCUMENTS")
     require_contains(manifest, "RATE_LIMIT_ENABLED")
     require_contains(manifest, "ImposbroQueryApiRateLimitBlocked")
@@ -178,6 +193,15 @@ def main() -> None:
     fullname = f"{RELEASE_NAME}-imposbro-search"
     configmap = find_document(manifest, "ConfigMap", f"{fullname}-config")
     secret = find_document(manifest, "Secret", f"{fullname}-secret")
+    deployment_names = (
+        f"{fullname}-query-api",
+        f"{fullname}-admin-ui",
+        f"{fullname}-indexing-service",
+    )
+    deployments = {
+        name: find_document(manifest, "Deployment", name)
+        for name in deployment_names
+    }
     require_not_contains(configmap, "REDIS_URL")
     require_not_contains(configmap, "ADMIN_UI_PROXY_TRUSTED_VALUE")
     require_contains(secret, 'REDIS_URL: "redis://redis:6379"')
@@ -191,9 +215,91 @@ def main() -> None:
             f"got host {internal_query_api_host!r}, rendered services {sorted(services)}"
         )
 
+    secure_typesense = render(
+        "--set",
+        "config.INTERNAL_STATE_PROTOCOL=https",
+        "--set",
+        "config.DEFAULT_DATA_CLUSTER_PROTOCOL=https",
+        "--set",
+        "config.DEFAULT_DATA2_CLUSTER_PROTOCOL=https",
+    )
+    secure_typesense_configmap = find_document(
+        secure_typesense,
+        "ConfigMap",
+        f"{fullname}-config",
+    )
+    for protocol_key in (
+        "INTERNAL_STATE_PROTOCOL",
+        "DEFAULT_DATA_CLUSTER_PROTOCOL",
+        "DEFAULT_DATA2_CLUSTER_PROTOCOL",
+    ):
+        if configmap_value(secure_typesense_configmap, protocol_key) != "https":
+            raise SystemExit(f"Expected {protocol_key} to render as https")
+
+    print("==> Helm rollout checksums")
+    config_checksums = {}
+    secret_checksums = {}
+    for name, deployment in deployments.items():
+        config_checksums[name] = annotation_value(deployment, "checksum/config")
+        secret_checksums[name] = annotation_value(deployment, "checksum/secret")
+        if not re.fullmatch(r"[0-9a-f]{64}", config_checksums[name]):
+            raise SystemExit(f"Deployment/{name} has an invalid config checksum")
+        if not re.fullmatch(r"[0-9a-f]{64}", secret_checksums[name]):
+            raise SystemExit(f"Deployment/{name} has an invalid secret checksum")
+
+    changed_config = render("--set", "config.KAFKA_TOPIC_PREFIX=imposbro_checksum_test")
+    changed_secret = render("--set", "config.DATA_API_KEY=rotated-data-key")
+    annotated = render(
+        "--set-json",
+        'podAnnotations={"audit.imposbro.dev/enabled":"true"}',
+    )
+    for name in deployment_names:
+        config_deployment = find_document(changed_config, "Deployment", name)
+        secret_deployment = find_document(changed_secret, "Deployment", name)
+        annotated_deployment = find_document(annotated, "Deployment", name)
+        if annotation_value(config_deployment, "checksum/config") == config_checksums[name]:
+            raise SystemExit(f"Deployment/{name} config checksum did not change")
+        if annotation_value(config_deployment, "checksum/secret") != secret_checksums[name]:
+            raise SystemExit(f"Deployment/{name} secret checksum changed with ConfigMap-only data")
+        if annotation_value(secret_deployment, "checksum/secret") == secret_checksums[name]:
+            raise SystemExit(f"Deployment/{name} secret checksum did not change")
+        if annotation_value(secret_deployment, "checksum/config") != config_checksums[name]:
+            raise SystemExit(f"Deployment/{name} config checksum changed with Secret-only data")
+        require_contains(annotated_deployment, "audit.imposbro.dev/enabled")
+        annotation_value(annotated_deployment, "checksum/config")
+        annotation_value(annotated_deployment, "checksum/secret")
+
     query_api_policy = find_document(manifest, "NetworkPolicy", f"{fullname}-query-api")
+    admin_ui_policy = find_document(manifest, "NetworkPolicy", f"{fullname}-admin-ui")
+    indexing_policy = find_document(
+        manifest,
+        "NetworkPolicy",
+        f"{fullname}-indexing-service-metrics",
+    )
     require_contains(query_api_policy, "kubernetes.io/metadata.name: monitoring")
     require_contains(query_api_policy, "app.kubernetes.io/name: prometheus")
+    require_contains(admin_ui_policy, "kubernetes.io/metadata.name: ingress-nginx")
+    require_contains(admin_ui_policy, "app.kubernetes.io/name: ingress-nginx")
+    require_contains(indexing_policy, "kubernetes.io/metadata.name: monitoring")
+    require_contains(indexing_policy, "app.kubernetes.io/name: prometheus")
+
+    print("==> Helm NetworkPolicy fail-closed rendering")
+    deny_all_ingress = render(
+        "--set-json",
+        "networkPolicy.ingressController.from=[]",
+        "--set-json",
+        "networkPolicy.prometheus.from=[]",
+        "--set",
+        "networkPolicy.queryApi.allowAdminUi=false",
+    )
+    for name in (
+        f"{fullname}-query-api",
+        f"{fullname}-admin-ui",
+        f"{fullname}-indexing-service-metrics",
+    ):
+        policy = find_document(deny_all_ingress, "NetworkPolicy", name)
+        require_contains(policy, "ingress: []")
+        require_not_contains(policy, "\n    - ports:")
 
     dashboard = (
         REPO_ROOT
@@ -252,6 +358,32 @@ def main() -> None:
         "--set",
         "config.REQUEST_ID_HEADER=",
     )
+
+    print("==> Helm guardrail: readiness policy must be supported")
+    expect_failure(
+        "config.READINESS_POLICY must be serving or strict",
+        "--set",
+        "config.READINESS_POLICY=unknown",
+    )
+
+    print("==> Helm guardrail: rollout checksum annotations are reserved")
+    expect_failure(
+        "podAnnotations must not override reserved checksum/config or checksum/secret annotations",
+        "--set-json",
+        'podAnnotations={"checksum/config":"operator-value"}',
+    )
+
+    print("==> Helm guardrail: Typesense protocols must be supported")
+    for protocol_key in (
+        "INTERNAL_STATE_PROTOCOL",
+        "DEFAULT_DATA_CLUSTER_PROTOCOL",
+        "DEFAULT_DATA2_CLUSTER_PROTOCOL",
+    ):
+        expect_failure(
+            f"config.{protocol_key} must be http or https",
+            "--set",
+            f"config.{protocol_key}=ftp",
+        )
 
     print("==> Helm guardrail: indexing HPA and KEDA are mutually exclusive")
     expect_failure(
