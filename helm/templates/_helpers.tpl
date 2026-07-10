@@ -99,8 +99,27 @@ Validate required external service and secret configuration.
 {{- $_ := required "config.REDIS_URL is required; deploy Redis separately and provide its URL" .Values.config.REDIS_URL -}}
 {{- $_ := required "config.INTERNAL_STATE_NODES is required; deploy Typesense state nodes separately and provide hostnames" .Values.config.INTERNAL_STATE_NODES -}}
 {{- $_ := required "config.DEFAULT_DATA_CLUSTER_NODES is required; deploy Typesense data nodes separately and provide hostnames" .Values.config.DEFAULT_DATA_CLUSTER_NODES -}}
+{{- $internalStateProtocol := toString .Values.config.INTERNAL_STATE_PROTOCOL -}}
+{{- if and (ne $internalStateProtocol "http") (ne $internalStateProtocol "https") -}}
+{{- fail "config.INTERNAL_STATE_PROTOCOL must be http or https" -}}
+{{- end -}}
+{{- $defaultDataProtocol := toString .Values.config.DEFAULT_DATA_CLUSTER_PROTOCOL -}}
+{{- if and (ne $defaultDataProtocol "http") (ne $defaultDataProtocol "https") -}}
+{{- fail "config.DEFAULT_DATA_CLUSTER_PROTOCOL must be http or https" -}}
+{{- end -}}
+{{- $defaultData2Protocol := toString .Values.config.DEFAULT_DATA2_CLUSTER_PROTOCOL -}}
+{{- if and (ne $defaultData2Protocol "http") (ne $defaultData2Protocol "https") -}}
+{{- fail "config.DEFAULT_DATA2_CLUSTER_PROTOCOL must be http or https" -}}
+{{- end -}}
 {{- $_ := required "config.INTERNAL_QUERY_API_URL is required for Admin UI and indexing service discovery" .Values.config.INTERNAL_QUERY_API_URL -}}
 {{- $_ := required "config.REQUEST_ID_HEADER is required for HTTP/Kafka request correlation" .Values.config.REQUEST_ID_HEADER -}}
+{{- $readinessPolicy := toString .Values.config.READINESS_POLICY -}}
+{{- if and (ne $readinessPolicy "serving") (ne $readinessPolicy "strict") -}}
+{{- fail "config.READINESS_POLICY must be serving or strict" -}}
+{{- end -}}
+{{- if or (hasKey .Values.podAnnotations "checksum/config") (hasKey .Values.podAnnotations "checksum/secret") -}}
+{{- fail "podAnnotations must not override reserved checksum/config or checksum/secret annotations" -}}
+{{- end -}}
 {{- if not .Values.config.useSecret -}}
 {{- fail "config.useSecret must be true unless you customize the chart to inject required API keys from an external secret manager" -}}
 {{- end -}}

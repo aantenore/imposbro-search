@@ -62,6 +62,24 @@ def _token(*, scope="", audience=AUDIENCE, issuer=ISSUER, extra_claims=None):
     return jwt.encode(claims, _PRIVATE_PEM, algorithm="RS256")
 
 
+def _configure_required_tenant_policy(monkeypatch):
+    from settings import settings
+
+    monkeypatch.setattr(
+        settings,
+        "AUTHZ_COLLECTION_POLICIES",
+        json.dumps({
+            "collections": {
+                "products": {
+                    "mode": "required",
+                    "tenant_field": "tenant_id",
+                    "tenant_claim": "tenant_id",
+                }
+            }
+        }),
+    )
+
+
 def test_oidc_admin_scope_grants_admin_access(client, monkeypatch):
     _configure_oidc(monkeypatch)
 
@@ -470,6 +488,37 @@ def test_oidc_tenant_policy_hides_cross_tenant_document_read(client, monkeypatch
     assert r.json()["detail"] == "Document not found."
 
 
+def test_oidc_tenant_policy_read_keeps_any_overlap_for_tenant_arrays(
+    client,
+    monkeypatch,
+):
+    _configure_oidc(monkeypatch)
+    _configure_required_tenant_policy(monkeypatch)
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        (
+            "cluster-a",
+            _RetrieveClient({
+                "doc-1": {
+                    "id": "doc-1",
+                    "tenant_id": ["tenant-a", "tenant-b"],
+                }
+            }),
+        )
+    ]
+    token = _token(
+        scope="imposbro:search",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.get(
+        "/documents/products/doc-1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["document"]["tenant_id"] == ["tenant-a", "tenant-b"]
+
+
 def test_oidc_tenant_policy_injects_missing_ingest_tenant(client, monkeypatch):
     _configure_oidc(monkeypatch)
     from settings import settings
@@ -611,6 +660,104 @@ def test_oidc_tenant_policy_rejects_cross_tenant_ingest(client, monkeypatch):
     )
 
     assert r.status_code == 403
+
+
+def test_oidc_tenant_policy_rejects_partially_authorized_tenant_array_ingest(
+    client,
+    monkeypatch,
+):
+    _configure_oidc(monkeypatch)
+    _configure_required_tenant_policy(monkeypatch)
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.post(
+        "/ingest/products",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"id": "doc-1", "tenant_id": ["tenant-a", "tenant-b"]},
+    )
+
+    assert r.status_code == 403
+    client.app.state.kafka_service.publish_document.assert_not_called()
+
+
+def test_oidc_tenant_policy_allows_tenant_array_subset_for_multi_tenant_claim(
+    client,
+    monkeypatch,
+):
+    _configure_oidc(monkeypatch)
+    _configure_required_tenant_policy(monkeypatch)
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": ["tenant-a", "tenant-b"]},
+    )
+
+    r = client.post(
+        "/ingest/products",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"id": "doc-1", "tenant_id": ["tenant-b"]},
+    )
+
+    assert r.status_code == 200
+    published = client.app.state.kafka_service.publish_document.call_args.kwargs
+    assert published["document"]["tenant_id"] == ["tenant-b"]
+
+
+def test_oidc_tenant_policy_rejects_empty_tenant_array_ingest(client, monkeypatch):
+    _configure_oidc(monkeypatch)
+    _configure_required_tenant_policy(monkeypatch)
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.post(
+        "/ingest/products",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"id": "doc-1", "tenant_id": []},
+    )
+
+    assert r.status_code == 403
+    client.app.state.kafka_service.publish_document.assert_not_called()
+
+
+def test_oidc_tenant_policy_batch_rejects_tenant_array_outside_actor_subset(
+    client,
+    monkeypatch,
+):
+    _configure_oidc(monkeypatch)
+    _configure_required_tenant_policy(monkeypatch)
+    client.app.state.federation_service.get_targets_for_document = MagicMock(
+        return_value=[(MagicMock(), "default-data-cluster")]
+    )
+    token = _token(
+        scope="imposbro:ingest",
+        extra_claims={"tenant_id": "tenant-a"},
+    )
+
+    r = client.post(
+        "/ingest/products/batch",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "documents": [
+                {"id": "allowed", "tenant_id": ["tenant-a"]},
+                {"id": "rejected", "tenant_id": ["tenant-a", "tenant-b"]},
+            ]
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "partial"
+    assert r.json()["accepted"] == 1
+    assert r.json()["rejected"] == 1
+    assert [item["status"] for item in r.json()["items"]] == ["ok", "rejected"]
+    published = client.app.state.kafka_service.publish_document.call_args.kwargs
+    assert published["document"]["id"] == "allowed"
 
 
 def test_oidc_tenant_policy_rejects_cross_tenant_batch_item(client, monkeypatch):

@@ -154,6 +154,64 @@ def test_create_client_respects_configured_port(monkeypatch):
     assert captured["api_key"] == "test-key"
 
 
+def test_create_client_respects_https_protocol(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        typesense,
+        "Client",
+        lambda config: captured.update(config) or object(),
+    )
+
+    FederationService.create_client(
+        {
+            "host": "secure-a,secure-b",
+            "port": 443,
+            "protocol": "https",
+            "api_key": "test-key",
+        }
+    )
+
+    assert captured["nodes"] == [
+        {"host": "secure-a", "port": "443", "protocol": "https"},
+        {"host": "secure-b", "port": "443", "protocol": "https"},
+    ]
+
+
+def test_load_from_state_defaults_legacy_protocol_and_preserves_https(monkeypatch):
+    created_configs = []
+    monkeypatch.setattr(
+        typesense,
+        "Client",
+        lambda config: created_configs.append(config) or object(),
+    )
+    federation = FederationService()
+
+    federation.load_from_state(
+        {
+            "legacy": {
+                "host": "legacy-node",
+                "port": 8108,
+                "api_key": "legacy-key",
+            },
+            "secure": {
+                "name": "secure",
+                "host": "secure-node",
+                "port": 443,
+                "protocol": "https",
+                "api_key": "secure-key",
+            },
+        },
+        {},
+    )
+
+    assert federation.clusters_config["legacy"]["protocol"] == "http"
+    assert federation.clusters_config["legacy"]["name"] == "legacy"
+    assert federation.clusters_config["secure"]["protocol"] == "https"
+    assert created_configs[0]["nodes"][0]["protocol"] == "http"
+    assert created_configs[1]["nodes"][0]["protocol"] == "https"
+
+
 def test_delete_candidates_include_all_clusters_despite_current_routing():
     federation = FederationService()
     federation.clients = {
@@ -280,7 +338,7 @@ def test_register_cluster_rejects_unreachable_declared_nodes(monkeypatch):
         FederationService,
         "node_statuses",
         staticmethod(
-            lambda hosts, port, api_key: [
+            lambda hosts, port, api_key, protocol="http": [
                 {"host": "node-a", "status": "ok"},
                 {"host": "node-b", "status": "error", "error": "timeout"},
             ]

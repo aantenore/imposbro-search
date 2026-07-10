@@ -15,12 +15,13 @@ Dependencies (FederationService, StateManager, KafkaService, SyncConfigNotifier)
 
 ### 1.2 Configuration
 
-- **Settings**: All configuration via `pydantic_settings.BaseSettings` in `app/settings.py`. Required env vars fail fast at import; optional ones have defaults (e.g. `CORS_ORIGINS`, `DEFAULT_DATA2_*`).
+- **Settings**: All configuration via `pydantic_settings.BaseSettings` in `app/settings.py`. Required env vars fail fast at import; optional ones have defaults (e.g. `CORS_ORIGINS`, `DEFAULT_DATA2_*`). Typesense bootstrap transports are typed as `http|https` and default to `http` for backward compatibility.
 - **Constants**: Version, default ports, and validation patterns live in `app/constants.py` to avoid magic numbers and duplication.
 
 ### 1.3 Security
 
 - **API keys**: Never logged in full. The admin endpoint `GET /admin/federation/clusters` returns **masked** API keys (e.g. `****key`); full keys are only sent when registering a cluster (POST body).
+- **Typesense transport**: Persist `protocol` with each cluster and pass it unchanged to Query API readiness/search clients and indexing workers. Prefer `https` outside trusted local networks. HTTPS currently uses the runtime trust store; custom CA and mTLS configuration remain out of scope.
 - **Path parameters**: Collection and cluster names are validated with `Path(..., pattern=NAME_PATTERN)` so only alphanumeric, hyphen, and underscore are allowed (Typesense-compatible, reduces injection risk).
 - **CORS**: Enabled only when `CORS_ORIGINS` is set; use explicit origins in production (e.g. `https://admin.example.com`).
 - **Admin API key**: If `ADMIN_API_KEY` is set, it remains the superuser fallback for `/admin/*`. When unset, admin endpoints are available only if `ALLOW_UNAUTHENTICATED_ADMIN=true` or a `SCOPED_API_KEYS` / OIDC claim grants the specific admin sub-scope.
@@ -28,6 +29,8 @@ Dependencies (FederationService, StateManager, KafkaService, SyncConfigNotifier)
 - **Scoped API keys**: Prefer `SCOPED_API_KEYS` for least-privilege clients. Supported scopes are `admin`, admin subscopes (`admin:read`, `admin:write`, `admin:backup`, `admin:restore`, `admin:internal`), `search` (search/read), `ingest` (document writes/deletes), coarse `data` (search/read+ingest/delete), `*`, and collection patterns such as `search:products_*`, `ingest:orders_*`, or `data:tenant_a_*`. Apply collection-aware dependencies (`require_search_collection_api_key`, `require_ingest_collection_api_key`) instead of broad router-level data-plane auth when adding collection routes.
 - **OIDC/JWT bearer auth**: When `OIDC_ENABLED=true`, validate JWT signature, issuer, audience, timestamps, and configured asymmetric algorithms before mapping token claims to internal scopes. Keep API-key checks first for migration, and never persist raw token subjects in audit logs.
 - **Tenant policy**: Use `AUTHZ_COLLECTION_POLICIES` for collection-level tenant enforcement. Tenant search filters, document-read checks, ingest validation/injection, and delete filters must happen server-side in `auth.py`, not in the Admin UI or client code.
+- **Tenant arrays**: Read authorization may use any-overlap semantics for intentionally shared documents, but writes must require every assigned tenant to be within the actor's authorized tenant set. Reject empty tenant collections.
+- **Document identity**: Validate ingest IDs against the same conservative pattern used by GET/DELETE paths; never accept a document that the gateway cannot later address.
 - **Audit log**: Successful admin mutations are recorded in `_imposbro_audit_log` with hashed actor identifiers and safe metadata only.
 
 ### 1.4 Error handling and HTTP status
@@ -56,13 +59,14 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 - **Config sync source id**: Query API instances publish Redis config-sync notifications with a source id and ignore their own messages. This prevents a writer from immediately reloading a stale state-store read while still allowing other replicas to converge. Override `CONFIG_SYNC_SOURCE_ID` only when a stable process identity is required.
 - **Schema reconciliation**: `FederationService.collection_schemas` is the desired schema state. Creating a collection records the schema, registering a new cluster backfills those schemas, and `POST /admin/collections/reconcile` idempotently recreates missing schemas after operational recovery.
 - **Alias portability**: `FederationService.collection_aliases` is the desired per-cluster alias state. Alias upsert/delete must persist this map, and state import applies aliases after schema reconciliation so disaster recovery can recreate live Typesense aliases.
-- **Control-plane backup/restore**: `GET /admin/state/export` masks cluster API keys by default; restore-ready exports require `include_secrets=true` and must be stored as secrets. `POST /admin/state/import` is dry-run by default and only mutates runtime/persisted state with `?apply=true`.
+- **Control-plane backup/restore**: `GET /admin/state/export` masks cluster API keys by default; restore-ready exports require `include_secrets=true` and must be stored as secrets. `POST /admin/state/import` is dry-run by default and only mutates runtime/persisted state with `?apply=true`. Validate cluster protocols during import and normalize legacy snapshots without `protocol` to `http` before persisting.
 - **Control-plane mutation safety**: Admin mutations that change runtime federation state must snapshot the in-memory state before mutating and roll it back if `StateManager.save_state()` fails. Do not leave one Query API replica running config that was not persisted.
 - **Smart Producer**: The Query API decides the target cluster for each document write/delete and puts it in the Kafka message; the indexing service only executes that decision. Routing logic lives in one place.
 - **Document lifecycle delete**: Data-plane delete requests should publish `action=delete` events for every cluster that may contain the collection. Keep legacy messages backward compatible by treating missing `action` as upsert, and treat missing documents as idempotent delete no-ops in the worker.
 - **Document read/export**: Read-by-id should use search/read authorization, check every candidate cluster for the collection, and enforce tenant policy server-side before returning a document. Cross-tenant matches should return not found rather than document data.
 - **Global search merge**: Gateway-side merge must use the same comparator for sorting and deduplication. Complex shard-local sorts should be rejected until the gateway can merge them exactly. Vector-only results should merge on `_vector_distance:asc` when `text_match` is absent.
-- **Search pagination**: Fetch one extra candidate beyond the requested `offset + limit` / `page * per_page` window so `has_more` and `next_offset` are based on an actual extra merged hit rather than a full page guess. When fan-out duplicates are observed, report deduplicated counts rather than inflated raw cluster totals.
+- **Search pagination**: Typesense returns at most 250 hits per page, so fetch larger global windows as stable, bounded shard pages. Fetch one extra candidate beyond the requested `offset + limit` / `page * per_page` window so `has_more` and `next_offset` are based on an actual extra merged hit rather than a full page guess. Require `offset`/`limit` together and do not emit a cursor that exceeds the gateway cap.
+- **Search projections and counts**: Force `id` and simple sort keys into internal shard projections, merge/deduplicate, then hide fields the caller excluded. Exact unique totals are unavailable from bounded shard windows when replication is observed; label the deduplicated window as a lower bound and keep raw cluster totals explicit.
 - **Advanced search payloads**: Keep `GET /search/{collection}` for simple queries and use `POST /search/{collection}` for semantic/vector/hybrid params so long `vector_query` payloads are not forced into URLs.
 - **Runtime smoke**: Use `make smoke-docker` after changes that affect Docker wiring, collection schemas, document read/export, Kafka ingest/delete, search merge, vector search, or the Admin UI proxy. Use `make smoke-docker-outage` after changes that affect readiness, cluster failure handling, or partial federated results. Use `make smoke-docker-load` after changes that affect Kafka throughput, indexing convergence, or search pagination/sorting under more than a couple of documents. Use `make smoke-docker-state` after changes that affect control-plane export/import, desired schema reconciliation, or disaster-recovery workflows. Use `make smoke-docker-alias` after changes that affect aliases or zero-downtime reindexing workflows. Use `make smoke-docker-scale` after changes that affect horizontal scaling, Docker networking, Kafka consumer behavior, rolling restarts, or lag budgets. Use `make smoke-vector` / `make smoke-outage` / `make smoke-load` / `make smoke-state` / `make smoke-alias` / `make smoke-scale` when the stack is already running.
 - **Kubernetes autoscaling**: Use HPA for request-serving workloads when CPU/memory is an adequate signal. Prefer KEDA Kafka lag scaling for indexing workers. Never enable both HPA and KEDA for the same indexing Deployment; the chart intentionally fails this configuration.
@@ -106,7 +110,7 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 
 ### 3.3 Configuration
 
-- Cluster list is fetched from the Query API at startup (`/admin/federation/clusters`). The virtual `"default"` entry (internal HA cluster) is skipped when building Typesense clients.
+- Cluster list is fetched from the Query API's authenticated internal endpoint (`/admin/federation/clusters/internal`). The worker uses each persisted `http|https` protocol when building Typesense clients; legacy entries default to `http`.
 
 ---
 
@@ -129,13 +133,13 @@ Search returns `503` when every target cluster fails. If at least one cluster re
 ### 5.2 Health checks
 
 - `GET /`: Minimal liveness (service name, version, status).
-- `GET /health`: Detailed dependency health with cluster count, Redis, Kafka, and per-data-cluster readiness. It returns JSON even when degraded.
-- `GET /ready`: Readiness probe for orchestrators. Returns HTTP 503 until all required dependencies and data clusters are ready.
+- `GET /health`: Detailed dependency health with cluster count, Redis, Kafka, and per-data-cluster readiness. It always returns JSON, including `status`, `ready`, and `readiness_policy`, even when degraded.
+- `GET /ready`: Orchestrator probe controlled by `READINESS_POLICY`. The default `serving` mode returns 200 after core services initialize even when dependencies are degraded, keeping partial search reachable. `strict` returns 503 unless all dependencies and configured data nodes are healthy. Both modes return 503 before core initialization.
 
 ### 5.3 Kubernetes deployment
 
 - Helm defaults run workloads with a service account that does not mount an API token unless explicitly enabled.
-- Query API probes use `/ready` for startup/readiness and `/` for liveness; Admin UI probes `/`.
+- Query API probes use `/ready` for startup/readiness and `/` for liveness; Admin UI probes `/`. Keep `READINESS_POLICY=serving` when Kubernetes should continue routing partial-search traffic during a data-cluster outage.
 - Workload resources, replica counts, probes, security context, pod labels/annotations, node selectors, affinity, and tolerations are values-driven.
 - Worker processes should not get fake HTTP probes. Add `indexingService.livenessProbe` only when a real process-level healthcheck is available.
 

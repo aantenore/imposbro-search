@@ -87,6 +87,51 @@ def test_build_admin_headers_falls_back_to_admin_api_key(monkeypatch):
     assert main.build_admin_headers() == {"X-API-Key": "legacy-admin-secret"}
 
 
+def test_create_typesense_client_defaults_legacy_http_and_supports_https(monkeypatch):
+    created_configs = []
+    monkeypatch.setattr(
+        main.typesense,
+        "Client",
+        lambda config: created_configs.append(config) or object(),
+    )
+
+    main.create_typesense_client(
+        {"host": "legacy-a,legacy-b", "port": 8108, "api_key": "legacy-key"}
+    )
+    main.create_typesense_client(
+        {
+            "host": "secure-a",
+            "port": 443,
+            "protocol": "https",
+            "api_key": "secure-key",
+        }
+    )
+
+    assert [node["protocol"] for node in created_configs[0]["nodes"]] == [
+        "http",
+        "http",
+    ]
+    assert created_configs[1]["nodes"] == [
+        {"host": "secure-a", "port": 443, "protocol": "https"}
+    ]
+
+
+def test_create_typesense_client_rejects_invalid_protocol():
+    try:
+        main.create_typesense_client(
+            {
+                "host": "typesense-a",
+                "port": 8108,
+                "protocol": "ftp",
+                "api_key": "secret",
+            }
+        )
+    except ValueError as exc:
+        assert "protocol" in str(exc).lower()
+    else:
+        raise AssertionError("Expected invalid Typesense protocol to be rejected")
+
+
 def test_start_metrics_server_respects_disabled_env(monkeypatch):
     calls = []
 

@@ -1,5 +1,10 @@
+from typing import Literal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+TypesenseProtocol = Literal["http", "https"]
 
 
 class Settings(BaseSettings):
@@ -19,14 +24,17 @@ class Settings(BaseSettings):
     # Internal State Cluster
     INTERNAL_STATE_NODES: str
     INTERNAL_STATE_API_KEY: str
+    INTERNAL_STATE_PROTOCOL: TypesenseProtocol = "http"
 
     # Default Federated Data Cluster
     DEFAULT_DATA_CLUSTER_NODES: str
     DEFAULT_DATA_CLUSTER_API_KEY: str
+    DEFAULT_DATA_CLUSTER_PROTOCOL: TypesenseProtocol = "http"
 
     # Secondary Federated Data Cluster (optional; leave empty to disable)
     DEFAULT_DATA2_CLUSTER_NODES: str = ""
     DEFAULT_DATA2_CLUSTER_API_KEY: str = ""
+    DEFAULT_DATA2_CLUSTER_PROTOCOL: TypesenseProtocol = "http"
 
     INTERNAL_QUERY_API_URL: str
 
@@ -37,6 +45,11 @@ class Settings(BaseSettings):
     # Header used for support diagnostics across HTTP requests and Kafka ingest
     # messages. Gateways may override this to match their tracing convention.
     REQUEST_ID_HEADER: str = Field(default="X-Request-ID", min_length=1, max_length=64)
+
+    # Kubernetes serving readiness defaults to keeping initialized API pods in
+    # rotation while downstream dependencies are degraded. Use strict when the
+    # orchestrator should require every dependency and data node to be healthy.
+    READINESS_POLICY: Literal["serving", "strict"] = "serving"
 
     # Optional API key for Admin API. If set, all /admin/* requests must include
     # header X-API-Key: <value> or Authorization: Bearer <value>

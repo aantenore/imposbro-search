@@ -412,6 +412,14 @@ def _value_matches_any_tenant(value: Any, tenants: List[str]) -> bool:
     return str(value) in tenants
 
 
+def _value_is_within_authorized_tenants(value: Any, tenants: List[str]) -> bool:
+    """Require every tenant assigned by a write to be authorized by the actor."""
+    authorized_tenants = set(tenants)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return bool(value) and all(str(item) in authorized_tenants for item in value)
+    return str(value) in authorized_tenants
+
+
 def authorize_search_request(request: Request, collection_name: str, search_request: Any) -> Any:
     """Apply configured tenant policy to a search request."""
     policy = _collection_policy(collection_name)
@@ -474,7 +482,7 @@ def authorize_ingest_document(
             )
         return _set_document_value(document, field, tenants[0])
 
-    if not _value_matches_any_tenant(current_value, tenants):
+    if not _value_is_within_authorized_tenants(current_value, tenants):
         raise HTTPException(status_code=403, detail="Document tenant is not allowed")
     return document
 

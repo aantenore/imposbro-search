@@ -46,6 +46,7 @@ class Cluster(BaseModel):
     
     Attributes:
         name: Unique identifier for the cluster (e.g., 'cluster-us', 'cluster-eu')
+        protocol: HTTP transport used to reach every node in the cluster
         host: Hostname or IP address of the cluster
         port: Port number (default: 8108 for Typesense)
         api_key: Authentication key for the cluster
@@ -54,6 +55,10 @@ class Cluster(BaseModel):
         ...,
         pattern=NAME_PATTERN,
         description="Unique cluster identifier",
+    )
+    protocol: Literal["http", "https"] = Field(
+        default="http",
+        description="Typesense node transport protocol",
     )
     host: str = Field(..., description="Cluster hostname or IP")
     port: int = Field(
@@ -369,6 +374,17 @@ class SearchRequest(BaseModel):
             self.vector_query and self.vector_query.strip()
         ):
             raise ValueError("Set query_by for keyword search or vector_query for vector search")
+        if (self.offset is None) != (self.limit is None):
+            raise ValueError("Set offset and limit together")
+        requested_window = (
+            self.offset + self.limit
+            if self.offset is not None and self.limit is not None
+            else self.page * self.per_page
+        )
+        if self.limit_hits is not None and requested_window > self.limit_hits:
+            raise ValueError(
+                "limit_hits must be greater than or equal to the requested pagination window"
+            )
         return self
 
 

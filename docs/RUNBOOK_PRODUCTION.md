@@ -122,11 +122,19 @@ Typesense data nodes, and any OIDC/JWKS endpoints used by bearer-token auth.
   setting that exact header/value.
 - HTTPS OIDC issuer, JWKS, authorization, and token endpoints unless a local-only
   Helm test sets `config.ALLOW_INSECURE_OIDC_URLS=true`.
+- `INTERNAL_STATE_PROTOCOL=https`, `DEFAULT_DATA_CLUSTER_PROTOCOL=https`, and
+  `DEFAULT_DATA2_CLUSTER_PROTOCOL=https` for TLS-enabled Typesense endpoints.
+  Registered clusters select the same `http|https` value in the Admin UI/API.
+  This release relies on the container trust store and does not configure custom
+  CA bundles or mTLS client certificates.
 - Ingress class, TLS secrets, hosts, and authentication annotations configured
   for every browser-facing endpoint.
 - `CORS_ORIGINS` set to explicit browser origins.
 - `REQUEST_ID_HEADER` aligned with the ingress/gateway tracing convention
   (default `X-Request-ID`).
+- `READINESS_POLICY=serving` when partial search must remain reachable through
+  the Kubernetes Service during dependency or data-cluster outages. Use `strict`
+  only when every degraded Query API pod should be removed from service.
 - HPA enabled for Query API/Admin UI when CPU or memory tracks request load.
 - KEDA enabled for indexing workers when Kafka lag is the scaling signal.
 - PodDisruptionBudget enabled for replicated workloads after choosing
@@ -200,6 +208,11 @@ kubectl rollout status deployment/imposbro-release-imposbro-search-indexing-serv
 ```
 
 Store benchmark JSON artifacts with the release evidence.
+
+`/health` remains the dependency-health source of truth. Under the default
+`serving` readiness policy, `/ready` can return HTTP 200 with `status=degraded`
+and `ready=true`; inspect `data_clusters`, Redis, Kafka, and partial-search
+response metadata before declaring the incident resolved.
 
 ## Disaster Recovery Drill
 
