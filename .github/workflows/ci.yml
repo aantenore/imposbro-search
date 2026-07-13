@@ -435,6 +435,7 @@ jobs:
           format: sarif
           ignore-unfixed: true
           image-ref: imposbro-ci/${{ matrix.component }}:${{ github.sha }}
+          limit-severities-for-sarif: true
           output: trivy-${{ matrix.component }}.sarif
           scan-type: image
           severity: HIGH,CRITICAL
