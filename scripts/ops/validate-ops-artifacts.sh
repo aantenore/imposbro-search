@@ -94,6 +94,10 @@ if ((${#promtool_cmd[@]})); then
       monitoring/grafana/provisioning/dashboards/imposbro-enterprise-sre.json | \
       awk '{count += 1; print "      - record: imposbro_dashboard_expr_" count; print "        expr: |"; print "          " $0}'
   } > "$dashboard_rules"
+  # mktemp defaults to mode 0600. The containerized promtool runs as a
+  # non-root user on Linux runners and must be able to read this generated,
+  # non-sensitive rules file through the read-only workspace mount.
+  chmod 0644 "$dashboard_rules"
   if command -v promtool >/dev/null 2>&1; then
     promtool check rules "$dashboard_rules"
   else
