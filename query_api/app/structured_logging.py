@@ -24,12 +24,21 @@ _SECRET_PATTERNS = (
 
 
 def redact_text(value: object) -> str:
-    """Redact common credential forms from an untrusted log string."""
+    """Redact credentials and neutralize line breaks in an untrusted log value.
+
+    Escaping CR/LF keeps both JSON and plain-text formatters to one physical
+    record per logging call, preventing an attacker-controlled value from
+    forging adjacent log entries.
+    """
     text = str(value)
     text = _SECRET_PATTERNS[0].sub("Bearer [REDACTED]", text)
     text = _SECRET_PATTERNS[1].sub(r"\1[REDACTED]\2", text)
     text = _SECRET_PATTERNS[2].sub(r"\1[REDACTED]", text)
-    return text
+    return (
+        text.replace("\r\n", r"\n")
+        .replace("\n", r"\n")
+        .replace("\r", r"\r")
+    )
 
 
 class RedactingJsonFormatter(logging.Formatter):

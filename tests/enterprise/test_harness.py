@@ -52,6 +52,16 @@ def initialize_evidence(store, dependency_mode="static"):
 
 
 class EvidenceStoreTests(unittest.TestCase):
+    def test_verified_tls_context_rejects_tls_1_0_and_1_1(self):
+        context = RUNNER.verified_tls_client_context()
+
+        self.assertGreaterEqual(
+            context.minimum_version,
+            RUNNER.ssl.TLSVersion.TLSv1_2,
+        )
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, RUNNER.ssl.CERT_REQUIRED)
+
     def test_generated_run_id_is_exported_for_compose_interpolation(self):
         harness = (ROOT / "scripts/e2e/run-enterprise-e2e.sh").read_text()
 
