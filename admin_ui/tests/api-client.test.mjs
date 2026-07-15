@@ -150,6 +150,43 @@ test('cluster registration includes the selected protocol in the JSON payload', 
   }
 });
 
+test('admin mutations automatically use the latest monotonic control-plane revision', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (requests.length === 1) {
+      return jsonResponse({ clusters: [] }, {
+        headers: { 'X-Control-Plane-Revision': '41', ETag: '"41"' },
+      });
+    }
+    const revision = requests.length === 3 ? '40' : requests.length === 2 ? '42' : '43';
+    return jsonResponse({ status: 'ok' }, {
+      headers: { 'X-Control-Plane-Revision': revision, ETag: `"${revision}"` },
+    });
+  };
+
+  try {
+    await api.clusters.list();
+    await api.clusters.create({
+      name: 'cluster-eu',
+      protocol: 'https',
+      host: 'typesense.example.com',
+      port: 443,
+      api_key_ref: 'env:CLUSTER_EU_KEY',
+    });
+    await api.clusters.delete('cluster-eu');
+    await api.collections.reconcile();
+
+    assert.equal(requests[1].options.headers['If-Match'], '"41"');
+    assert.equal(requests[2].options.headers['If-Match'], '"42"');
+    assert.equal(requests[3].options.headers['If-Match'], '"42"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('alias client lists, upserts, and deletes with encoded names', async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];
