@@ -7,7 +7,8 @@ import json
 import hashlib
 import fnmatch
 import secrets
-from typing import List, Optional, Set, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from fastapi import Request, Header, HTTPException, Path
 from prometheus_client import Counter
@@ -40,6 +41,13 @@ RATE_LIMIT_BACKEND_ERRORS = Counter(
 )
 
 
+class ScopedApiKey(NamedTuple):
+    key: str
+    scopes: Set[str]
+    claims: Dict[str, Any]
+    expires_at: Optional[datetime]
+
+
 def _extract_api_key(
     x_api_key: Optional[str],
     authorization: Optional[str],
@@ -52,7 +60,7 @@ def _extract_api_key(
     return None
 
 
-def _parse_scoped_api_keys() -> List[Tuple[str, Set[str]]]:
+def _parse_scoped_api_keys() -> List[ScopedApiKey]:
     """Parse SCOPED_API_KEYS as a JSON array of {key, scopes} entries."""
     raw = settings.SCOPED_API_KEYS.strip()
     if not raw:
@@ -70,7 +78,7 @@ def _parse_scoped_api_keys() -> List[Tuple[str, Set[str]]]:
             detail="Invalid SCOPED_API_KEYS configuration: expected JSON array",
         )
 
-    parsed: List[Tuple[str, Set[str]]] = []
+    parsed: List[ScopedApiKey] = []
     for entry in entries:
         if not isinstance(entry, dict):
             raise HTTPException(
@@ -91,7 +99,28 @@ def _parse_scoped_api_keys() -> List[Tuple[str, Set[str]]]:
                 status_code=500,
                 detail="Invalid SCOPED_API_KEYS entry: key and scopes are required",
             )
-        parsed.append((key, scopes))
+        claims = entry.get("claims", {})
+        if not isinstance(claims, dict):
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid SCOPED_API_KEYS entry: claims must be an object",
+            )
+        expires_at = None
+        raw_expiry = str(entry.get("expires_at", "")).strip()
+        if raw_expiry:
+            try:
+                expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Invalid SCOPED_API_KEYS entry: expires_at must be ISO-8601",
+                ) from exc
+            if expires_at.tzinfo is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Invalid SCOPED_API_KEYS entry: expires_at requires a timezone",
+                )
+        parsed.append(ScopedApiKey(key, scopes, claims, expires_at))
     return parsed
 
 
@@ -151,19 +180,32 @@ def _scope_matches(
 def _candidate_keys_for_scope(
     required_scope: str,
     resource_name: Optional[str] = None,
-) -> List[str]:
-    candidates: List[str] = []
+) -> List[Tuple[str, Dict[str, Any]]]:
+    candidates: List[Tuple[str, Dict[str, Any]]] = []
     if (
         (required_scope == "admin" or required_scope.startswith("admin:"))
         and settings.ADMIN_API_KEY
     ):
-        candidates.append(settings.ADMIN_API_KEY)
+        candidates.append((settings.ADMIN_API_KEY, {}))
     if required_scope in {"search", "ingest", "data"} and settings.DATA_API_KEY:
-        candidates.append(settings.DATA_API_KEY)
-    for key, scopes in _parse_scoped_api_keys():
-        if _scope_matches(scopes, required_scope, resource_name):
-            candidates.append(key)
+        candidates.append((settings.DATA_API_KEY, {}))
+    now = datetime.now(timezone.utc)
+    for credential in _parse_scoped_api_keys():
+        if credential.expires_at is not None and credential.expires_at <= now:
+            continue
+        if _scope_matches(credential.scopes, required_scope, resource_name):
+            candidates.append((credential.key, credential.claims))
     return candidates
+
+
+def _all_active_api_keys() -> List[str]:
+    """Return configured, non-expired keys for 401 vs 403 authorization semantics."""
+    keys = [key for key in (settings.ADMIN_API_KEY, settings.DATA_API_KEY) if key]
+    now = datetime.now(timezone.utc)
+    for credential in _parse_scoped_api_keys():
+        if credential.expires_at is None or credential.expires_at > now:
+            keys.append(credential.key)
+    return keys
 
 
 def _require_api_key_for_scope(
@@ -178,20 +220,32 @@ def _require_api_key_for_scope(
 ) -> None:
     candidates = _candidate_keys_for_scope(required_scope, resource_name)
     oidc_is_enabled = oidc_enabled()
+    provided = _extract_api_key(x_api_key, authorization)
     if not candidates and not oidc_is_enabled:
-        if allow_unauthenticated:
+        active_keys = _all_active_api_keys()
+        if provided and any(
+            secrets.compare_digest(provided, configured_key)
+            for configured_key in active_keys
+        ):
+            raise HTTPException(status_code=403, detail="Insufficient scope")
+        if allow_unauthenticated and not active_keys:
             request.state.auth_actor = "unauthenticated-dev"
             request.state.auth_scheme = "none"
             return
         raise HTTPException(status_code=401, detail=missing_detail)
 
-    provided = _extract_api_key(x_api_key, authorization)
-    if provided and any(
-        secrets.compare_digest(provided, candidate) for candidate in candidates
-    ):
-        request.state.auth_actor = _api_key_actor(provided)
-        request.state.auth_scheme = "api_key"
-        return
+    if provided:
+        for candidate, claims in candidates:
+            if secrets.compare_digest(provided, candidate):
+                request.state.auth_actor = _api_key_actor(provided)
+                request.state.auth_scheme = "api_key"
+                request.state.auth_claims = claims
+                return
+        if any(
+            secrets.compare_digest(provided, configured_key)
+            for configured_key in _all_active_api_keys()
+        ):
+            raise HTTPException(status_code=403, detail="Insufficient scope")
     if authorization and authorization.startswith("Bearer ") and oidc_is_enabled:
         token = authorization[7:].strip()
         try:
@@ -257,6 +311,7 @@ def require_admin_write_key(
         x_api_key=x_api_key,
         authorization=authorization,
     )
+    _require_admin_mutations_unfrozen()
 
 
 def require_admin_backup_key(
@@ -285,6 +340,20 @@ def require_admin_restore_key(
         x_api_key=x_api_key,
         authorization=authorization,
     )
+    _require_admin_mutations_unfrozen()
+
+
+def _require_admin_mutations_unfrozen() -> None:
+    """Keep the data plane live while legacy state cutover freezes admin writes."""
+    if settings.CONTROL_PLANE_ADMIN_MUTATIONS_FROZEN:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Control-plane admin mutations are temporarily frozen for a "
+                "state-store migration. Data-plane operations remain available."
+            ),
+            headers={"Retry-After": "30"},
+        )
 
 
 def require_admin_internal_key(

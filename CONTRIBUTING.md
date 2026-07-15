@@ -15,7 +15,7 @@ Thank you for your interest in contributing to IMPOSBRO Search! This document pr
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/imposbro-search.git
+   git clone https://github.com/aantenore/imposbro-search.git
    cd imposbro-search
    ```
 
@@ -89,7 +89,7 @@ feat(api): add batch ingestion endpoint
 
 ### Pull Request Process
 
-1. Create a feature branch from `main`
+1. Create a feature branch from the repository default branch (`master`)
 2. Make your changes with appropriate tests
 3. Ensure all services build successfully
 4. Update documentation if needed
@@ -104,6 +104,7 @@ feat(api): add batch ingestion endpoint
 make test          # Unix/macOS
 npm run test       # Any OS (runs query_api pytest)
 make audit         # npm + Python dependency audit
+make lock-python   # Refresh hashed production locks after changing Python requirements
 
 # From query_api/
 cd query_api
@@ -121,6 +122,11 @@ docker-compose up -d   # start the stack
 cd query_api && INTEGRATION=1 python -m pytest tests -v -m integration
 # Or exclude integration from CI: pytest tests -v -m "not integration"
 ```
+
+Production images install `query_api/requirements.lock` and
+`indexing_service/requirements.lock` with hash verification. Update the direct
+`requirements.txt` first, then run `make lock-python` with
+[uv](https://docs.astral.sh/uv/) and include the resulting lock diff.
 
 The Admin UI proxies `/api/*` to the Query API via `app/api/[[...path]]/route.js`; set `INTERNAL_QUERY_API_URL` (e.g. in `.env`) to the backend URL. If `ADMIN_API_KEY` is enabled, set `INTERNAL_QUERY_API_ADMIN_API_KEY` or reuse `ADMIN_API_KEY` server-side so the proxy can authenticate admin requests without exposing the key to browser JavaScript.
 

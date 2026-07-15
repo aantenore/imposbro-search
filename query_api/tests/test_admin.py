@@ -1,7 +1,7 @@
 """Tests for admin endpoints."""
 import json
 import os
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 os.environ.setdefault("TESTING", "1")
 
@@ -46,7 +46,7 @@ def test_scoped_non_admin_key_cannot_access_admin(client, monkeypatch):
 
     r = client.get("/admin/stats", headers={"X-API-Key": "search-secret"})
 
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_admin_read_scope_cannot_mutate_control_plane(client, monkeypatch):
@@ -73,7 +73,33 @@ def test_admin_read_scope_cannot_mutate_control_plane(client, monkeypatch):
     )
 
     assert read.status_code == 200
-    assert write.status_code == 401
+    assert write.status_code == 403
+
+
+def test_admin_mutation_freeze_keeps_reads_available_and_returns_retry_hint(
+    client,
+    monkeypatch,
+):
+    """Legacy-store cutover freezes admin writes without taking down reads."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "CONTROL_PLANE_ADMIN_MUTATIONS_FROZEN", True)
+
+    read = client.get("/admin/stats")
+    write = client.post(
+        "/admin/federation/clusters",
+        json={
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "raw-cluster-secret",
+        },
+    )
+
+    assert read.status_code == 200
+    assert write.status_code == 503
+    assert write.headers["Retry-After"] == "30"
+    assert "temporarily frozen" in write.json()["detail"]
 
 
 def test_admin_write_scope_can_mutate_but_not_export_backups(client, monkeypatch):
@@ -100,7 +126,7 @@ def test_admin_write_scope_can_mutate_but_not_export_backups(client, monkeypatch
     backup = client.get("/admin/state/export", headers=headers)
 
     assert write.status_code == 201
-    assert backup.status_code == 401
+    assert backup.status_code == 403
 
 
 def test_admin_backup_restore_and_internal_scopes_are_separate(client, monkeypatch):
@@ -161,11 +187,11 @@ def test_admin_backup_restore_and_internal_scopes_are_separate(client, monkeypat
     )
 
     assert backup.status_code == 200
-    assert backup_cannot_restore.status_code == 401
+    assert backup_cannot_restore.status_code == 403
     assert restore.status_code == 200
     assert internal.status_code == 200
     assert internal.json()["cluster-a"]["api_key"] == "raw-cluster-secret"
-    assert internal_cannot_read_public.status_code == 401
+    assert internal_cannot_read_public.status_code == 403
 
 
 def test_admin_requires_api_key_when_no_dev_bypass(client, monkeypatch):
@@ -195,6 +221,7 @@ def test_get_clusters_includes_default_and_returns_200(client):
     data = r.json()
     assert "default" in data
     assert data["default"].get("api_key") == "N/A"
+    assert data["default"]["protocol"] == "http"
 
 
 def test_get_clusters_masks_registered_cluster_api_keys(client):
@@ -204,6 +231,7 @@ def test_get_clusters_masks_registered_cluster_api_keys(client):
             "name": "cluster-a",
             "host": "typesense-a",
             "port": 8108,
+            "protocol": "https",
             "api_key": "super-secret-key",
         }
     }
@@ -212,6 +240,7 @@ def test_get_clusters_masks_registered_cluster_api_keys(client):
 
     assert r.status_code == 200
     data = r.json()
+    assert data["cluster-a"]["protocol"] == "https"
     assert data["cluster-a"]["api_key"] == "************-key"
     assert data["cluster-a"]["api_key"] != "super-secret-key"
 
@@ -237,6 +266,7 @@ def test_get_internal_clusters_returns_unmasked_registered_cluster_api_keys(clie
             "host": "typesense-a",
             "port": 8108,
             "api_key": "super-secret-key",
+            "protocol": "http",
         }
     }
 
@@ -257,6 +287,21 @@ def test_invalid_collection_schema_name_returns_422(client):
         json={
             "name": "bad!name",
             "fields": [{"name": "title", "type": "string"}],
+        },
+    )
+
+    assert r.status_code == 422
+
+
+def test_invalid_cluster_protocol_returns_422(client):
+    r = client.post(
+        "/admin/federation/clusters",
+        json={
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "protocol": "ftp",
+            "api_key": "secret",
         },
     )
 
@@ -326,6 +371,7 @@ def test_register_cluster_records_safe_audit_event(client, monkeypatch):
             "name": "cluster-a",
             "host": "typesense-a",
             "port": 8108,
+            "protocol": "https",
             "api_key": "raw-cluster-secret",
         },
     )
@@ -338,10 +384,19 @@ def test_register_cluster_records_safe_audit_event(client, monkeypatch):
     assert audit_kwargs["actor"].startswith("api_key:")
     assert "admin-secret" not in audit_kwargs["actor"]
     assert "raw-cluster-secret" not in str(audit_kwargs["details"])
+    client.app.state.federation_service.register_cluster.assert_called_once_with(
+        name="cluster-a",
+        host="typesense-a",
+        port=8108,
+        api_key="raw-cluster-secret",
+        protocol="https",
+        api_key_ref=None,
+    )
     assert audit_kwargs["details"] == {
         "host": "typesense-a",
         "port": 8108,
-        "collections_backfilled": 0,
+        "protocol": "https",
+        "collections_desired": 0,
     }
 
 
@@ -372,6 +427,41 @@ def test_get_audit_log_returns_recent_events(client):
     )
 
 
+def test_audit_export_returns_verified_cursor_page_and_digest(client):
+    client.app.state.state_manager.export_admin_audit.return_value = [
+        {
+            "id": "audit-2",
+            "sequence": 2,
+            "revision": 2,
+            "timestamp": "2026-07-10T08:00:00+00:00",
+            "actor": "oidc:operator",
+            "action": "routing_rollout_transitioned",
+            "resource_type": "routing_rollout",
+            "resource_id": "rollout-1",
+            "status": "success",
+            "request_id": "request-2",
+            "details": {"to_phase": "dual_write"},
+            "previous_hash": "a" * 64,
+            "event_hash": "b" * 64,
+        }
+    ]
+
+    response = client.get("/admin/audit-log/export?after_sequence=1&limit=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["format"] == "imposbro.audit.v1"
+    assert payload["chain_verified"] is True
+    assert payload["next_after_sequence"] == 2
+    assert payload["entries"][0]["event_hash"] == "b" * 64
+    assert response.headers["x-audit-page-digest"] == payload["page_digest"]
+    assert response.headers["cache-control"] == "no-store, private"
+    client.app.state.state_manager.export_admin_audit.assert_called_once_with(
+        after_sequence=1,
+        limit=10,
+    )
+
+
 def test_state_export_masks_cluster_api_keys_by_default(client):
     """Control-plane state backups are inspectable without leaking cluster secrets."""
     client.app.state.federation_service.clusters_config = {
@@ -396,7 +486,7 @@ def test_state_export_masks_cluster_api_keys_by_default(client):
 
     assert r.status_code == 200
     data = r.json()
-    assert data["version"] == "imposbro.state.v1"
+    assert data["version"] == "imposbro.state.v2"
     assert data["secrets_included"] is False
     assert data["federation_clusters_config"]["cluster-a"]["api_key"] == (
         "************-key"
@@ -405,6 +495,8 @@ def test_state_export_masks_cluster_api_keys_by_default(client):
         "cluster-a": {"products_live": {"collection_name": "products"}}
     }
     assert "super-secret-key" not in json.dumps(data)
+    assert r.headers["Cache-Control"] == "no-store, private"
+    assert r.headers["Pragma"] == "no-cache"
 
 
 def test_state_export_can_include_raw_secrets_when_requested(client):
@@ -423,6 +515,7 @@ def test_state_export_can_include_raw_secrets_when_requested(client):
     assert r.status_code == 200
     data = r.json()
     assert data["secrets_included"] is True
+    assert data["federation_clusters_config"]["cluster-a"]["protocol"] == "http"
     assert data["federation_clusters_config"]["cluster-a"]["api_key"] == (
         "super-secret-key"
     )
@@ -433,9 +526,34 @@ def test_state_export_can_include_raw_secrets_when_requested(client):
         "routing_rules": 0,
         "collection_schemas": 0,
         "collection_aliases": 0,
+        "routing_rollouts": 0,
         "secrets_included": True,
     }
     assert "super-secret-key" not in str(audit_kwargs["details"])
+
+
+def test_state_export_blocks_plaintext_secrets_outside_development(
+    client,
+    monkeypatch,
+):
+    """Production backups use secret references/encryption, never JSON downloads."""
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DEPLOYMENT_PROFILE", "enterprise")
+    client.app.state.federation_service.clusters_config = {
+        "cluster-a": {
+            "name": "cluster-a",
+            "host": "typesense-a",
+            "port": 8108,
+            "api_key": "secret-canary",
+        }
+    }
+
+    r = client.get("/admin/state/export?include_secrets=true")
+
+    assert r.status_code == 403
+    assert r.headers["Cache-Control"] == "no-store, private"
+    assert "secret-canary" not in r.text
 
 
 def test_state_import_dry_run_validates_without_mutating(client):
@@ -470,6 +588,7 @@ def test_state_import_dry_run_validates_without_mutating(client):
         "routing_rules": 1,
         "collection_schemas": 1,
         "collection_aliases": 0,
+        "routing_rollouts": 0,
     }
     client.app.state.state_manager.save_state.assert_not_called()
     client.app.state.federation_service.reload_from_state.assert_not_called()
@@ -501,6 +620,30 @@ def test_state_import_rejects_schema_name_mismatch(client):
 
     assert r.status_code == 400
     assert "mismatch" in r.json().get("detail", "").lower()
+
+
+def test_state_import_rejects_invalid_cluster_protocol(client):
+    snapshot = {
+        "version": "imposbro.state.v1",
+        "secrets_included": True,
+        "federation_clusters_config": {
+            "cluster-a": {
+                "name": "cluster-a",
+                "host": "typesense-a",
+                "port": 8108,
+                "protocol": "ftp",
+                "api_key": "raw-secret",
+            }
+        },
+        "collection_routing_rules": {},
+        "collection_schemas": {},
+    }
+
+    r = client.post("/admin/state/import", json=snapshot)
+
+    assert r.status_code == 400
+    assert "'http' or 'https'" in r.json().get("detail", "").lower()
+    client.app.state.state_manager.save_state.assert_not_called()
 
 
 def test_state_import_rejects_routing_collection_mismatch(client):
@@ -589,24 +732,47 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
 
     assert r.status_code == 200
     assert r.json()["dry_run"] is False
+    normalized_clusters = {
+        "cluster-a": {
+            **snapshot["federation_clusters_config"]["cluster-a"],
+            "protocol": "http",
+        }
+    }
     client.app.state.state_manager.save_state.assert_called_once_with(
-        snapshot["federation_clusters_config"],
+        normalized_clusters,
         snapshot["collection_routing_rules"],
         snapshot["collection_schemas"],
         snapshot["collection_aliases"],
+        {},
+        audit=ANY,
+        event_type="state.imported",
+        event_payload={
+            "counts": {
+                "clusters": 1,
+                "routing_rules": 1,
+                "collection_schemas": 1,
+                "collection_aliases": 1,
+                "routing_rollouts": 0,
+            }
+        },
+        expected_revision=0,
     )
     client.app.state.federation_service.reload_from_state.assert_called_once_with(
-        snapshot["federation_clusters_config"],
+        normalized_clusters,
         snapshot["collection_routing_rules"],
         snapshot["collection_schemas"],
         snapshot["collection_aliases"],
+        {},
+        revision=0,
     )
     fake_typesense.aliases.upsert.assert_called_once_with(
         "products_live",
         {"collection_name": "products"},
     )
     client.app.state.federation_service.reconcile_collection_schemas.assert_called_once_with()
-    client.app.state.config_notifier.notify.assert_called_once_with("state_imported")
+    client.app.state.config_notifier.notify.assert_called_once_with(
+        "state_imported", revision=0
+    )
     audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
     assert audit_kwargs["action"] == "state_imported"
     assert audit_kwargs["details"] == {
@@ -614,6 +780,7 @@ def test_state_import_apply_persists_reloads_notifies_and_audits(client):
         "routing_rules": 1,
         "collection_schemas": 1,
         "collection_aliases": 1,
+        "routing_rollouts": 0,
     }
     assert "raw-secret" not in str(audit_kwargs)
 
@@ -789,9 +956,17 @@ def test_upsert_alias_uses_typesense_alias_collection_api(client):
         client.app.state.federation_service.routing_rules,
         client.app.state.federation_service.collection_schemas,
         {"cluster-a": {"products_live": {"collection_name": "products_v2"}}},
+        audit=ANY,
+        event_type="alias_upserted",
+        event_payload={
+            "action": "alias_upserted",
+            "resource_type": "alias",
+            "resource_id": "products_live",
+        },
+        expected_revision=0,
     )
     client.app.state.config_notifier.notify.assert_called_once_with(
-        "alias_upserted:cluster-a:products_live"
+        "alias_upserted:cluster-a:products_live", revision=0
     )
     audit_kwargs = client.app.state.state_manager.record_admin_audit.call_args.kwargs
     assert audit_kwargs["action"] == "alias_upserted"
@@ -825,10 +1000,67 @@ def test_delete_alias_removes_persisted_desired_alias(client):
         client.app.state.federation_service.routing_rules,
         client.app.state.federation_service.collection_schemas,
         {},
+        audit=ANY,
+        event_type="alias_deleted",
+        event_payload={
+            "action": "alias_deleted",
+            "resource_type": "alias",
+            "resource_id": "products_live",
+        },
+        expected_revision=0,
     )
     client.app.state.config_notifier.notify.assert_called_once_with(
-        "alias_deleted:cluster-a:products_live"
+        "alias_deleted:cluster-a:products_live", revision=0
     )
+
+
+def test_transactional_admin_mutation_returns_revision_and_rejects_stale_if_match(
+    client,
+):
+    from control_plane import InMemoryControlPlaneStore
+    from services.state_manager import StateManager
+
+    store = InMemoryControlPlaneStore()
+    manager = StateManager(store=store)
+    client.app.state.state_manager = manager
+    client.app.state.federation_service.collection_aliases = {}
+    fake_typesense = MagicMock()
+    client.app.state.federation_service.get_client_for_cluster.return_value = (
+        fake_typesense
+    )
+
+    committed = client.put(
+        "/admin/aliases/products_live"
+        "?collection_name=products_v2&cluster_name=cluster-a",
+        headers={"If-Match": '"0"'},
+    )
+    stale = client.put(
+        "/admin/aliases/products_next"
+        "?collection_name=products_v3&cluster_name=cluster-a",
+        headers={"If-Match": '"0"'},
+    )
+
+    assert committed.status_code == 200
+    assert committed.json()["revision"] == 1
+    assert manager.current_revision == 1
+    assert store.list_audit()[0]["action"] == "alias_upserted"
+    assert len(store.list_outbox()) == 1
+    assert stale.status_code == 409
+    assert stale.headers["ETag"] == '"1"'
+    assert stale.json()["detail"]["code"] == "control_plane_revision_conflict"
+    assert fake_typesense.aliases.upsert.call_count == 1
+
+
+def test_enterprise_admin_mutation_requires_if_match(client, monkeypatch):
+    from settings import settings
+
+    monkeypatch.setattr(settings, "DEPLOYMENT_PROFILE", "enterprise")
+    client.app.state.state_manager.current_revision = 12
+
+    response = client.delete("/admin/routing-rules/products")
+
+    assert response.status_code == 428
+    assert response.headers["ETag"] == '"12"'
 
 
 def test_set_routing_rules_omits_null_fanout_field(client):

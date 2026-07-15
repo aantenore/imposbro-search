@@ -432,15 +432,14 @@ export default function CollectionsPage() {
                         Define a name and at least one field. The collection will be created on every registered cluster.
                     </p>
                     <form onSubmit={handleCreate} className="space-y-4">
-                        <div>
-                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Collection name</label>
-                            <Input
-                                placeholder="e.g. products"
-                                value={newCollection.name}
-                                onChange={(e) => setNewCollection(prev => ({ ...prev, name: e.target.value }))}
-                                required
-                            />
-                        </div>
+                        <Input
+                            label="Collection name"
+                            name="collection_name"
+                            placeholder="e.g. products"
+                            value={newCollection.name}
+                            onChange={(e) => setNewCollection(prev => ({ ...prev, name: e.target.value }))}
+                            required
+                        />
                         <Select
                             label="Default sorting field"
                             value={newCollection.default_sorting_field}
@@ -467,6 +466,7 @@ export default function CollectionsPage() {
                                     <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
                                         <Input
                                             className="flex-1"
+                                            aria-label={`Field ${index + 1} name`}
                                             placeholder="Field Name"
                                             name="name"
                                             value={field.name}
@@ -474,6 +474,7 @@ export default function CollectionsPage() {
                                         />
                                         <Select
                                             className="xl:w-44"
+                                            aria-label={`Field ${index + 1} type`}
                                             name="type"
                                             value={field.type}
                                             onChange={(e) => handleFieldChange(index, e)}
@@ -485,6 +486,7 @@ export default function CollectionsPage() {
                                         {field.type === 'float[]' && (
                                             <Input
                                                 className="xl:w-28"
+                                                aria-label={`Field ${index + 1} vector dimensions`}
                                                 placeholder="num_dim"
                                                 name="num_dim"
                                                 type="number"
@@ -503,6 +505,7 @@ export default function CollectionsPage() {
                                         <IconButton
                                             type="button"
                                             variant="danger"
+                                            aria-label={`Remove field ${index + 1}`}
                                             onClick={() => handleRemoveField(index)}
                                         >
                                             <X size={16} />
@@ -511,6 +514,7 @@ export default function CollectionsPage() {
                                     {field.type === 'float[]' && (
                                         <Textarea
                                             className="mt-3 min-h-24 font-mono text-xs"
+                                            aria-label={`Field ${index + 1} embedding configuration`}
                                             placeholder='{"from":["title"],"model_config":{"model_name":"ts/all-MiniLM-L12-v2"}}'
                                             name="embed_json"
                                             value={field.embed_json || ''}

@@ -1,0 +1,9 @@
+# Render Helm with the same fail-closed enterprise profile used by the chart
+# quality gate. Rendering a production chart without its required secret and
+# immutable-image inputs is invalid and would skip the chart after the first
+# deliberate validation failure.
+ignorefile: .trivyignore.yaml
+misconfiguration:
+  helm:
+    values:
+      - helm/enterprise-ci-values.yaml

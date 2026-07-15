@@ -16,17 +16,23 @@ spec:
     {{- with .Values.networkPolicy.queryApi.egress }}
     - Egress
     {{- end }}
+  {{- if or .Values.networkPolicy.queryApi.allowAdminUi .Values.networkPolicy.queryApi.allowIndexingService .Values.networkPolicy.ingressController.from .Values.networkPolicy.queryApi.ingress.from .Values.networkPolicy.queryApi.health.from (and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.queryApi.enabled .Values.networkPolicy.prometheus.from) }}
   ingress:
     - ports:
         - protocol: TCP
           port: {{ .Values.queryApi.port }}
-      {{- if or .Values.networkPolicy.queryApi.allowAdminUi .Values.networkPolicy.ingressController.from .Values.networkPolicy.queryApi.ingress.from (and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.queryApi.enabled .Values.networkPolicy.prometheus.from) }}
       from:
         {{- if .Values.networkPolicy.queryApi.allowAdminUi }}
         - podSelector:
             matchLabels:
               {{- include "imposbro-search.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: admin-ui
+        {{- end }}
+        {{- if .Values.networkPolicy.queryApi.allowIndexingService }}
+        - podSelector:
+            matchLabels:
+              {{- include "imposbro-search.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: indexing-service
         {{- end }}
         {{- if and .Values.monitoring.serviceMonitor.enabled .Values.monitoring.serviceMonitor.queryApi.enabled }}
         {{- with .Values.networkPolicy.prometheus.from }}
@@ -39,7 +45,12 @@ spec:
         {{- with .Values.networkPolicy.queryApi.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+        {{- with .Values.networkPolicy.queryApi.health.from }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- with .Values.networkPolicy.queryApi.egress }}
   egress:
     {{- toYaml . | nindent 4 }}
@@ -62,11 +73,11 @@ spec:
     {{- with .Values.networkPolicy.adminUi.egress }}
     - Egress
     {{- end }}
+  {{- if or .Values.networkPolicy.ingressController.from .Values.networkPolicy.adminUi.ingress.from .Values.networkPolicy.adminUi.health.from }}
   ingress:
     - ports:
         - protocol: TCP
           port: {{ .Values.adminUi.port }}
-      {{- if or .Values.networkPolicy.ingressController.from .Values.networkPolicy.adminUi.ingress.from }}
       from:
         {{- with .Values.networkPolicy.ingressController.from }}
         {{- toYaml . | nindent 8 }}
@@ -74,17 +85,21 @@ spec:
         {{- with .Values.networkPolicy.adminUi.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+        {{- with .Values.networkPolicy.adminUi.health.from }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- with .Values.networkPolicy.adminUi.egress }}
   egress:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-{{- if and .Values.indexingService.metrics.enabled .Values.indexingService.metrics.service.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "imposbro-search.fullname" . }}-indexing-service-metrics
+  name: {{ include "imposbro-search.fullname" . }}-indexing-service
   labels:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: indexing-service
@@ -98,11 +113,12 @@ spec:
     {{- with .Values.networkPolicy.indexingService.egress }}
     - Egress
     {{- end }}
+  {{- if or (and .Values.indexingService.metrics.enabled .Values.networkPolicy.prometheus.from) (and .Values.indexingService.metrics.enabled .Values.networkPolicy.indexingService.metrics.ingress.from) .Values.networkPolicy.indexingService.health.ingress.from }}
   ingress:
+    {{- if .Values.indexingService.metrics.enabled }}
     - ports:
         - protocol: TCP
           port: {{ .Values.indexingService.metrics.port }}
-      {{- if or .Values.networkPolicy.prometheus.from .Values.networkPolicy.indexingService.metrics.ingress.from }}
       from:
         {{- with .Values.networkPolicy.prometheus.from }}
         {{- toYaml . | nindent 8 }}
@@ -110,10 +126,19 @@ spec:
         {{- with .Values.networkPolicy.indexingService.metrics.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.indexingService.health.ingress.from }}
+    - ports:
+        - protocol: TCP
+          port: {{ $.Values.indexingService.health.port }}
+      from:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- with .Values.networkPolicy.indexingService.egress }}
   egress:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-{{- end }}
 {{- end }}

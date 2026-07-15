@@ -6,6 +6,10 @@ metadata:
     {{- include "imposbro-search.labels" . | nindent 4 }}
     app.kubernetes.io/component: admin-ui
 spec:
+  revisionHistoryLimit: {{ .Values.adminUi.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.adminUi.minReadySeconds }}
+  strategy:
+    {{- toYaml .Values.adminUi.strategy | nindent 4 }}
   {{- if not .Values.adminUi.autoscaling.enabled }}
   replicas: {{ .Values.adminUi.replicaCount | default .Values.replicaCount }}
   {{- end }}
@@ -15,10 +19,16 @@ spec:
       app.kubernetes.io/component: admin-ui
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.config.useSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- else }}
+        checksum/secret-source: {{ include "imposbro-search.secretSourceChecksum" . }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "imposbro-search.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: admin-ui
@@ -28,6 +38,12 @@ spec:
     spec:
       serviceAccountName: {{ include "imposbro-search.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.adminUi.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -56,20 +72,65 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          env:
+            {{- include "imposbro-search.secretEnv" (dict "root" . "keys" .Values.secrets.workloadKeys.adminUi) | nindent 12 }}
+            {{- if .Values.tls.trustBundle.enabled }}
+            - name: NODE_EXTRA_CA_CERTS
+              value: {{ printf "%s/ca.crt" .Values.tls.trustBundle.mountPath | quote }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "imposbro-search.fullname" . }}-config
-            {{- if .Values.config.useSecret }}
-            - secretRef:
-                name: {{ include "imposbro-search.fullname" . }}-secret
+          {{- if or .Values.writableTmpDir.enabled .Values.tls.trustBundle.enabled }}
+          volumeMounts:
+            {{- if .Values.writableTmpDir.enabled }}
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
             {{- end }}
+            {{- if .Values.tls.trustBundle.enabled }}
+            - name: trust-bundle
+              mountPath: {{ .Values.tls.trustBundle.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.writableTmpDir.enabled .Values.tls.trustBundle.enabled }}
+      volumes:
+        {{- if .Values.writableTmpDir.enabled }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.writableTmpDir.sizeLimit | quote }}
+        - name: next-cache
+          emptyDir:
+            sizeLimit: {{ .Values.writableTmpDir.sizeLimit | quote }}
+        {{- end }}
+        {{- if .Values.tls.trustBundle.enabled }}
+        - name: trust-bundle
+          secret:
+            secretName: {{ .Values.tls.trustBundle.existingSecret | quote }}
+            optional: false
+            items:
+              - key: {{ .Values.tls.trustBundle.caKey | quote }}
+                path: ca.crt
+              {{- range .Values.tls.trustBundle.additionalKeys }}
+              - key: {{ .key | quote }}
+                path: {{ .path | quote }}
+              {{- end }}
+        {{- end }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if or .Values.affinity .Values.availability.podAntiAffinity.enabled }}
       affinity:
+        {{- with .Values.affinity }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.availability.podAntiAffinity.enabled }}
+        {{- include "imposbro-search.podAntiAffinity" (dict "root" . "component" "admin-ui") | nindent 8 }}
+        {{- end }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

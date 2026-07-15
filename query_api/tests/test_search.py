@@ -52,13 +52,17 @@ class PaginatedDocuments:
     def __init__(self, hits):
         self.hits = hits
         self.params = None
+        self.params_history = []
 
     def search(self, params):
         self.params = params
+        self.params_history.append(params)
         per_page = int(params.get("per_page", 10))
+        page = int(params.get("page", 1))
+        start = (page - 1) * per_page
         return {
             "found": len(self.hits),
-            "hits": self.hits[:per_page],
+            "hits": self.hits[start:start + per_page],
         }
 
 
@@ -111,8 +115,10 @@ def test_search_merge_sorts_higher_text_match_first(client):
     r = client.get("/search/products?q=test&query_by=name")
 
     assert r.status_code == 200
-    hits = r.json()["hits"]
+    data = r.json()
+    hits = data["hits"]
     assert [hit["document"]["id"] for hit in hits] == ["high", "low"]
+    assert data["found_relation"] == "upper_bound"
 
 
 def test_search_respects_simple_global_sort_by(client):
@@ -196,8 +202,10 @@ def test_search_deduplicates_using_global_sort(client):
     assert len(hits) == 1
     assert hits[0]["document"]["price"] == 5
     assert data["found"] == 1
+    assert data["found_relation"] == "window_lower_bound"
     assert data["raw_found"] == 2
     assert data["deduplicated_found"] == 1
+    assert data["deduplicated_found_window"] == 1
 
 
 def test_offset_search_fetches_extra_hit_for_next_offset(client):
@@ -218,7 +226,145 @@ def test_offset_search_fetches_extra_hit_for_next_offset(client):
     assert [hit["document"]["id"] for hit in data["hits"]] == ["doc-1"]
     assert data["has_more"] is True
     assert data["next_offset"] == 1
+    assert data["found_relation"] == "exact"
     assert cluster.documents.params["per_page"] == 2
+
+
+def test_deep_pagination_fetches_shards_in_typesense_sized_pages(client):
+    """A global window above 250 must be chunked instead of sent as per_page > 250."""
+    hits = [
+        {
+            "document": {"id": f"doc-{index:03d}", "name": f"Document {index}"},
+            "text_match": 1000 - index,
+        }
+        for index in range(300)
+    ]
+    cluster = PaginatedTypesenseClient(hits)
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-a", cluster),
+    ]
+
+    r = client.get("/search/products?q=test&query_by=name&page=2&per_page=150")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data["hits"]) == 150
+    assert data["hits"][0]["document"]["id"] == "doc-150"
+    assert [params["page"] for params in cluster.documents.params_history] == [1, 2]
+    assert all(
+        params["per_page"] <= 250 for params in cluster.documents.params_history
+    )
+
+
+def test_search_keeps_id_for_merge_then_applies_include_projection(client):
+    """include_fields may hide id publicly, but shard requests still need it for merge."""
+    cluster = PaginatedTypesenseClient([
+        {
+            "document": {"id": "doc-1", "name": "First"},
+            "text_match": 100,
+        }
+    ])
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-a", cluster),
+    ]
+
+    r = client.get(
+        "/search/products?q=test&query_by=name&include_fields=name"
+    )
+
+    assert r.status_code == 200
+    assert r.json()["hits"][0]["document"] == {"name": "First"}
+    assert cluster.documents.params["include_fields"] == "name,id"
+
+
+def test_search_keeps_excluded_sort_keys_for_merge_then_hides_them(client):
+    """Global sort remains correct when callers exclude id and the sort field."""
+    expensive = FakeTypesenseClient(
+        {
+            "found": 1,
+            "hits": [
+                {
+                    "document": {"id": "expensive", "name": "Expensive", "price": 20},
+                    "text_match": 100,
+                }
+            ],
+        }
+    )
+    cheap = FakeTypesenseClient(
+        {
+            "found": 1,
+            "hits": [
+                {
+                    "document": {"id": "cheap", "name": "Cheap", "price": 5},
+                    "text_match": 10,
+                }
+            ],
+        }
+    )
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-expensive", expensive),
+        ("cluster-cheap", cheap),
+    ]
+
+    r = client.get(
+        "/search/products?q=test&query_by=name&sort_by=price:asc"
+        "&exclude_fields=id,price"
+    )
+
+    assert r.status_code == 200
+    assert [hit["document"]["name"] for hit in r.json()["hits"]] == [
+        "Cheap",
+        "Expensive",
+    ]
+    assert all(
+        "id" not in hit["document"] and "price" not in hit["document"]
+        for hit in r.json()["hits"]
+    )
+    assert "exclude_fields" not in expensive.documents.params
+    assert "exclude_fields" not in cheap.documents.params
+
+
+def test_search_uses_stored_default_sorting_field_for_global_merge(client):
+    """Shard and gateway ordering agree with the collection's default sort contract."""
+    cheap = FakeTypesenseClient(
+        {
+            "found": 1,
+            "hits": [
+                {
+                    "document": {"id": "cheap", "name": "Cheap", "price": 5},
+                    "text_match": 100,
+                }
+            ],
+        }
+    )
+    expensive = FakeTypesenseClient(
+        {
+            "found": 1,
+            "hits": [
+                {
+                    "document": {"id": "expensive", "name": "Expensive", "price": 20},
+                    "text_match": 100,
+                }
+            ],
+        }
+    )
+    client.app.state.federation_service.collection_schemas = {
+        "products": {"default_sorting_field": "price"}
+    }
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-cheap", cheap),
+        ("cluster-expensive", expensive),
+    ]
+
+    r = client.get("/search/products?q=test&query_by=name")
+
+    assert r.status_code == 200
+    assert [hit["document"]["id"] for hit in r.json()["hits"]] == [
+        "expensive",
+        "cheap",
+    ]
+    assert cheap.documents.params["sort_by"] == "_text_match:desc,price:desc"
+    assert expensive.documents.params["sort_by"] == "_text_match:desc,price:desc"
 
 
 def test_get_search_passes_advanced_params(client):
@@ -288,6 +434,53 @@ def test_search_all_clusters_failed_returns_503(client):
 
     assert r.status_code == 503
     assert "all" in r.json().get("detail", "").lower()
+
+
+def test_vector_multisearch_embedded_error_counts_as_failed_shard(client):
+    """Typesense reports individual multi-search failures inside an HTTP 200 body."""
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        (
+            "cluster-vector",
+            FakeTypesenseClient({"code": 400, "error": "invalid vector query"}),
+        ),
+    ]
+
+    r = client.post(
+        "/search/products",
+        json={
+            "q": "*",
+            "vector_query": "embedding:([0.1,0.2], k:10)",
+            "offset": 0,
+            "limit": 10,
+        },
+    )
+
+    assert r.status_code == 503
+    assert "all" in r.json().get("detail", "").lower()
+
+
+def test_search_requires_offset_and_limit_together(client):
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-ok", FakeTypesenseClient({"found": 0, "hits": []})),
+    ]
+
+    r = client.get("/search/products?q=test&query_by=name&offset=10")
+
+    assert r.status_code == 400
+    assert "offset and limit" in r.json().get("detail", "").lower()
+
+
+def test_search_rejects_limit_hits_smaller_than_requested_window(client):
+    client.app.state.federation_service.get_named_clients_for_search.return_value = [
+        ("cluster-ok", FakeTypesenseClient({"found": 0, "hits": []})),
+    ]
+
+    r = client.get(
+        "/search/products?q=test&query_by=name&page=3&per_page=10&limit_hits=25"
+    )
+
+    assert r.status_code == 400
+    assert "limit_hits" in r.json().get("detail", "").lower()
 
 
 def test_search_rejects_unmergeable_sort_by(client):

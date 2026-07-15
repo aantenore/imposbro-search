@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Trash2, Server } from 'lucide-react';
 import { api } from '../../lib/api';
+import { createEmptyClusterForm, formatClusterEndpoint } from '../../lib/clusterConfig';
 import { useNotification, Notification } from '../../hooks/useNotification';
 import { ConfirmationModal } from '../../components/ui';
 import Card from '../../components/ui/Card';
 import Button, { IconButton } from '../../components/ui/Button';
-import Input from '../../components/ui/Input';
+import Input, { Select } from '../../components/ui/Input';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -20,12 +21,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
  */
 export default function ClustersPage() {
     const [clusters, setClusters] = useState([]);
-    const [newCluster, setNewCluster] = useState({
-        name: '',
-        host: '',
-        port: 8108,
-        api_key: ''
-    });
+    const [newCluster, setNewCluster] = useState(createEmptyClusterForm);
     const [clusterToDelete, setClusterToDelete] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -60,7 +56,7 @@ export default function ClustersPage() {
         try {
             await api.clusters.create(newCluster);
             showSuccess(`Cluster '${newCluster.name}' registered successfully!`);
-            setNewCluster({ name: '', host: '', port: 8108, api_key: '' });
+            setNewCluster(createEmptyClusterForm());
             fetchClusters();
         } catch (err) {
             showError(err.message);
@@ -127,7 +123,7 @@ export default function ClustersPage() {
                                     <div className="min-w-0">
                                         <p className="font-semibold text-foreground">{cluster.name}</p>
                                         <p className="text-xs font-mono text-muted-foreground">
-                                            {cluster.host}:{cluster.port}
+                                            {formatClusterEndpoint(cluster)}
                                         </p>
                                         {cluster.name !== 'default' && (
                                             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -186,6 +182,17 @@ export default function ClustersPage() {
                                 onChange={handleInputChange('host')}
                                 required
                             />
+                        </div>
+                        <div>
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground">Protocol</label>
+                            <Select
+                                value={newCluster.protocol}
+                                onChange={handleInputChange('protocol')}
+                                required
+                            >
+                                <option value="http">HTTP</option>
+                                <option value="https">HTTPS</option>
+                            </Select>
                         </div>
                         <div>
                             <label className="mb-1 block text-xs font-medium text-muted-foreground">Port</label>

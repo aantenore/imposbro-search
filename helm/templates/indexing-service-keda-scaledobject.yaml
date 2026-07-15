@@ -38,8 +38,8 @@ spec:
         {{- with .Values.indexingService.keda.kafka.unsafeSsl }}
         unsafeSsl: {{ . | quote }}
         {{- end }}
-      {{- with .Values.indexingService.keda.authenticationRef.name }}
+      {{- if or .Values.indexingService.keda.authenticationRef.create .Values.indexingService.keda.authenticationRef.name }}
       authenticationRef:
-        name: {{ . | quote }}
+        name: {{ include "imposbro-search.kedaAuthenticationName" . | quote }}
       {{- end }}
 {{- end }}

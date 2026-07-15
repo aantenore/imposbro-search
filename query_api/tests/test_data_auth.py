@@ -70,7 +70,7 @@ def test_scoped_search_key_cannot_ingest(client, monkeypatch):
     )
 
     assert search.status_code == 404
-    assert ingest.status_code == 401
+    assert ingest.status_code == 403
 
 
 def test_scoped_search_key_cannot_delete_documents(client, monkeypatch):
@@ -88,7 +88,7 @@ def test_scoped_search_key_cannot_delete_documents(client, monkeypatch):
         headers={"X-API-Key": "search-secret"},
     )
 
-    assert r.status_code == 401
+    assert r.status_code == 403
 
 
 def test_scoped_search_key_can_read_documents_but_ingest_key_cannot(client, monkeypatch):
@@ -112,7 +112,7 @@ def test_scoped_search_key_can_read_documents_but_ingest_key_cannot(client, monk
     )
 
     assert read_allowed.status_code == 404
-    assert read_denied.status_code == 401
+    assert read_denied.status_code == 403
 
 
 def test_scoped_ingest_key_cannot_search(client, monkeypatch):
@@ -136,7 +136,7 @@ def test_scoped_ingest_key_cannot_search(client, monkeypatch):
     )
 
     assert ingest.status_code == 200
-    assert search.status_code == 401
+    assert search.status_code == 403
 
 
 def test_scoped_data_key_grants_search_and_ingest(client, monkeypatch):
@@ -187,7 +187,7 @@ def test_collection_scoped_search_key_only_grants_matching_collection(client, mo
     )
 
     assert matching.status_code == 404
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
 
 def test_collection_scoped_ingest_key_only_grants_matching_collection(client, monkeypatch):
@@ -219,7 +219,7 @@ def test_collection_scoped_ingest_key_only_grants_matching_collection(client, mo
     )
 
     assert matching.status_code == 200
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
 
 def test_collection_scoped_ingest_key_allows_matching_batch(client, monkeypatch):
@@ -252,7 +252,7 @@ def test_collection_scoped_ingest_key_allows_matching_batch(client, monkeypatch)
 
     assert matching.status_code == 200
     assert matching.json()["accepted"] == 1
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
 
 def test_collection_scoped_ingest_key_can_delete_matching_collection(client, monkeypatch):
@@ -282,7 +282,7 @@ def test_collection_scoped_ingest_key_can_delete_matching_collection(client, mon
     )
 
     assert matching.status_code == 200
-    assert denied.status_code == 401
+    assert denied.status_code == 403
 
 
 def test_invalid_scoped_api_keys_configuration_fails_closed(client, monkeypatch):

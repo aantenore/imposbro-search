@@ -100,6 +100,22 @@ networkPolicy:
         podSelector:
           matchLabels:
             app.kubernetes.io/name: prometheus
+  queryApi:
+    health:
+      from:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+  adminUi:
+    health:
+      from:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+  indexingService:
+    health:
+      ingress:
+        from:
+          - ipBlock:
+              cidr: 10.0.0.0/8
 
 monitoring:
   serviceMonitor:
@@ -113,6 +129,10 @@ monitoring:
 
 config:
   useSecret: true
+  INDEXING_CHECKPOINT_BACKEND: memory
+  INDEXING_CHECKPOINT_LOCK_TIMEOUT_MS: "5000"
+  INDEXING_ALLOW_VOLATILE_CHECKPOINTS: "true"
+  INDEXING_ALLOW_TYPESENSE_CHECKPOINTS: "false"
   KAFKA_BROKER_URL: kafka:9092
   REDIS_URL: redis://redis:6379
   INTERNAL_STATE_NODES: typesense-state-1,typesense-state-2,typesense-state-3
@@ -123,5 +143,9 @@ config:
   ADMIN_API_KEY: test-admin-key
   INTERNAL_QUERY_API_ADMIN_API_KEY: test-admin-key
   DATA_API_KEY: test-data-key
+  ADMIN_UI_PUBLIC_ORIGIN: https://admin.imposbro.example.com
+  ADMIN_UI_SECURITY_PROFILE: development
+  ADMIN_UI_SERVER_CREDENTIAL_MODE: trusted-header-legacy
+  ADMIN_UI_ALLOW_LEGACY_TRUSTED_HEADER: "true"
   ADMIN_UI_PROXY_TRUSTED_HEADER: x-authenticated-user
   ADMIN_UI_PROXY_TRUSTED_VALUE: operator

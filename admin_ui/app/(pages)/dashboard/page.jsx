@@ -251,7 +251,7 @@ export default function DashboardPage() {
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-muted/30 p-4">
-                <h4 className="font-semibold text-violet-500">High availability</h4>
+                <h4 className="font-semibold text-violet-400">High availability</h4>
                 <p className="mt-1 text-muted-foreground leading-relaxed">
                   State in a 3-node Typesense HA cluster with Raft consensus.
                 </p>

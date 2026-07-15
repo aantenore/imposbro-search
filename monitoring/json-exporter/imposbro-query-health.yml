@@ -1,0 +1,18 @@
+# json_exporter contract for the Query API /health response.
+# The scrape target must be each Query API replica, not a load-balanced service,
+# when this module is used to evaluate replica convergence.
+modules:
+  imposbro_query_health:
+    metrics:
+      - name: imposbro_query_api_control_plane_authoritative_revision
+        help: Authoritative control-plane revision observed by this Query API replica.
+        type: value
+        path: "{ .control_plane.authoritative_revision }"
+      - name: imposbro_query_api_control_plane_applied_revision
+        help: Control-plane revision applied to this Query API replica.
+        type: value
+        path: "{ .control_plane.applied_revision }"
+      - name: imposbro_query_api_pending_indexing_events
+        help: Durable indexing events pending publication as seen by this Query API replica.
+        type: value
+        path: "{ .control_plane.pending_indexing_events }"

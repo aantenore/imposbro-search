@@ -1,5 +1,5 @@
 # Stage 1: Base - A common base for all stages
-FROM node:22-alpine AS base
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS base
 WORKDIR /app
 
 # Stage 2: Dependencies - Install dependencies in a separate layer
@@ -25,8 +25,12 @@ RUN npm run build && cp -R .next/static .next/standalone/.next/
 FROM base AS runner
 WORKDIR /app
 
-# Set runtime environment variable for the final running container
-ENV INTERNAL_QUERY_API_URL=$INTERNAL_QUERY_API_URL
+# The standalone runtime only needs Node. Removing npm eliminates an unused
+# privileged package-management surface and its transitive vulnerability set.
+RUN npm uninstall --global npm
+
+# INTERNAL_QUERY_API_URL is intentionally supplied at runtime so the same
+# immutable image can be promoted across environments without rebuilding it.
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 

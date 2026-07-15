@@ -23,6 +23,8 @@ __pycache__/
 htmlcov/
 *.cover
 .hypothesis/
+admin_ui/playwright-report/
+admin_ui/test-results/
 
 # Environments
 .env
