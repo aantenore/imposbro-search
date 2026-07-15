@@ -47,6 +47,7 @@ from models import (
 from observability import get_request_id, get_traceparent
 from services import FederationService, KafkaService
 from settings import settings
+from structured_logging import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -929,11 +930,11 @@ def get_document(
             failed_clusters.append(target_cluster_name)
             logger.warning(
                 "Document read failed for %s/%s on cluster %s request_id=%s: %s",
-                collection_name,
-                document_id,
-                target_cluster_name,
-                get_request_id(request),
-                exc,
+                redact_text(collection_name),
+                redact_text(document_id),
+                redact_text(target_cluster_name),
+                redact_text(get_request_id(request)),
+                redact_text(exc),
             )
             continue
 

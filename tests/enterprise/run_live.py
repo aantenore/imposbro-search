@@ -116,6 +116,15 @@ def sanitize(value: Any, *, key: str = "") -> Any:
     return scrub_text(str(value))
 
 
+def verified_tls_client_context(cafile: Optional[str] = None) -> ssl.SSLContext:
+    """Build a certificate-verifying client context that rejects legacy TLS."""
+    context = ssl.create_default_context(cafile=cafile)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
+
+
 def _git_metadata(repository: Path) -> Dict[str, Any]:
     try:
         commit = subprocess.run(
@@ -1651,7 +1660,7 @@ def _captured_spans(trace_id: str) -> list[Dict[str, Any]]:
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ScenarioFailure("OTLP capture endpoint must use HTTPS")
-    context = ssl.create_default_context(cafile=ca_file)
+    context = verified_tls_client_context(ca_file)
     _, body, _ = _json_request(
         endpoint,
         f"/spans?trace_id={quote(trace_id)}",
@@ -1932,9 +1941,7 @@ def scenario_tls_smoke(_store: EvidenceStore) -> Dict[str, Any]:
     parsed = urlparse(endpoint)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ScenarioFailure("TLS smoke endpoint must be an https URL")
-    context = ssl.create_default_context(cafile=ca_file)
-    context.check_hostname = True
-    context.verify_mode = ssl.CERT_REQUIRED
+    context = verified_tls_client_context(ca_file)
     import socket
 
     with socket.create_connection((parsed.hostname, parsed.port or 443), timeout=10) as raw:

@@ -25,6 +25,14 @@ def test_redaction_covers_tokens_urls_passwords_and_api_keys():
     assert redacted.count("[REDACTED]") == 5
 
 
+def test_redaction_neutralizes_log_forging_line_breaks():
+    redacted = redact_text("safe\r\nlevel=ERROR forged\nnext\rlast")
+
+    assert redacted == r"safe\nlevel=ERROR forged\nnext\rlast"
+    assert "\n" not in redacted
+    assert "\r" not in redacted
+
+
 def test_json_formatter_emits_build_and_request_context_without_secret():
     formatter = RedactingJsonFormatter(service="query-api", version="4.0.0")
     record = logging.LogRecord(

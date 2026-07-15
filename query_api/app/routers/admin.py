@@ -68,6 +68,7 @@ from secret_resolver import SecretResolutionError
 from services import FederationService, KafkaService, StateManager, SyncConfigNotifier
 from services.routing_migration import RoutingMigrationError, RoutingMigrationExecutor
 from settings import settings
+from structured_logging import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -1435,7 +1436,7 @@ async def upsert_alias(
     except Exception as exc:
         logger.error(
             "Alias %s desired state committed but provider reconciliation failed",
-            alias_name,
+            redact_text(alias_name),
         )
         raise HTTPException(
             status_code=503,
@@ -1530,7 +1531,7 @@ async def delete_alias(
     except Exception as exc:
         logger.error(
             "Alias %s removal desired state committed but provider reconciliation failed",
-            alias_name,
+            redact_text(alias_name),
         )
         raise HTTPException(
             status_code=503,
@@ -1569,7 +1570,11 @@ def _routing_rollout_or_404(
     try:
         return RoutingRollout.from_dict(payload)
     except (KeyError, TypeError, ValueError) as exc:
-        logger.error("Persisted routing rollout %s is invalid: %s", rollout_id, exc)
+        logger.error(
+            "Persisted routing rollout %s is invalid: %s",
+            redact_text(rollout_id),
+            redact_text(exc),
+        )
         raise HTTPException(
             status_code=500,
             detail={
