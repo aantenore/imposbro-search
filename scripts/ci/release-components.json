@@ -1,0 +1,19 @@
+{
+  "include": [
+    {
+      "component": "query-api",
+      "context": "query_api",
+      "build_args": ""
+    },
+    {
+      "component": "indexing-service",
+      "context": "indexing_service",
+      "build_args": ""
+    },
+    {
+      "component": "admin-ui",
+      "context": "admin_ui",
+      "build_args": "INTERNAL_QUERY_API_URL=http://query-api:8000"
+    }
+  ]
+}

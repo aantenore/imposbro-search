@@ -96,6 +96,8 @@ def main() -> int:
         print(
             "ready:",
             ready.get("status"),
+            f"ready={ready.get('ready')}",
+            f"policy={ready.get('readiness_policy')}",
             f"clusters={ready.get('clusters')}",
             f"collections={ready.get('collections')}",
         )
@@ -131,7 +133,13 @@ def main() -> int:
         services_stopped = True
 
         degraded = wait_for_degraded_ready(query_api_url, args.timeout_seconds)
-        print("ready-degraded:", degraded)
+        print(
+            "ready-degraded:",
+            degraded.get("status"),
+            f"ready={degraded.get('ready')}",
+            f"policy={degraded.get('readiness_policy')}",
+            f"data_clusters={degraded.get('data_clusters')}",
+        )
 
         partial = wait_for_vector_result(
             query_api_url,

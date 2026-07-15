@@ -1,0 +1,456 @@
+name: Enterprise CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow_ref }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.11.21"
+
+jobs:
+  workflow-policy:
+    name: Workflow policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      component-matrix: ${{ steps.release-components.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Validate workflow policy
+        run: python3 scripts/ci/validate-workflows.py
+      - name: Validate shell and Python helpers
+        run: |
+          bash -n scripts/ci/*.sh
+          python3 -m compileall -q scripts/ci
+      - name: Validate release component inventory
+        id: release-components
+        run: |
+          matrix="$(python3 scripts/ci/release-matrix.py)"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+      - name: Install and run actionlint
+        run: |
+          actionlint="$(scripts/ci/install-actionlint.sh)"
+          "$actionlint" -color
+
+  lockfiles:
+    name: Reproducible dependency locks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Recompile and compare locks byte-for-byte
+        run: scripts/ci/verify-lockfiles.sh
+
+  contracts:
+    name: Canonical event contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: scripts/ci/python-tools-query.lock
+      - name: Install hash-locked schema tooling
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          -r query_api/requirements.lock
+          -r scripts/ci/python-tools-query.lock
+      - name: Validate declared JSON Schema dialects
+        run: python scripts/ci/validate-json-contracts.py
+      - name: Reject unreviewed OpenAPI v1 drift
+        run: python scripts/ci/openapi-contract.py
+      - name: Prove OpenAPI v1 compatibility with the previous release
+        run: |
+          python scripts/ci/openapi-compat.py
+          python -m unittest discover -s scripts/ci/tests -p 'test_*.py'
+
+  query-api:
+    name: Query API and PostgreSQL contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
+        env:
+          POSTGRES_DB: imposbro_test
+          POSTGRES_PASSWORD: ${{ github.sha }}
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d imposbro_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            query_api/requirements.lock
+            scripts/ci/python-tools-query.lock
+      - name: Install hash-locked dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          -r query_api/requirements.lock
+          -r scripts/ci/python-tools-query.lock
+      - name: Prove PostgreSQL migration and concurrent CAS
+        env:
+          TEST_CONTROL_PLANE_POSTGRES_URL: postgresql+psycopg://postgres:${{ github.sha }}@127.0.0.1:5432/imposbro_test
+        run: python -m pytest -q query_api/tests/test_control_plane_postgres_integration.py
+      - name: Run Query API regression suite
+        env:
+          TEST_CONTROL_PLANE_POSTGRES_URL: postgresql+psycopg://postgres:${{ github.sha }}@127.0.0.1:5432/imposbro_test
+        run: >-
+          python -m pytest -q query_api/tests
+          --ignore=query_api/tests/test_control_plane_postgres_integration.py
+
+  enterprise-live-e2e:
+    name: PostgreSQL, Kafka, Redis, and two-cluster recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Execute fail-closed live enterprise harness
+        env:
+          E2E_DEPENDENCY_MODE: compose
+          E2E_EVIDENCE_BASENAME: enterprise-e2e-ci.json
+          E2E_PRUNE_VOLUMES: "true"
+          E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/e2e/run-enterprise-e2e.sh
+      - name: Retain live dependency and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: enterprise-live-e2e-${{ github.sha }}
+          path: docs/evidence/enterprise-e2e-ci.json
+          retention-days: 30
+
+  indexing-worker:
+    name: Indexing worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            indexing_service/requirements.lock
+            scripts/ci/python-tools-indexing.lock
+      - name: Install hash-locked dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          -r indexing_service/requirements.lock
+          -r scripts/ci/python-tools-indexing.lock
+      - name: Run worker regression suite
+        run: python -m pytest -q indexing_service/tests
+
+  admin-ui:
+    name: Admin UI lint, test, and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: admin_ui/package-lock.json
+      - name: Install locked dependencies
+        run: npm --prefix admin_ui ci --ignore-scripts
+      - name: Lint
+        run: npm --prefix admin_ui run lint
+      - name: Test
+        run: npm --prefix admin_ui test
+      - name: Build
+        env:
+          INTERNAL_QUERY_API_URL: http://query-api.invalid
+        run: npm --prefix admin_ui run build
+
+  browser-e2e:
+    name: Admin UI browser E2E and WCAG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: admin_ui/package-lock.json
+      - name: Install locked dependencies
+        run: npm --prefix admin_ui ci --ignore-scripts
+      - name: Install the locked Chromium runtime
+        run: npm --prefix admin_ui exec playwright install --with-deps chromium
+      - name: Exercise desktop and mobile operator workflows
+        env:
+          CI: "true"
+        run: npm --prefix admin_ui run test:e2e
+      - name: Retain browser, axe, screenshot, and trace evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: warn
+          name: browser-e2e-${{ github.sha }}
+          path: |
+            admin_ui/playwright-report/
+            admin_ui/test-results/
+          retention-days: 30
+
+  helm:
+    name: Helm lint and render contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.1
+      - name: Lint and render chart scenarios
+        env:
+          HELM_TEST_VALUES: -f helm/ci-values.yaml
+        run: python3 scripts/test-helm-chart.py
+
+  operations-contracts:
+    name: SLO, alert, retention, and recovery contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: scripts/ci/python-tools-query.lock
+      - name: Install hash-locked test tooling
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          -r scripts/ci/python-tools-query.lock
+      - name: Validate operational artifacts with pinned upstream tooling
+        env:
+          OPS_PYTHON: python
+        run: scripts/ops/validate-ops-artifacts.sh
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Reject newly introduced vulnerable dependencies
+        id: dependency_review
+        continue-on-error: true
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          comment-summary-in-pr: never
+          fail-on-severity: high
+          retry-on-snapshot-warnings: true
+          show-openssf-scorecard: true
+      - name: Explain dependency graph fallback
+        if: steps.dependency_review.outcome != 'success'
+        run: >-
+          echo "GitHub dependency-graph review is unavailable for this repository;
+          the blocking full Python/npm graph audits run in the supply-chain job."
+
+  supply-chain:
+    name: Dependency, secret, and configuration scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: scripts/ci/python-tools-query.lock
+      - name: Install hash-locked audit tooling
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          -r scripts/ci/python-tools-query.lock
+      - name: Audit Python production locks
+        run: |
+          python -m pip_audit --requirement query_api/requirements.lock --require-hashes --disable-pip
+          python -m pip_audit --requirement indexing_service/requirements.lock --require-hashes --disable-pip
+          python -m pip_audit --requirement scripts/ci/python-tools-query.lock --require-hashes --disable-pip
+          python -m pip_audit --requirement scripts/ci/python-tools-indexing.lock --require-hashes --disable-pip
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            admin_ui/package-lock.json
+      - name: Audit npm production and development dependency graphs
+        run: |
+          npm audit --audit-level=high
+          npm --prefix admin_ui audit --audit-level=high
+      - name: Scan filesystem, configuration, and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          cache: true
+          exit-code: "1"
+          ignore-unfixed: true
+          scan-ref: .
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          skip-dirs: .venv,admin_ui/node_modules,admin_ui/.next
+          timeout: 15m
+          version: v0.70.0
+
+  sast:
+    name: CodeQL SAST (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+          - javascript-typescript
+          - python
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          build-mode: none
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - name: Analyze source
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          category: /language:${{ matrix.language }}
+
+  container-scan:
+    name: Container scan (${{ matrix.component }})
+    needs: workflow-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.workflow-policy.outputs.component-matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build production image locally
+        env:
+          BUILD_ARGS: ${{ matrix.build_args }}
+          BUILD_CONTEXT: ${{ matrix.context }}
+          IMAGE_REF: imposbro-ci/${{ matrix.component }}:${{ github.sha }}
+        run: |
+          docker_args=(--pull --tag "$IMAGE_REF")
+          while IFS= read -r build_arg; do
+            if [[ -n "$build_arg" ]]; then
+              docker_args+=(--build-arg "$build_arg")
+            fi
+          done <<< "$BUILD_ARGS"
+          docker build "${docker_args[@]}" "$BUILD_CONTEXT"
+      - name: Scan production image
+        id: container_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          cache: true
+          exit-code: "1"
+          format: sarif
+          ignore-unfixed: true
+          image-ref: imposbro-ci/${{ matrix.component }}:${{ github.sha }}
+          limit-severities-for-sarif: true
+          output: trivy-${{ matrix.component }}.sarif
+          scan-type: image
+          severity: HIGH,CRITICAL
+          timeout: 15m
+          version: v0.70.0
+      - name: Retain container vulnerability evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: warn
+          name: trivy-${{ matrix.component }}-${{ github.sha }}
+          path: trivy-${{ matrix.component }}.sarif
+          retention-days: 30
+      - name: Enforce container vulnerability gate
+        if: steps.container_scan.outcome != 'success'
+        run: |
+          echo "Trivy found a fixed high/critical vulnerability or failed to scan." >&2
+          exit 1

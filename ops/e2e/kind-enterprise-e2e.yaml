@@ -1,0 +1,15 @@
+# Optional isolated Kind substrate for CI jobs that provide prebuilt images and
+# deploy the project Helm chart. The live evidence runner itself is transport-
+# agnostic and can target the resulting external service endpoints. This file
+# alone is not evidence that the Kubernetes path was executed.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: imposbro-enterprise-e2e
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+networking:
+  apiServerAddress: 127.0.0.1
+  apiServerPort: 16443
+  disableDefaultCNI: false

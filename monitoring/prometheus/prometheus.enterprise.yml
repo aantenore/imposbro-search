@@ -1,0 +1,73 @@
+# Complete reference configuration for enterprise SRE signals.
+# This is a static deployment artifact; it is not wired into an environment by
+# merely existing in the repository. Mount rules/exporter configs and validate
+# target discovery, Alertmanager routing, and paging in each environment.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: imposbro_services
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['query_api:8000']
+
+  - job_name: indexing_service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['indexing_service:9108']
+
+  # json_exporter must probe each replica directly in production. The static
+  # target below is suitable only for the local single-replica topology.
+  - job_name: imposbro_query_health
+    metrics_path: /probe
+    params:
+      module: [imposbro_query_health]
+    static_configs:
+      - targets: ['http://query_api:8000/health']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: json_exporter:7979
+
+  - job_name: imposbro_postgres
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+
+  # Deploy a Kafka exporter with a read-only monitoring principal and scope it
+  # to the IMPOSBRO consumer groups.  The alert contract expects the standard
+  # kafka_consumergroup_lag metric; broker credentials stay in its Secret.
+  - job_name: imposbro_kafka
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['kafka_exporter:9308']
+
+  - job_name: typesense
+    metrics_path: /metrics.json
+    static_configs:
+      - targets:
+          - 'typesense-state-1:8108'
+          - 'typesense-state-2:8108'
+          - 'typesense-state-3:8108'
+          - 'typesense-data-1:8108'
+          - 'typesense-data-2:8108'
+          - 'typesense-data-3:8108'
+          - 'typesense-data2-1:8108'
+          - 'typesense-data2-2:8108'
+          - 'typesense-data2-3:8108'

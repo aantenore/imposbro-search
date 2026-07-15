@@ -6,6 +6,7 @@
  */
 
 const API_BASE = '/api';
+let latestControlPlaneRevision = null;
 
 function encodeSegment(value) {
     return encodeURIComponent(value);
@@ -15,12 +16,60 @@ function encodeSegment(value) {
  * Custom error class for API errors
  */
 export class ApiError extends Error {
-    constructor(message, status, data) {
+    constructor(message, status, data, metadata = {}) {
         super(message);
         this.name = 'ApiError';
         this.status = status;
         this.data = data;
+        this.metadata = metadata;
     }
+}
+
+function apiErrorMessage(data, status) {
+    const detail = data?.detail;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    if (detail && typeof detail === 'object') {
+        if (typeof detail.message === 'string' && detail.message.trim()) {
+            return detail.message;
+        }
+        if (typeof detail.code === 'string' && detail.code.trim()) {
+            return detail.code.replaceAll('_', ' ');
+        }
+    }
+    if (typeof data?.message === 'string' && data.message.trim()) return data.message;
+    return `Request failed with HTTP ${status}`;
+}
+
+function revisionHeaders(revision) {
+    if (!Number.isInteger(revision) || revision < 0) return {};
+    return { 'If-Match': `"${revision}"` };
+}
+
+function parseRevisionHeader(headers) {
+    const explicit = headers.get('X-Control-Plane-Revision');
+    const etag = headers.get('ETag')?.trim().replace(/^W\//, '').replaceAll('"', '');
+    const value = explicit || etag || '';
+    if (!/^\d+$/.test(value)) return null;
+    const revision = Number.parseInt(value, 10);
+    return Number.isSafeInteger(revision) ? revision : null;
+}
+
+function rememberControlPlaneRevision(headers) {
+    const revision = parseRevisionHeader(headers);
+    if (revision === null) return;
+    latestControlPlaneRevision = latestControlPlaneRevision === null
+        ? revision
+        : Math.max(latestControlPlaneRevision, revision);
+}
+
+function isAdminMutation(endpoint, method) {
+    return endpoint.startsWith('/admin/')
+        && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
+}
+
+function hasHeader(headers, name) {
+    const normalized = name.toLowerCase();
+    return Object.keys(headers).some((key) => key.toLowerCase() === normalized);
 }
 
 /**
@@ -35,16 +84,27 @@ async function request(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
     const { redirectOnAuth = true, ...fetchOptions } = options;
 
+    const headers = {
+        'Content-Type': 'application/json',
+        ...fetchOptions.headers,
+    };
+    const method = String(fetchOptions.method || 'GET').toUpperCase();
+    if (
+        isAdminMutation(endpoint, method)
+        && latestControlPlaneRevision !== null
+        && !hasHeader(headers, 'If-Match')
+    ) {
+        Object.assign(headers, revisionHeaders(latestControlPlaneRevision));
+    }
+
     const config = {
         ...fetchOptions,
-        headers: {
-            'Content-Type': 'application/json',
-            ...fetchOptions.headers,
-        },
+        headers,
     };
 
     try {
         const response = await fetch(url, config);
+        rememberControlPlaneRevision(response.headers);
         const contentType = response.headers.get('Content-Type') || '';
         let data;
         try {
@@ -65,9 +125,13 @@ async function request(endpoint, options = {}) {
                 window.location.assign(data.login_url);
             }
             throw new ApiError(
-                data.detail || data.message || 'An error occurred',
+                apiErrorMessage(data, response.status),
                 response.status,
-                data
+                data,
+                {
+                    etag: response.headers.get('ETag'),
+                    requestId: response.headers.get('X-Request-ID'),
+                }
             );
         }
 
@@ -197,27 +261,59 @@ export const api = {
         getMap: () => request('/admin/routing-map'),
 
         /**
-         * Set routing rules for a collection
-         */
-        setRules: (rules) => request('/admin/routing-rules', {
-            method: 'POST',
-            body: JSON.stringify(rules),
-        }),
-
-        /**
          * Preview routing rules against a document without persisting them
          */
         preview: (payload) => request('/admin/routing-rules/preview', {
             method: 'POST',
             body: JSON.stringify(payload),
         }),
+    },
 
-        /**
-         * Delete routing rules for a collection
-         */
-        deleteRules: (collection) => request(`/admin/routing-rules/${encodeSegment(collection)}`, {
-            method: 'DELETE',
+    // ===== Safe routing rollout lifecycle =====
+    routingRollouts: {
+        list: ({ collection = '' } = {}) => {
+            const params = new URLSearchParams();
+            if (collection) params.set('collection', collection);
+            const query = params.toString();
+            return request(`/admin/routing-rollouts${query ? `?${query}` : ''}`);
+        },
+
+        get: (rolloutId) => request(
+            `/admin/routing-rollouts/${encodeSegment(rolloutId)}`
+        ),
+
+        create: (payload, { revision } = {}) => request('/admin/routing-rollouts', {
+            method: 'POST',
+            headers: revisionHeaders(revision),
+            body: JSON.stringify(payload),
         }),
+
+        transition: (rolloutId, payload, { revision } = {}) => request(
+            `/admin/routing-rollouts/${encodeSegment(rolloutId)}/transitions`,
+            {
+                method: 'POST',
+                headers: revisionHeaders(revision),
+                body: JSON.stringify(payload),
+            }
+        ),
+
+        runBackfillStep: (rolloutId, payload, { revision } = {}) => request(
+            `/admin/routing-rollouts/${encodeSegment(rolloutId)}/backfill/steps`,
+            {
+                method: 'POST',
+                headers: revisionHeaders(revision),
+                body: JSON.stringify(payload),
+            }
+        ),
+
+        verifyParity: (rolloutId, payload, { revision } = {}) => request(
+            `/admin/routing-rollouts/${encodeSegment(rolloutId)}/parity-verifications`,
+            {
+                method: 'POST',
+                headers: revisionHeaders(revision),
+                body: JSON.stringify(payload),
+            }
+        ),
     },
 
     // ===== Operations =====

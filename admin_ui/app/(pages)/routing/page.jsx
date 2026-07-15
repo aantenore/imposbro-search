@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, GitBranch, Trash2, Play } from 'lucide-react';
+import Link from 'next/link';
+import { Plus, X, GitBranch, Play } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useNotification, Notification } from '../../hooks/useNotification';
-import { ConfirmationModal } from '../../components/ui';
 import Card from '../../components/ui/Card';
 import Button, { IconButton } from '../../components/ui/Button';
 import Input, { Checkbox, Select, Textarea } from '../../components/ui/Input';
@@ -159,13 +159,11 @@ export default function RoutingPage() {
     const [rules, setRules] = useState([]);
     const [defaultCluster, setDefaultCluster] = useState('');
     const [currentRules, setCurrentRules] = useState({});
-    const [ruleToDelete, setRuleToDelete] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
     const [isLoadingSchema, setIsLoadingSchema] = useState(false);
     const [previewDocument, setPreviewDocument] = useState('{\n  "tenant_id": "acme"\n}');
     const [previewResult, setPreviewResult] = useState(null);
     const [isPreviewing, setIsPreviewing] = useState(false);
-    const { notification, showSuccess, showError } = useNotification();
+    const { notification, showError } = useNotification();
 
     const fetchData = useCallback(async () => {
         try {
@@ -297,44 +295,6 @@ export default function RoutingPage() {
         }
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        if (!selectedCollection || !defaultCluster) {
-            showError('Please select a collection and a default cluster.');
-            return;
-        }
-
-        setIsSubmitting(true);
-        try {
-            await api.routing.setRules({
-                collection: selectedCollection,
-                rules: draftApiRules(),
-                default_cluster: defaultCluster,
-            });
-            showSuccess(`Routing rules for '${selectedCollection}' saved successfully!`);
-            fetchData();
-        } catch (err) {
-            showError(err.message);
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
-    const handleDeleteConfirm = async () => {
-        if (!ruleToDelete) return;
-
-        try {
-            await api.routing.deleteRules(ruleToDelete);
-            showSuccess(`Routing rules for '${ruleToDelete}' have been deleted.`);
-            fetchData();
-        } catch (err) {
-            showError(err.message);
-        } finally {
-            setRuleToDelete(null);
-        }
-    };
-
     const renderConditionInput = (rule, index) => {
         if ((rule.operator || 'equals') === 'in') {
             return (
@@ -391,20 +351,9 @@ export default function RoutingPage() {
 
     return (
         <div>
-            {ruleToDelete && (
-                <ConfirmationModal
-                    resourceName={ruleToDelete}
-                    resourceType="routing rules"
-                    message={`Are you sure you want to delete all routing rules for "${ruleToDelete}"? The collection will revert to using the default cluster.`}
-                    confirmText="Delete Rules"
-                    onConfirm={handleDeleteConfirm}
-                    onCancel={() => setRuleToDelete(null)}
-                />
-            )}
-
             <PageHeader
                 title="Document Routing Rules"
-                description="Define ordered document rules with equals, list, glob, range, priority, and fan-out targets."
+                description="Inspect live routing and preview candidates. Enterprise changes are applied only through gated routing rollouts."
             />
 
             {notification && (
@@ -417,9 +366,14 @@ export default function RoutingPage() {
                 <RoutingDiagram />
             </div>
 
+            <div className="mb-8 rounded-lg border border-primary/30 bg-primary/10 p-4 text-sm text-muted-foreground">
+                Direct routing mutations are disabled in the enterprise console. Use a safe rollout
+                for revision checks, dual-write, parity evidence, cutover, and rollback.
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <Card title="Set / Update Rules">
-                    <form onSubmit={handleSubmit} className="space-y-6">
+                <Card title="Candidate Preview Sandbox">
+                    <form onSubmit={(event) => event.preventDefault()} className="space-y-6">
                         <div>
                             <label className="mb-2 block text-sm font-medium text-foreground">
                                 1. Select collection
@@ -599,15 +553,15 @@ export default function RoutingPage() {
                                     )}
                                 </div>
 
-                                <Button
-                                    type="submit"
-                                    variant="purple"
-                                    fullWidth
-                                    leftIcon={<GitBranch size={18} />}
-                                    loading={isSubmitting}
+                                <Link
+                                    href={selectedCollection
+                                        ? `/routing-rollouts?collection=${encodeURIComponent(selectedCollection)}`
+                                        : '/routing-rollouts'}
+                                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                 >
-                                    Save Routing Rules
-                                </Button>
+                                    <GitBranch size={18} aria-hidden="true" />
+                                    Continue in Safe Rollout Console
+                                </Link>
                             </>
                         )}
                     </form>
@@ -647,14 +601,6 @@ export default function RoutingPage() {
                                             <span className="font-semibold text-primary">{ruleConfig.default_cluster}</span>
                                         </li>
                                     </ul>
-                                    <IconButton
-                                        variant="danger"
-                                        className="absolute top-3 right-3"
-                                        onClick={() => setRuleToDelete(collection)}
-                                        title={`Delete routing rules for ${collection}`}
-                                    >
-                                        <Trash2 size={16} />
-                                    </IconButton>
                                 </div>
                             ))
                         ) : (

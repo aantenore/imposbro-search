@@ -8,6 +8,9 @@ magic numbers and ensure consistency across the codebase.
 # Application metadata
 APP_NAME = "IMPOSBRO Federated Search API"
 VERSION = "4.0.0"
+API_MAJOR_VERSION = 1
+API_VERSION_PREFIX = f"/api/v{API_MAJOR_VERSION}"
+API_VERSION_HEADER = "X-API-Version"
 
 # Typesense defaults
 TYPESENSE_DEFAULT_PORT = 8108

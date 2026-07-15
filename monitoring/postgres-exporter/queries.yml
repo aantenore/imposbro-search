@@ -1,0 +1,178 @@
+# postgres_exporter custom-query contract for IMPOSBRO control-plane telemetry.
+# Use a read-only database role with SELECT on only the referenced tables.
+imposbro_control_plane_outbox:
+  query: |
+    SELECT
+      count(*)::double precision AS imposbro_control_plane_outbox_pending,
+      COALESCE(
+        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MIN(created_at))),
+        0
+      )::double precision AS imposbro_control_plane_outbox_oldest_unpublished_age_seconds
+    FROM control_plane_outbox
+    WHERE published_at IS NULL;
+  metrics:
+    - imposbro_control_plane_outbox_pending:
+        usage: GAUGE
+        description: Number of unpublished control-plane outbox events.
+    - imposbro_control_plane_outbox_oldest_unpublished_age_seconds:
+        usage: GAUGE
+        description: Age in seconds of the oldest unpublished control-plane event.
+
+imposbro_indexing_event_outbox:
+  query: |
+    SELECT
+      count(*)::double precision AS imposbro_indexing_event_outbox_pending_db,
+      COALESCE(
+        EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MIN(created_at))),
+        0
+      )::double precision AS imposbro_indexing_event_outbox_oldest_unpublished_age_seconds
+    FROM indexing_event_outbox
+    WHERE published_at IS NULL;
+  metrics:
+    - imposbro_indexing_event_outbox_pending_db:
+        usage: GAUGE
+        description: Number of unpublished durable indexing events measured in PostgreSQL.
+    - imposbro_indexing_event_outbox_oldest_unpublished_age_seconds:
+        usage: GAUGE
+        description: Age in seconds of the oldest unpublished durable indexing event.
+
+imposbro_control_plane_revision:
+  query: |
+    SELECT COALESCE(MAX(revision), 0)::double precision
+      AS imposbro_control_plane_authoritative_revision_db
+    FROM control_plane_state;
+  metrics:
+    - imposbro_control_plane_authoritative_revision_db:
+        usage: GAUGE
+        description: Authoritative revision persisted in PostgreSQL.
+
+imposbro_audit_delivery:
+  query: |
+    WITH audit_head AS (
+      SELECT sequence::double precision AS head_sequence
+      FROM control_plane_audit_head
+      WHERE id = 'head'
+    )
+    SELECT
+      audit_head.head_sequence AS imposbro_audit_delivery_head_sequence,
+      count(checkpoint.destination_id)::double precision
+        AS imposbro_audit_delivery_destinations,
+      COALESCE(
+        max(audit_head.head_sequence - checkpoint.last_sequence),
+        0
+      )::double precision AS imposbro_audit_delivery_max_backlog,
+      count(checkpoint.destination_id) FILTER (
+        WHERE checkpoint.failure_attempts > 0
+      )::double precision AS imposbro_audit_delivery_failed_destinations,
+      COALESCE(max(checkpoint.failure_attempts), 0)::double precision
+        AS imposbro_audit_delivery_max_failure_attempts
+    FROM audit_head
+    LEFT JOIN audit_delivery_checkpoints AS checkpoint ON true
+    GROUP BY audit_head.head_sequence;
+  metrics:
+    - imposbro_audit_delivery_head_sequence:
+        usage: GAUGE
+        description: Current tamper-evident audit head sequence.
+    - imposbro_audit_delivery_destinations:
+        usage: GAUGE
+        description: Number of registered durable audit delivery destinations.
+    - imposbro_audit_delivery_max_backlog:
+        usage: GAUGE
+        description: Largest audit sequence gap across registered destinations.
+    - imposbro_audit_delivery_failed_destinations:
+        usage: GAUGE
+        description: Destinations whose latest delivery attempt failed.
+    - imposbro_audit_delivery_max_failure_attempts:
+        usage: GAUGE
+        description: Largest consecutive failure count across destinations.
+
+imposbro_deletion_ledger:
+  query: |
+    SELECT
+      count(*) FILTER (WHERE target.status = 'pending')::double precision
+        AS imposbro_deletion_ledger_pending_targets,
+      count(DISTINCT ledger.identity_hash) FILTER (
+        WHERE ledger.retention_until IS NULL
+      )::double precision AS imposbro_deletion_ledger_indefinite_suppressions,
+      count(DISTINCT ledger.identity_hash) FILTER (
+        WHERE ledger.legal_hold
+      )::double precision AS imposbro_deletion_ledger_legal_holds
+    FROM deletion_ledger AS ledger
+    LEFT JOIN deletion_ledger_targets AS target
+      ON target.identity_hash = ledger.identity_hash;
+  metrics:
+    - imposbro_deletion_ledger_pending_targets:
+        usage: GAUGE
+        description: Provider targets still requiring tombstone reconciliation.
+    - imposbro_deletion_ledger_indefinite_suppressions:
+        usage: GAUGE
+        description: Suppressions retained indefinitely until an approved horizon exists.
+    - imposbro_deletion_ledger_legal_holds:
+        usage: GAUGE
+        description: Deletion suppressions protected by legal hold.
+
+# Fixed phase labels keep cardinality bounded while making stuck/failed routing
+# lifecycle state visible without asking operators to poll the Admin UI.  The
+# query deliberately emits every supported phase, including zero-valued ones.
+imposbro_routing_rollout_state:
+  query: |
+    WITH supported_phases(phase) AS (
+      VALUES
+        ('draft'), ('validating'), ('dual_write'), ('backfill'),
+        ('verifying'), ('cutover'), ('drain'), ('completed'),
+        ('failed'), ('cancelled'), ('rolling_back'), ('rolled_back')
+    ), persisted_rollouts AS (
+      SELECT rollout.value AS payload
+      FROM control_plane_state AS state
+      CROSS JOIN LATERAL jsonb_each(
+        COALESCE(state.state_json -> 'routing_rollouts', '{}'::jsonb)
+      ) AS rollout
+      WHERE state.id = 'current'
+    ), normalized_rollouts AS (
+      SELECT
+        payload ->> 'phase' AS phase,
+        NULLIF(payload ->> 'updated_at', '')::timestamptz AS updated_at,
+        NULLIF(payload ->> 'rollback_deadline', '')::timestamptz AS rollback_deadline
+      FROM persisted_rollouts
+    )
+    SELECT
+      supported_phases.phase,
+      count(normalized_rollouts.phase)::double precision
+        AS imposbro_routing_rollouts,
+      COALESCE(
+        MAX(
+          GREATEST(
+            EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - normalized_rollouts.updated_at)),
+            0
+          )
+        ),
+        0
+      )::double precision AS imposbro_routing_rollout_max_phase_age_seconds,
+      COALESCE(
+        MAX(
+          GREATEST(
+            EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - normalized_rollouts.rollback_deadline)),
+            0
+          )
+        ),
+        0
+      )::double precision
+        AS imposbro_routing_rollout_max_deadline_overrun_seconds
+    FROM supported_phases
+    LEFT JOIN normalized_rollouts
+      ON normalized_rollouts.phase = supported_phases.phase
+    GROUP BY supported_phases.phase
+    ORDER BY supported_phases.phase;
+  metrics:
+    - phase:
+        usage: LABEL
+        description: Bounded routing rollout lifecycle phase.
+    - imposbro_routing_rollouts:
+        usage: GAUGE
+        description: Number of persisted routing rollouts in this phase.
+    - imposbro_routing_rollout_max_phase_age_seconds:
+        usage: GAUGE
+        description: Age of the oldest rollout update in this phase.
+    - imposbro_routing_rollout_max_deadline_overrun_seconds:
+        usage: GAUGE
+        description: Maximum elapsed time beyond a rollout rollback deadline in this phase.

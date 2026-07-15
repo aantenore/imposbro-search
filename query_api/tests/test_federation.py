@@ -8,7 +8,9 @@ if str(_app_dir) not in sys.path:
     sys.path.insert(0, str(_app_dir))
 
 import typesense
+import pytest
 
+from secret_resolver import FileSecretProvider, SecretResolutionError, SecretResolver
 from services.federation import FederationService
 
 
@@ -154,6 +156,113 @@ def test_create_client_respects_configured_port(monkeypatch):
     assert captured["api_key"] == "test-key"
 
 
+def test_create_client_respects_https_protocol(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        typesense,
+        "Client",
+        lambda config: captured.update(config) or object(),
+    )
+
+    FederationService.create_client(
+        {
+            "host": "secure-a,secure-b",
+            "port": 443,
+            "protocol": "https",
+            "api_key": "test-key",
+        }
+    )
+
+    assert captured["nodes"] == [
+        {"host": "secure-a", "port": "443", "protocol": "https"},
+        {"host": "secure-b", "port": "443", "protocol": "https"},
+    ]
+
+
+def test_load_from_state_defaults_legacy_protocol_and_preserves_https(monkeypatch):
+    created_configs = []
+    monkeypatch.setattr(
+        typesense,
+        "Client",
+        lambda config: created_configs.append(config) or object(),
+    )
+    federation = FederationService()
+
+    federation.load_from_state(
+        {
+            "legacy": {
+                "host": "legacy-node",
+                "port": 8108,
+                "api_key": "legacy-key",
+            },
+            "secure": {
+                "name": "secure",
+                "host": "secure-node",
+                "port": 443,
+                "protocol": "https",
+                "api_key": "secure-key",
+            },
+        },
+        {},
+    )
+
+    assert federation.clusters_config["legacy"]["protocol"] == "http"
+    assert federation.clusters_config["legacy"]["name"] == "legacy"
+    assert federation.clusters_config["secure"]["protocol"] == "https"
+    assert created_configs[0]["nodes"][0]["protocol"] == "http"
+    assert created_configs[1]["nodes"][0]["protocol"] == "https"
+
+
+def test_referenced_client_observes_rotation_and_revocation_without_state_reload(
+    monkeypatch,
+    tmp_path,
+):
+    secret_file = tmp_path / "data-primary"
+    secret_file.write_text("first-key\n", encoding="utf-8")
+    created_configs = []
+
+    class CapturedClient:
+        def __init__(self, config):
+            created_configs.append(config)
+            self.collections = object()
+
+    monkeypatch.setattr(typesense, "Client", CapturedClient)
+    federation = FederationService(
+        secret_resolver=SecretResolver(
+            {"file": FileSecretProvider(tmp_path)}
+        ),
+        allow_inline_secrets=False,
+    )
+    federation.load_from_state(
+        {
+            "cluster-a": {
+                "host": "node-a",
+                "port": 8108,
+                "api_key_ref": "file:data-primary",
+            }
+        },
+        {},
+    )
+
+    assert federation.clusters_config["cluster-a"]["api_key_ref"] == (
+        "file:data-primary"
+    )
+    assert "api_key" not in federation.clusters_config["cluster-a"]
+    _ = federation.clients["cluster-a"].collections
+    assert created_configs[-1]["api_key"] == "first-key"
+
+    replacement = tmp_path / "replacement"
+    replacement.write_text("second-key\n", encoding="utf-8")
+    replacement.replace(secret_file)
+    _ = federation.clients["cluster-a"].collections
+    assert created_configs[-1]["api_key"] == "second-key"
+
+    secret_file.unlink()
+    with pytest.raises(SecretResolutionError, match="unavailable"):
+        _ = federation.clients["cluster-a"].collections
+
+
 def test_delete_candidates_include_all_clusters_despite_current_routing():
     federation = FederationService()
     federation.clients = {
@@ -280,7 +389,7 @@ def test_register_cluster_rejects_unreachable_declared_nodes(monkeypatch):
         FederationService,
         "node_statuses",
         staticmethod(
-            lambda hosts, port, api_key: [
+            lambda hosts, port, api_key, protocol="http": [
                 {"host": "node-a", "status": "ok"},
                 {"host": "node-b", "status": "error", "error": "timeout"},
             ]
