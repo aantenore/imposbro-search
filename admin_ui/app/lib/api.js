@@ -6,6 +6,7 @@
  */
 
 const API_BASE = '/api';
+let latestControlPlaneRevision = null;
 
 function encodeSegment(value) {
     return encodeURIComponent(value);
@@ -44,6 +45,33 @@ function revisionHeaders(revision) {
     return { 'If-Match': `"${revision}"` };
 }
 
+function parseRevisionHeader(headers) {
+    const explicit = headers.get('X-Control-Plane-Revision');
+    const etag = headers.get('ETag')?.trim().replace(/^W\//, '').replaceAll('"', '');
+    const value = explicit || etag || '';
+    if (!/^\d+$/.test(value)) return null;
+    const revision = Number.parseInt(value, 10);
+    return Number.isSafeInteger(revision) ? revision : null;
+}
+
+function rememberControlPlaneRevision(headers) {
+    const revision = parseRevisionHeader(headers);
+    if (revision === null) return;
+    latestControlPlaneRevision = latestControlPlaneRevision === null
+        ? revision
+        : Math.max(latestControlPlaneRevision, revision);
+}
+
+function isAdminMutation(endpoint, method) {
+    return endpoint.startsWith('/admin/')
+        && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
+}
+
+function hasHeader(headers, name) {
+    const normalized = name.toLowerCase();
+    return Object.keys(headers).some((key) => key.toLowerCase() === normalized);
+}
+
 /**
  * Make an API request with consistent error handling
  * 
@@ -56,16 +84,27 @@ async function request(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
     const { redirectOnAuth = true, ...fetchOptions } = options;
 
+    const headers = {
+        'Content-Type': 'application/json',
+        ...fetchOptions.headers,
+    };
+    const method = String(fetchOptions.method || 'GET').toUpperCase();
+    if (
+        isAdminMutation(endpoint, method)
+        && latestControlPlaneRevision !== null
+        && !hasHeader(headers, 'If-Match')
+    ) {
+        Object.assign(headers, revisionHeaders(latestControlPlaneRevision));
+    }
+
     const config = {
         ...fetchOptions,
-        headers: {
-            'Content-Type': 'application/json',
-            ...fetchOptions.headers,
-        },
+        headers,
     };
 
     try {
         const response = await fetch(url, config);
+        rememberControlPlaneRevision(response.headers);
         const contentType = response.headers.get('Content-Type') || '';
         let data;
         try {
