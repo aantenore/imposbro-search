@@ -58,11 +58,12 @@ jobs:
           KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
           KIND_VERSION: v0.32.0
         run: |
+          kind_binary="${RUNNER_TEMP}/kind-linux-amd64"
           curl --fail --silent --show-error --location \
-            --output kind-linux-amd64 \
+            --output "$kind_binary" \
             "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          printf '%s  %s\n' "$KIND_SHA256" kind-linux-amd64 | sha256sum --check --strict
-          sudo install --mode 0755 kind-linux-amd64 /usr/local/bin/kind
+          printf '%s  %s\n' "$KIND_SHA256" "$kind_binary" | sha256sum --check --strict
+          sudo install --mode 0755 "$kind_binary" /usr/local/bin/kind
           kind version
       - name: Execute fail-closed multi-node and benchmark harness
         env:
