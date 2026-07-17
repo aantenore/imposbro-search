@@ -52,7 +52,7 @@ Dependabot opens weekly GitHub Actions, Python, npm, and Docker update pull requ
 
 ## Signed release flow
 
-`.github/workflows/release.yml` accepts a SemVer tag such as `v1.2.3` from a tag push or explicit manual dispatch. Publishing cannot start until the reusable enterprise CI workflow succeeds.
+`.github/workflows/release.yml` accepts a SemVer tag such as `v1.2.3` from a tag push or explicit manual dispatch. Publishing cannot start until both the reusable enterprise CI workflow and the reusable exact-commit enterprise assurance workflow succeed for the release SHA.
 
 The component inventory, build contexts, and non-secret build arguments live in `scripts/ci/release-components.json`; `release-matrix.py` validates names, uniqueness, repository boundaries, Dockerfile presence, and output safety before the workflow expands its matrix. Adding a component does not require duplicating release logic.
 
