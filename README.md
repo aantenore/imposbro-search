@@ -1,5 +1,21 @@
 # IMPOSBRO Search
 
+## In plain English
+
+IMPOSBRO Search gives an organization one search experience even when its searchable data must remain in different clusters, regions, or customer environments. It coordinates where documents are stored, keeps indexing work recoverable, and combines results without forcing every dataset into one central system.
+
+**Example:** a marketplace can keep European and US catalog data in separate Typesense clusters for operational or regulatory reasons while its application still issues one search request. If a cluster is temporarily unavailable, the response can identify the partial result instead of quietly pretending that no matching products exist.
+
+| Feature | What it means for an organization |
+| --- | --- |
+| Configurable data placement | Teams can respect tenant, regional, and scaling boundaries without creating a different search API for each cluster. |
+| Durable asynchronous indexing | Accepted updates survive process restarts and can be retried instead of disappearing in memory. |
+| Federated reads | Applications receive one ordered result assembled from the clusters authorized for that request. |
+| Safe routing migrations | Data can move between clusters without making historical documents silently vanish. |
+| Audit, observability, and recovery controls | Operators can explain changes, detect failures, and restore the service with evidence. |
+
+## Technical summary
+
 **A self-hosted control plane for routing, indexing, searching, and operating data across multiple physical Typesense clusters.**
 
 IMPOSBRO Search keeps the Typesense search experience while adding the controls that appear when one cluster is no longer the right boundary: tenant or regional placement, fan-out, durable asynchronous indexing, federated reads, safe routing migrations, audit, observability, backup/restore, and Kubernetes delivery guardrails.
