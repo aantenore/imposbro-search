@@ -18,7 +18,8 @@ concurrency:
 
 env:
   NODE_VERSION: "24"
-  PYTHON_VERSION: "3.11"
+  PYTHON_MIN_VERSION: "3.12"
+  PYTHON_VERSION: "3.13"
   UV_VERSION: "0.11.21"
 
 jobs:
@@ -65,6 +66,43 @@ jobs:
           enable-cache: false
       - name: Recompile and compare locks byte-for-byte
         run: scripts/ci/verify-lockfiles.sh
+
+  python-minimum:
+    name: Python 3.12 compatibility (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: query-api
+            lockfile: query_api/requirements.lock
+            tooling_lock: scripts/ci/python-tools-query.lock
+            test_path: query_api/tests
+          - service: indexing-worker
+            lockfile: indexing_service/requirements.lock
+            tooling_lock: scripts/ci/python-tools-indexing.lock
+            test_path: indexing_service/tests
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up minimum supported Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_MIN_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            ${{ matrix.lockfile }}
+            ${{ matrix.tooling_lock }}
+      - name: Install hash-locked service and test dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          -r ${{ matrix.lockfile }}
+          -r ${{ matrix.tooling_lock }}
+      - name: Run compatibility regression suite
+        run: python -m pytest -q ${{ matrix.test_path }}
 
   contracts:
     name: Canonical event contracts

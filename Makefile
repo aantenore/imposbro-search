@@ -2,6 +2,7 @@
 
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 UV ?= uv
+LOCK_PYTHON_VERSION ?= 3.12
 # Hermetic CI tooling environment. The two checked-in, hash-bearing lock files
 # are also rebuilt byte-for-byte by `make lock-verify`.
 CI_PYTHON ?= $(UV) run --no-project --with-requirements query_api/requirements.lock --with-requirements scripts/ci/python-tools-query.lock python
@@ -71,11 +72,11 @@ build-ui:
 	cd admin_ui && npm run build
 
 lock-python:
-	cd query_api && $(UV) pip compile requirements.txt --universal --python-version 3.11 --generate-hashes --output-file requirements.lock
-	cd indexing_service && $(UV) pip compile requirements.txt --universal --python-version 3.11 --generate-hashes --output-file requirements.lock
+	cd query_api && $(UV) pip compile requirements.txt --universal --python-version $(LOCK_PYTHON_VERSION) --generate-hashes --output-file requirements.lock
+	cd indexing_service && $(UV) pip compile requirements.txt --universal --python-version $(LOCK_PYTHON_VERSION) --generate-hashes --output-file requirements.lock
 
 lock-verify:
-	UV=$(UV) scripts/ci/verify-lockfiles.sh
+	LOCK_PYTHON_VERSION=$(LOCK_PYTHON_VERSION) UV=$(UV) scripts/ci/verify-lockfiles.sh
 
 audit:
 	npm audit --omit=dev

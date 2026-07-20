@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 expected_uv_version="${EXPECTED_UV_VERSION:-0.11.21}"
+lock_python_version="${LOCK_PYTHON_VERSION:-3.12}"
 uv_bin="${UV:-uv}"
 
 if ! command -v "$uv_bin" >/dev/null 2>&1; then
@@ -29,7 +30,7 @@ for relative_dir in query_api indexing_service; do
     cd "$work_dir/$relative_dir"
     "$uv_bin" pip compile requirements.txt \
       --universal \
-      --python-version 3.11 \
+      --python-version "$lock_python_version" \
       --generate-hashes \
       --output-file requirements.lock >/dev/null
   )
@@ -62,7 +63,7 @@ for service in query indexing; do
     "$uv_bin" pip compile python-tools-requirements.txt \
       --constraint "$constraint" \
       --universal \
-      --python-version 3.11 \
+      --python-version "$lock_python_version" \
       --generate-hashes \
       --output-file "$lock_name" >/dev/null
   )

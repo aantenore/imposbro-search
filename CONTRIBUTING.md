@@ -7,8 +7,8 @@ Thank you for your interest in contributing to IMPOSBRO Search! This document pr
 ### Prerequisites
 
 - Docker and Docker Compose
-- Node.js 20.9+ (22+ recommended, matching the Docker image)
-- Python 3.11+ (for backend development)
+- Node.js 24 (matching the Docker image)
+- Python 3.12 or 3.13 (3.13 matches the production images)
 - Git
 
 ### Local Development Setup

@@ -68,7 +68,7 @@ The market does validate the problem, but it also narrows the room for different
 
 - Admin UI OIDC callback now requires an `id_token` and validates nonce, audience, issuer when configured, and timestamps before sealing the browser session. This closes the login transaction-binding gap while the Query API continues to validate proxied bearer-token signatures.
 - Admin UI client/proxy tests now use Typesense-compatible collection, alias, and cluster names so the test contract matches backend path validation.
-- Indexing service upgraded `requests` to `2.34.2`, which also resolves to `urllib3 2.7.0` in the Python 3.11/3.12 runtime path.
+- Indexing service upgraded `requests` to `2.34.2`, which also resolves to `urllib3 2.7.0` across the supported Python 3.12/3.13 runtime path.
 - Query API upgraded to FastAPI `0.138.0` and Starlette `1.3.1`, closing the Starlette 2026 advisory set. The incompatible third-party request instrumentator was replaced with first-party Prometheus middleware that preserves `http_requests_total` and `http_request_duration_seconds`.
 - Latest validation: `make ci`, Admin UI production build, `npm --prefix admin_ui audit --omit=dev`, `pip-audit --local`, and `make smoke-docker` were run.
 

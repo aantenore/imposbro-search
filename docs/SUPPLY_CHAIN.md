@@ -31,7 +31,7 @@ PostgreSQL clean restore. A final job downloads all artifacts and rejects any
 scenario, cleanup, checksum, threshold, image-digest, dirty-tree, or commit
 binding mismatch before emitting the composite assurance manifest.
 
-The CI tests intentionally use Python 3.11 and Node.js 22 because those versions match the production Dockerfiles. The PostgreSQL service credential is a disposable test-only value and is not a production secret.
+The full CI and production images use Python 3.13 and Node.js 24. A dedicated compatibility gate runs every Python service on the minimum supported Python 3.12. The PostgreSQL service credential is a disposable test-only value and is not a production secret.
 
 ## Locked tooling
 
@@ -41,10 +41,10 @@ To refresh locks:
 
 ```bash
 uv --version  # must report 0.11.21
-(cd query_api && uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes --output-file requirements.lock)
-(cd indexing_service && uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes --output-file requirements.lock)
-(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../query_api/requirements.lock --universal --python-version 3.11 --generate-hashes --output-file python-tools-query.lock)
-(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../indexing_service/requirements.lock --universal --python-version 3.11 --generate-hashes --output-file python-tools-indexing.lock)
+(cd query_api && uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes --output-file requirements.lock)
+(cd indexing_service && uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes --output-file requirements.lock)
+(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../query_api/requirements.lock --universal --python-version 3.12 --generate-hashes --output-file python-tools-query.lock)
+(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../indexing_service/requirements.lock --universal --python-version 3.12 --generate-hashes --output-file python-tools-indexing.lock)
 scripts/ci/verify-lockfiles.sh
 ```
 
