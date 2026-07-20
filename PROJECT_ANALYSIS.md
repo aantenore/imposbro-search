@@ -69,7 +69,7 @@ The market does validate the problem, but it also narrows the room for different
 - Admin UI OIDC callback now requires an `id_token` and validates nonce, audience, issuer when configured, and timestamps before sealing the browser session. This closes the login transaction-binding gap while the Query API continues to validate proxied bearer-token signatures.
 - Admin UI client/proxy tests now use Typesense-compatible collection, alias, and cluster names so the test contract matches backend path validation.
 - Indexing service upgraded `requests` to `2.34.2`, which also resolves to `urllib3 2.7.0` across the supported Python 3.12/3.13 runtime path.
-- Query API upgraded to FastAPI `0.138.0` and Starlette `1.3.1`, closing the Starlette 2026 advisory set. The incompatible third-party request instrumentator was replaced with first-party Prometheus middleware that preserves `http_requests_total` and `http_request_duration_seconds`.
+- Query API upgraded to FastAPI `0.139.2` and Starlette `1.3.1`, closing the Starlette 2026 advisory set. The incompatible third-party request instrumentator was replaced with first-party Prometheus middleware that preserves `http_requests_total` and `http_request_duration_seconds`.
 - Latest validation: `make ci`, Admin UI production build, `npm --prefix admin_ui audit --omit=dev`, `pip-audit --local`, and `make smoke-docker` were run.
 
 ### Build-vs-buy
@@ -144,7 +144,7 @@ The market does validate the problem, but it also narrows the room for different
 49. **Data lifecycle delete**: Query API now exposes `DELETE /documents/{collection}/{document_id}` as an async data-plane mutation. It fans out delete events to every candidate data cluster, propagates request ids, enforces ingest/data scoped authorization, uses tenant-safe filtered deletes for OIDC tenant policies, and the worker treats missing documents as idempotent no-ops with `indexing_documents_deleted_total` metrics.
 50. **Data lifecycle read/export**: Query API now exposes `GET /documents/{collection}/{document_id}` as a read-side data-plane operation. It checks every candidate data cluster, enforces search/data scoped authorization, returns tenant-mismatched OIDC documents as 404, exposes low-cardinality `documents_read_total`, and is available from the Admin UI Workspace.
 51. **Admin UI OIDC transaction binding**: The Admin UI callback now requires an `id_token` and validates nonce, audience, issuer when configured, and timestamps before sealing the browser session cookie.
-52. **Dependency audit closure**: Indexing service now uses `requests==2.34.2`; Query API uses FastAPI `0.138.0` and Starlette `1.3.1`; and Query API HTTP metrics are emitted by first-party Prometheus middleware, resolving the Python dependency audit findings while preserving the local release gate.
+52. **Dependency audit closure**: Indexing service now uses `requests==2.34.2`; Query API uses FastAPI `0.139.2` and Starlette `1.3.1`; and Query API HTTP metrics are emitted by first-party Prometheus middleware, resolving the Python dependency audit findings while preserving the local release gate.
 
 ### Fixes
 

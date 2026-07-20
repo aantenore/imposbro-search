@@ -31,7 +31,7 @@ PostgreSQL clean restore. A final job downloads all artifacts and rejects any
 scenario, cleanup, checksum, threshold, image-digest, dirty-tree, or commit
 binding mismatch before emitting the composite assurance manifest.
 
-The full CI and production images use Python 3.13 and Node.js 24. A dedicated compatibility gate runs every Python service on the minimum supported Python 3.12. The PostgreSQL service credential is a disposable test-only value and is not a production secret.
+The full CI uses Python 3.13 and Node.js 24, while production images use the minimum supported Python 3.12. A dedicated compatibility gate also runs every Python service on Python 3.12. The PostgreSQL service credential is a disposable test-only value and is not a production secret.
 
 ## Locked tooling
 

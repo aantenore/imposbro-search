@@ -8,7 +8,7 @@ Thank you for your interest in contributing to IMPOSBRO Search! This document pr
 
 - Docker and Docker Compose
 - Node.js 24 (matching the Docker image)
-- Python 3.12 or 3.13 (3.13 matches the production images)
+- Python 3.12 or 3.13 (3.12 matches the production images; CI validates both)
 - Git
 
 ### Local Development Setup
