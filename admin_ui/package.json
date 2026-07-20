@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=24 <25"
   },
   "scripts": {
     "dev": "cross-env INTERNAL_QUERY_API_URL=http://localhost:8000 next dev",

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Typesense multi-cluster routing and control plane – root workspace",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=24 <25"
   },
   "scripts": {
     "audit": "make audit",
