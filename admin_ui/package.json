@@ -18,24 +18,24 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "jose": "6.2.3",
-    "lucide-react": "1.21.0",
-    "next": "16.2.9",
+    "lucide-react": "1.25.0",
+    "next": "16.2.10",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "tailwind-merge": "^2.2.0"
+    "tailwind-merge": "2.6.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.61.1",
-    "autoprefixer": "^10.5.0",
+    "autoprefixer": "^10.5.4",
     "cross-env": "^7.0.3",
     "eslint": "9.39.2",
-    "eslint-config-next": "16.2.9",
-    "postcss": "8.5.15",
+    "eslint-config-next": "16.2.10",
+    "postcss": "8.5.20",
     "tailwindcss": "^3.4.1",
     "tailwindcss-animate": "^1.0.7"
   },
   "overrides": {
-    "postcss": "8.5.15"
+    "postcss": "8.5.20"
   }
 }
