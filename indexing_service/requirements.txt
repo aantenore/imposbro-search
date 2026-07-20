@@ -1,6 +1,6 @@
 kafka-python-ng==2.2.3
 typesense==2.0.0
-typing-extensions==4.15.0
+typing-extensions==4.16.0
 requests==2.34.2
 prometheus-client==0.25.0
 SQLAlchemy==2.0.51
