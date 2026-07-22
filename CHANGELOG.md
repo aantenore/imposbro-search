@@ -39,6 +39,9 @@ and releases use semantic versioning.
   injection is disabled by default.
 - Sensitive external failures, logs, traces, backup evidence, and audit exports
   are redacted and cache-disabled.
+- Admin UI dependency resolution now selects the patched `brace-expansion`
+  release in every active major line, `js-yaml` 4.3.0, and an explicitly
+  verified `sharp` 0.35.3 override for the current Next.js runtime.
 
 ### Fixed
 
