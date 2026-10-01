@@ -6,7 +6,7 @@ pydantic-settings==2.14.2
 prometheus-client==0.25.0
 kafka-python-ng==2.2.3
 redis[hiredis]==7.0.1
-PyJWT[crypto]==2.13.0
+PyJWT[crypto]==2.15.0
 SQLAlchemy==2.0.51
 alembic==1.18.5
 psycopg[binary]==3.3.4
