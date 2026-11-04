@@ -28,6 +28,9 @@ and releases use semantic versioning.
   event, and replicated-worker checkpoint state; legacy Typesense state is a
   read-only migration source.
 - Containers use digest-pinned base images and fixed non-root identities.
+- Query API and indexing service run on Python 3.14; dependency locks are
+  regenerated for it and the E2E TLS certificates now carry subject and
+  authority key identifiers.
 - The Admin UI no longer fetches build-time fonts from an external network.
 - The Admin UI is migrated to Tailwind CSS 4: CSS-first `@theme` configuration
   replaces `tailwind.config.js`, PostCSS uses `@tailwindcss/postcss`, and v3

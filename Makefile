@@ -2,7 +2,7 @@
 
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 UV ?= uv
-LOCK_PYTHON_VERSION ?= 3.12
+LOCK_PYTHON_VERSION ?= 3.14
 # Hermetic CI tooling environment. The two checked-in, hash-bearing lock files
 # are also rebuilt byte-for-byte by `make lock-verify`.
 CI_PYTHON ?= $(UV) run --no-project --with-requirements query_api/requirements.lock --with-requirements scripts/ci/python-tools-query.lock python

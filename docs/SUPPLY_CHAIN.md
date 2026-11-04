@@ -31,7 +31,7 @@ PostgreSQL clean restore. A final job downloads all artifacts and rejects any
 scenario, cleanup, checksum, threshold, image-digest, dirty-tree, or commit
 binding mismatch before emitting the composite assurance manifest.
 
-The full CI uses Python 3.13 and Node.js 24, while production images use the minimum supported Python 3.12. A dedicated compatibility gate also runs every Python service on Python 3.12. The PostgreSQL service credential is a disposable test-only value and is not a production secret.
+The full CI, the dependency locks, and the production images use Python 3.14 (the same patch line for Query API and indexing service) and Node.js 24. The E2E TLS fixture emits subject and authority key identifiers, which Python 3.14 certificate validation requires. The PostgreSQL service credential is a disposable test-only value and is not a production secret.
 
 ## Locked tooling
 
@@ -41,10 +41,10 @@ To refresh locks:
 
 ```bash
 uv --version  # must report 0.11.21
-(cd query_api && uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes --output-file requirements.lock)
-(cd indexing_service && uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes --output-file requirements.lock)
-(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../query_api/requirements.lock --universal --python-version 3.12 --generate-hashes --output-file python-tools-query.lock)
-(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../indexing_service/requirements.lock --universal --python-version 3.12 --generate-hashes --output-file python-tools-indexing.lock)
+(cd query_api && uv pip compile requirements.txt --universal --python-version 3.14 --generate-hashes --output-file requirements.lock)
+(cd indexing_service && uv pip compile requirements.txt --universal --python-version 3.14 --generate-hashes --output-file requirements.lock)
+(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../query_api/requirements.lock --universal --python-version 3.14 --generate-hashes --output-file python-tools-query.lock)
+(cd scripts/ci && uv pip compile python-tools-requirements.txt --constraint ../../indexing_service/requirements.lock --universal --python-version 3.14 --generate-hashes --output-file python-tools-indexing.lock)
 scripts/ci/verify-lockfiles.sh
 ```
 
