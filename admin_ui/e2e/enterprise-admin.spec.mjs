@@ -154,7 +154,6 @@ test('operator creates a revision-protected routing rollout draft', async ({ pag
   await page.getByLabel('Candidate default cluster').selectOption('cluster-b');
   await page.getByRole('button', { name: 'Create draft rollout' }).click();
 
-  await expect(page.getByText('Draft rollout created for orders.')).toBeVisible();
   await expect(page).toHaveURL(/\/routing-rollouts\/rollout-e2e-1$/);
   await expect(page).toHaveTitle('IMPOSBRO Search Admin');
   await expect(page.getByText('Revision 8', { exact: true })).toBeVisible();

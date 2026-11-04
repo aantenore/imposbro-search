@@ -36,6 +36,8 @@ and releases use semantic versioning.
 
 ### Security
 
+- Updated Next.js (16.4.5), sharp, the Admin UI base image, PyJWT, and
+  OpenTelemetry to releases that fix published high/critical advisories.
 - Enterprise startup denies unauthenticated access, missing tenant coverage,
   plaintext dependency transports, volatile rate limits/checkpoints, and
   unstructured logs.
