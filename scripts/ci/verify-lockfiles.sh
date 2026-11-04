@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 expected_uv_version="${EXPECTED_UV_VERSION:-0.11.21}"
-lock_python_version="${LOCK_PYTHON_VERSION:-3.12}"
+lock_python_version="${LOCK_PYTHON_VERSION:-3.14}"
 uv_bin="${UV:-uv}"
 
 if ! command -v "$uv_bin" >/dev/null 2>&1; then
