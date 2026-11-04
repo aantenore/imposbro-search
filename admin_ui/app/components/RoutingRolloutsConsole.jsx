@@ -72,7 +72,7 @@ function RolloutList({ rollouts, selectedRolloutId }) {
             <Link
               href={`/routing-rollouts/${encodeURIComponent(rollout.rollout_id)}`}
               aria-current={isSelected ? 'page' : undefined}
-              className={`block p-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+              className={`block p-4 transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
                 isSelected ? 'bg-primary/10' : 'hover:bg-muted/40'
               }`}
             >
@@ -443,7 +443,7 @@ export default function RoutingRolloutsConsole({
                 </p>
                 <Link
                   href="/routing-rollouts"
-                  className="mt-4 inline-flex items-center gap-2 rounded-md text-sm font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="mt-4 inline-flex items-center gap-2 rounded-md text-sm font-medium text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <ArrowLeft aria-hidden="true" /> Back to all rollouts
                 </Link>

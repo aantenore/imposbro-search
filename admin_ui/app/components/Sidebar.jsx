@@ -78,9 +78,9 @@ export default function Sidebar() {
               href={item.href}
               aria-current={isActive ? 'page' : undefined}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:gap-3',
+                'flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring lg:gap-3',
                 isActive
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm'
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-xs'
                   : 'text-muted-foreground hover:bg-sidebar-accent/80 hover:text-sidebar-foreground'
               )}
             >
@@ -109,7 +109,7 @@ export default function Sidebar() {
                 <input type="hidden" name="return_to" value={logoutReturnTo} />
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sidebar-border px-3 py-2 font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sidebar-border px-3 py-2 font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Sign out of the Admin UI"
                 >
                   <LogOut className="h-4 w-4" aria-hidden="true" />
@@ -119,7 +119,7 @@ export default function Sidebar() {
             ) : (
               <a
                 href={loginHref}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sidebar-border px-3 py-2 font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sidebar-border px-3 py-2 font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <LogIn className="h-4 w-4" aria-hidden="true" />
                 Sign in

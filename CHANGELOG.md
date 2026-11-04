@@ -29,6 +29,10 @@ and releases use semantic versioning.
   read-only migration source.
 - Containers use digest-pinned base images and fixed non-root identities.
 - The Admin UI no longer fetches build-time fonts from an external network.
+- The Admin UI is migrated to Tailwind CSS 4: CSS-first `@theme` configuration
+  replaces `tailwind.config.js`, PostCSS uses `@tailwindcss/postcss`, and v3
+  defaults (border color, button cursor) are preserved. `autoprefixer` and the
+  unused `tailwindcss-animate` plugin are removed.
 
 ### Security
 

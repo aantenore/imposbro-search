@@ -74,13 +74,13 @@ export function Notification({ type, message, onClose }) {
       aria-live={isError ? 'assertive' : 'polite'}
       aria-atomic="true"
     >
-      <span className="min-w-0 break-words">{message}</span>
+      <span className="min-w-0 wrap-break-word">{message}</span>
       {onClose && (
         <button
           type="button"
           onClick={onClose}
           aria-label="Dismiss notification"
-          className="ml-4 rounded opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="ml-4 rounded opacity-70 hover:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span aria-hidden="true">×</span>
         </button>

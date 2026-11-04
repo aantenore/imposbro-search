@@ -57,7 +57,7 @@ function PolicySummary({ label, policy }) {
         <span className="font-mono text-foreground">{policy.default_cluster || 'default'}</span>
       </p>
       <details className="mt-3 text-xs">
-        <summary className="cursor-pointer rounded text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <summary className="cursor-pointer rounded text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
           Inspect policy JSON
         </summary>
         <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-background p-3 text-muted-foreground">
@@ -384,7 +384,7 @@ export default function RoutingRolloutDetail({
               </Button>
             ) : null}
             <details className="mt-4 text-xs">
-              <summary className="cursor-pointer rounded text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <summary className="cursor-pointer rounded text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
                 Inspect read-only reconciler checkpoint
               </summary>
               <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-background p-3 text-muted-foreground">

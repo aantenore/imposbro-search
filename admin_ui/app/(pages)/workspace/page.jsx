@@ -417,7 +417,7 @@ export default function WorkspacePage() {
       ) : (
         <div className="space-y-6">
           <Card>
-            <div className="grid gap-4 md:grid-cols-[minmax(220px,320px),1fr]">
+            <div className="grid gap-4 md:grid-cols-[minmax(220px,320px)_1fr]">
               <Select
                 label="Collection"
                 value={selectedCollection}
