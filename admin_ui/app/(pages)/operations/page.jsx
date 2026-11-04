@@ -189,7 +189,7 @@ function AuditLogCard({ entries, isLoading, filters, onFiltersChange, onRefresh 
         </Button>
       </CardHeader>
       <CardContent>
-        <div className="mb-4 grid gap-3 md:grid-cols-[120px,1fr,1fr]">
+        <div className="mb-4 grid gap-3 md:grid-cols-[120px_1fr_1fr]">
           <Input
             label="Limit"
             type="number"
@@ -230,7 +230,7 @@ function AuditLogCard({ entries, isLoading, filters, onFiltersChange, onRefresh 
         {entries.length > 0 ? (
           <div className="divide-y divide-border rounded-lg border border-border">
             {entries.map((entry) => (
-              <div key={entry.id} className="grid gap-3 p-4 lg:grid-cols-[1fr,auto]">
+              <div key={entry.id} className="grid gap-3 p-4 lg:grid-cols-[1fr_auto]">
                 <div className="min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge variant={entry.status === 'success' ? 'success' : 'warning'}>

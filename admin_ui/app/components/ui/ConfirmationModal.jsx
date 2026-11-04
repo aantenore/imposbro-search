@@ -89,14 +89,14 @@ export default function ConfirmationModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-black/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-black/80 p-4 backdrop-blur-xs"
       onClick={handleBackdropClick}
     >
       <div
         ref={dialogRef}
         className={cn(
           'relative w-full max-w-lg rounded-lg border border-border bg-card p-6 text-card-foreground shadow-lg',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background'
+          'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background'
         )}
         role="alertdialog"
         aria-modal="true"

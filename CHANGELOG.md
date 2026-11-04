@@ -32,9 +32,15 @@ and releases use semantic versioning.
   regenerated for it and the E2E TLS certificates now carry subject and
   authority key identifiers.
 - The Admin UI no longer fetches build-time fonts from an external network.
+- The Admin UI is migrated to Tailwind CSS 4: CSS-first `@theme` configuration
+  replaces `tailwind.config.js`, PostCSS uses `@tailwindcss/postcss`, and v3
+  defaults (border color, button cursor) are preserved. `autoprefixer` and the
+  unused `tailwindcss-animate` plugin are removed.
 
 ### Security
 
+- Updated Next.js (16.4.5), sharp, the Admin UI base image, PyJWT, and
+  OpenTelemetry to releases that fix published high/critical advisories.
 - Enterprise startup denies unauthenticated access, missing tenant coverage,
   plaintext dependency transports, volatile rate limits/checkpoints, and
   unstructured logs.

@@ -566,7 +566,7 @@ export default function CollectionsPage() {
                         </Button>
                     }
                 >
-                    <div className="grid gap-6 lg:grid-cols-[minmax(280px,420px),1fr]">
+                    <div className="grid gap-6 lg:grid-cols-[minmax(280px,420px)_1fr]">
                         <form onSubmit={handleUpsertAlias} className="space-y-4">
                             <Select
                                 label="Cluster"

@@ -39,7 +39,7 @@ export default function RootLayout({ children }) {
         <style dangerouslySetInnerHTML={{ __html: criticalStyles }} />
         <a
           href="#main-content"
-          className="sr-only z-[100] rounded-md bg-background px-4 py-2 font-medium text-foreground shadow-lg focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="sr-only z-100 rounded-md bg-background px-4 py-2 font-medium text-foreground shadow-lg focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           Skip to main content
         </a>
@@ -48,7 +48,7 @@ export default function RootLayout({ children }) {
           <main
             id="main-content"
             tabIndex={-1}
-            className="min-w-0 flex-1 overflow-auto bg-background p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-8 md:p-10"
+            className="min-w-0 flex-1 overflow-auto bg-background p-4 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-8 md:p-10"
           >
             {children}
           </main>

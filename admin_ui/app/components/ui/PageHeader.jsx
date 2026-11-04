@@ -16,7 +16,7 @@ export default function PageHeader({ title, description, action, className }) {
             </p>
           )}
         </div>
-        {action && <div className="flex-shrink-0">{action}</div>}
+        {action && <div className="shrink-0">{action}</div>}
       </div>
     </div>
   );
